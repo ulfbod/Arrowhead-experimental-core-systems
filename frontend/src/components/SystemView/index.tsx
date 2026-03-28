@@ -8,8 +8,10 @@ import type {
   RobotState,
   GasSensorState,
   LHDState,
-  TeleRemoteState,
   AddPolicyPayload,
+  ServicesResponse,
+  PoliciesResponse,
+  OrchLogsResponse,
 } from '../../types'
 
 // ============================================================
@@ -34,14 +36,14 @@ const SERVICE_DEFS: ServiceDef[] = [
   { id: 'idt3a', label: 'iDT3a LHD A',   type: 'iDT', port: 8301, stateUrl: 'http://localhost:8301/state', category: 'LHDs' },
   { id: 'idt3b', label: 'iDT3b LHD B',   type: 'iDT', port: 8302, stateUrl: 'http://localhost:8302/state', category: 'LHDs' },
   { id: 'idt4',  label: 'iDT4 Tele-Remote', type: 'iDT', port: 8401, stateUrl: 'http://localhost:8401/state', category: 'Tele-Remote' },
-  { id: 'cdt1',  label: 'cDT1 Mapping',  type: 'cDT', port: 8501, stateUrl: 'http://localhost:8501/mapping', category: 'Composite DTs' },
-  { id: 'cdt2',  label: 'cDT2 Gas Monitor', type: 'cDT', port: 8502, stateUrl: 'http://localhost:8502/monitor', category: 'Composite DTs' },
-  { id: 'cdt3',  label: 'cDT3 Hazard Detect', type: 'cDT', port: 8503, stateUrl: 'http://localhost:8503/hazards', category: 'Composite DTs' },
-  { id: 'cdt4',  label: 'cDT4 Clearance', type: 'cDT', port: 8504, stateUrl: 'http://localhost:8504/clearance', category: 'Composite DTs' },
-  { id: 'cdt5',  label: 'cDT5 Intervention', type: 'cDT', port: 8505, stateUrl: 'http://localhost:8505/intervention', category: 'Composite DTs' },
-  { id: 'cdta',  label: 'cDTa Mission',  type: 'cDT', port: 8601, stateUrl: 'http://localhost:8601/mission', category: 'Mission DTs' },
-  { id: 'cdtb',  label: 'cDTb Safe Access', type: 'cDT', port: 8602, stateUrl: 'http://localhost:8602/decision', category: 'Mission DTs' },
-  { id: 'scenario', label: 'Scenario Runner', type: 'core', port: 8700, stateUrl: 'http://localhost:8700/scenario', category: 'Orchestration' },
+  { id: 'cdt1',  label: 'cDT1 Mapping',  type: 'cDT', port: 8501, stateUrl: 'http://localhost:8501/state', category: 'Composite DTs' },
+  { id: 'cdt2',  label: 'cDT2 Gas Monitor', type: 'cDT', port: 8502, stateUrl: 'http://localhost:8502/state', category: 'Composite DTs' },
+  { id: 'cdt3',  label: 'cDT3 Hazard Detect', type: 'cDT', port: 8503, stateUrl: 'http://localhost:8503/state', category: 'Composite DTs' },
+  { id: 'cdt4',  label: 'cDT4 Clearance', type: 'cDT', port: 8504, stateUrl: 'http://localhost:8504/state', category: 'Composite DTs' },
+  { id: 'cdt5',  label: 'cDT5 Intervention', type: 'cDT', port: 8505, stateUrl: 'http://localhost:8505/state', category: 'Composite DTs' },
+  { id: 'cdta',  label: 'cDTa Mission',  type: 'cDT', port: 8601, stateUrl: 'http://localhost:8601/state', category: 'Mission DTs' },
+  { id: 'cdtb',  label: 'cDTb Safe Access', type: 'cDT', port: 8602, stateUrl: 'http://localhost:8602/state', category: 'Mission DTs' },
+  { id: 'scenario', label: 'Scenario Runner', type: 'core', port: 8700, stateUrl: 'http://localhost:8700/state', category: 'Orchestration' },
 ]
 
 // Service composition edges: consumer → provider
@@ -143,11 +145,11 @@ const RobotCard: React.FC<{ url: string; label: string }> = ({ url, label }) => 
       <div className="metric-bar-container" style={{ marginBottom: 0 }}>
         <div className="metric-bar-label">
           <span className="metric-bar-name">Battery</span>
-          <span className="metric-bar-value">{fmtPct(data.batteryPercent)}</span>
+          <span className="metric-bar-value">{fmtPct(data.batteryPct)}</span>
         </div>
         <ProgressBar
-          value={data.batteryPercent}
-          color={data.batteryPercent < 20 ? 'var(--red)' : data.batteryPercent < 50 ? 'var(--amber)' : 'var(--green)'}
+          value={data.batteryPct}
+          color={data.batteryPct < 20 ? 'var(--red)' : data.batteryPct < 50 ? 'var(--amber)' : 'var(--green)'}
         />
       </div>
       <div className="metric-bar-container" style={{ marginBottom: 0 }}>
@@ -158,8 +160,8 @@ const RobotCard: React.FC<{ url: string; label: string }> = ({ url, label }) => 
         <ProgressBar value={data.mappingProgress} color="var(--blue)" />
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: 2 }}>
-        <span>Hazards: <strong style={{ color: data.hazardCount > 0 ? 'var(--amber)' : 'var(--green)' }}>{data.hazardCount}</strong></span>
-        <span style={{ color: statusColor(data.status) }}>{data.status}</span>
+        <span>Hazards: <strong style={{ color: (data.hazardsDetected?.length ?? 0) > 0 ? 'var(--amber)' : 'var(--green)' }}>{data.hazardsDetected?.length ?? 0}</strong></span>
+        <span style={{ color: data.online ? 'var(--green)' : 'var(--red)' }}>{data.online ? 'online' : 'offline'}</span>
       </div>
     </div>
   )
@@ -168,11 +170,12 @@ const RobotCard: React.FC<{ url: string; label: string }> = ({ url, label }) => 
 const GasCard: React.FC<{ url: string }> = ({ url }) => {
   const { data } = usePolling<GasSensorState>(url, 3000)
   if (!data) return null
-  const levels = data.levels
+  const levels = data.gasLevels
+  if (!levels) return null
   const gasItems = [
-    { label: 'CH4', value: levels.ch4, max: 100, unit: '% LEL', thresh: 20 },
-    { label: 'CO',  value: levels.co,  max: 50,  unit: 'ppm',   thresh: 25 },
-    { label: 'O2',  value: levels.o2,  max: 25,  unit: '% vol', thresh: null },
+    { label: 'CH4', value: levels.ch4, max: 5,   unit: '%',   thresh: 1.0 },
+    { label: 'CO',  value: levels.co,  max: 100, unit: 'ppm', thresh: 25 },
+    { label: 'O2',  value: levels.o2,  max: 25,  unit: '%',   thresh: null },
   ]
   return (
     <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -203,27 +206,27 @@ const LHDCard: React.FC<{ url: string }> = ({ url }) => {
       <div className="metric-bar-container" style={{ marginBottom: 0 }}>
         <div className="metric-bar-label">
           <span className="metric-bar-name">Debris</span>
-          <span className="metric-bar-value">{fmtPct(data.debrisPercent)}</span>
+          <span className="metric-bar-value">{fmtPct(data.debrisClearedPct)}</span>
         </div>
-        <ProgressBar value={data.debrisPercent} color="var(--amber)" />
+        <ProgressBar value={data.debrisClearedPct} color="var(--amber)" />
       </div>
       <div className="metric-bar-container" style={{ marginBottom: 0 }}>
         <div className="metric-bar-label">
           <span className="metric-bar-name">Fuel</span>
-          <span className="metric-bar-value">{fmtPct(data.fuelPercent)}</span>
+          <span className="metric-bar-value">{fmtPct(data.fuelPct)}</span>
         </div>
-        <ProgressBar value={data.fuelPercent} color={data.fuelPercent < 20 ? 'var(--red)' : 'var(--blue)'} />
+        <ProgressBar value={data.fuelPct} color={data.fuelPct < 20 ? 'var(--red)' : 'var(--blue)'} />
       </div>
       <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: 2, display: 'flex', justifyContent: 'space-between' }}>
-        <span>Payload: <strong style={{ color: 'var(--text-primary)' }}>{data.payloadTonnes.toFixed(1)} t</strong></span>
-        <span style={{ color: statusColor(data.status) }}>{data.status}</span>
+        <span>Payload: <strong style={{ color: 'var(--text-primary)' }}>{(data.payloadTons ?? 0).toFixed(1)} t</strong></span>
+        <span style={{ color: data.online ? 'var(--green)' : 'var(--red)' }}>{data.trammingStatus ?? (data.online ? 'online' : 'offline')}</span>
       </div>
     </div>
   )
 }
 
 const ServiceCard: React.FC<ServiceCardProps> = ({ def, record }) => {
-  const status = record?.status ?? 'offline'
+  const status = record ? (record.online ? 'online' : 'offline') : 'offline'
   const isRobot   = ['idt1a', 'idt1b'].includes(def.id)
   const isGas     = ['idt2a', 'idt2b'].includes(def.id)
   const isLHD     = ['idt3a', 'idt3b'].includes(def.id)
@@ -448,7 +451,7 @@ interface AddPolicyModalProps {
 
 const AddPolicyModal: React.FC<AddPolicyModalProps> = ({ onClose, onAdd }) => {
   const [form, setForm] = useState<AddPolicyPayload>({
-    consumerId: '', providerId: '', serviceDefinition: '',
+    consumerId: '', providerId: '', serviceName: '', allowed: true,
   })
   const [loading, setLoading] = useState(false)
 
@@ -470,7 +473,7 @@ const AddPolicyModal: React.FC<AddPolicyModalProps> = ({ onClose, onAdd }) => {
           <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
         </div>
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {(['consumerId', 'providerId', 'serviceDefinition'] as const).map(field => (
+          {(['consumerId', 'providerId', 'serviceName'] as const).map(field => (
             <div key={field}>
               <label className="label">{field}</label>
               <input
@@ -499,21 +502,23 @@ const AddPolicyModal: React.FC<AddPolicyModalProps> = ({ onClose, onAdd }) => {
 // ============================================================
 
 const SystemView: React.FC = () => {
-  const { data: services, loading: svcLoading, refetch: refetchSvc }
-    = usePolling<ServiceRecord[]>(urls.services, 3000)
-  const { data: policies, refetch: refetchPolicies }
-    = usePolling<AuthPolicy[]>(urls.policies, 3000)
-  const { data: orchLogs }
-    = usePolling<OrchestrationLog[]>(urls.orchLogs, 3000)
+  const { data: svcResp, loading: svcLoading, refetch: refetchSvc }
+    = usePolling<ServicesResponse>(urls.services, 3000)
+  const { data: polResp, refetch: refetchPolicies }
+    = usePolling<PoliciesResponse>(urls.policies, 3000)
+  const { data: orchResp }
+    = usePolling<OrchLogsResponse>(urls.orchLogs, 3000)
+
+  const services: ServiceRecord[] = svcResp?.services ?? []
+  const policies: AuthPolicy[]    = polResp?.policies  ?? []
+  const orchLogs: OrchestrationLog[] = orchResp?.logs  ?? []
 
   const [showAddPolicy, setShowAddPolicy] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // Build a map: service id → ServiceRecord
   const serviceMap = new Map<string, ServiceRecord>()
-  if (services) {
-    services.forEach(s => serviceMap.set(s.id, s))
-  }
+  services.forEach(s => serviceMap.set(s.id, s))
 
   const handleAddPolicy = useCallback(async (payload: AddPolicyPayload) => {
     await addPolicy(payload)
@@ -545,7 +550,7 @@ const SystemView: React.FC = () => {
         <div className="section-title">
           <span>Service Status</span>
           <span style={{ color: 'var(--text-muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
-            {services ? `${services.filter(s => s.status === 'online').length}/${services.length} online` : 'loading…'}
+            {svcResp ? `${services.filter(s => s.online).length}/${services.length} online` : 'loading…'}
           </span>
           <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={refetchSvc}>
             {svcLoading ? <span className="loading-spinner" /> : '↻ Refresh'}
@@ -630,9 +635,9 @@ const SystemView: React.FC = () => {
                       <td className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                         {fmtTs(log.timestamp)}
                       </td>
-                      <td style={{ color: 'var(--blue-light)' }}>{log.consumer}</td>
-                      <td style={{ color: 'var(--text-secondary)' }}>{log.provider}</td>
-                      <td><code>{log.serviceDefinition}</code></td>
+                      <td style={{ color: 'var(--blue-light)' }}>{log.consumerId}</td>
+                      <td style={{ color: 'var(--text-secondary)' }}>{log.providerId}</td>
+                      <td><code>{log.serviceName}</code></td>
                       <td>
                         <span className={`badge ${log.allowed ? 'badge-online' : 'badge-offline'}`}>
                           {log.allowed ? 'Yes' : 'No'}
@@ -689,7 +694,7 @@ const SystemView: React.FC = () => {
                     <tr key={p.id}>
                       <td style={{ color: 'var(--blue-light)' }}>{p.consumerId}</td>
                       <td style={{ color: 'var(--text-secondary)' }}>{p.providerId}</td>
-                      <td><code>{p.serviceDefinition}</code></td>
+                      <td><code>{p.serviceName}</code></td>
                       <td>
                         <span className={`badge ${p.allowed ? 'badge-online' : 'badge-offline'}`}>
                           {p.allowed ? 'Allowed' : 'Denied'}

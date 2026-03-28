@@ -14,7 +14,9 @@
       "Bash(git rm:*)",
       "Bash(git push:*)",
       "Bash(ssh:*)",
-      "Bash(git merge:*)"
+      "Bash(git merge:*)",
+      "Bash(go version:*)",
+      "Bash(npm --version)"
     ]
   }
 }

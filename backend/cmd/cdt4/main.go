@@ -100,7 +100,7 @@ func (s *CDT4Service) fetchLHDStates() {
 
 	// LHD 1: discovered via Arrowhead for "clearance" capability
 	var l1 common.LHDState
-	err1 := s.ah.CallService("clearance", "GET", "/state", nil, &l1)
+	err1 := s.ah.CallService("debris-clearance", "GET", "/state", nil, &l1)
 	if err1 != nil {
 		log.Printf("[cdt4] LHD1 fetch error: %v", err1)
 	}

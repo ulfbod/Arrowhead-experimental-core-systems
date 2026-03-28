@@ -1,41 +1,50 @@
 // ============================================================
-// Arrowhead Core Types
+// Types matching the Go backend JSON responses exactly
 // ============================================================
+
+// ---- Arrowhead Core ----
 
 export interface ServiceRecord {
   id: string
   name: string
   address: string
   port: number
-  type: string         // e.g. "iDT", "cDT", "orchestrator"
-  status: 'online' | 'offline' | 'warning'
-  lastSeen: string     // ISO timestamp
-  endpoints: string[]
-  metadata?: Record<string, string>
+  serviceType: string   // "iDT" | "cDT" | "core"
+  capabilities: string[]
+  metadata: Record<string, string>
+  registeredAt: string
+  lastSeen: string
+  online: boolean
 }
 
 export interface AuthPolicy {
   id: string
   consumerId: string
   providerId: string
-  serviceDefinition: string
-  createdAt: string
+  serviceName: string
   allowed: boolean
+  createdAt: string
 }
 
 export interface OrchestrationLog {
   id: string
   timestamp: string
-  consumer: string
-  provider: string
-  serviceDefinition: string
+  consumerId: string
+  serviceName: string
+  providerId: string
+  authToken: string
   allowed: boolean
-  reason?: string
+  message: string
 }
 
-// ============================================================
-// Position
-// ============================================================
+export interface AddPolicyPayload {
+  consumerId: string
+  providerId: string
+  serviceName: string
+  allowed: boolean
+}
+
+// ---- Shared ----
 
 export interface Position {
   x: number
@@ -43,34 +52,22 @@ export interface Position {
   z: number
 }
 
-// ============================================================
-// iDT1a/b - Robot State
-// ============================================================
-
-export interface RobotState {
+export interface Hazard {
   id: string
-  name: string
-  status: 'idle' | 'moving' | 'scanning' | 'error' | 'offline'
+  type: string
+  severity: string   // "low" | "medium" | "high" | "critical"
   position: Position
-  batteryPercent: number
-  mappingProgress: number   // 0–100
-  hazardCount: number
-  speed: number
-  heading: number
-  lastUpdate: string
-  online: boolean
+  detectedAt: string
+  cleared: boolean
+  clearedAt?: string
 }
 
-// ============================================================
-// iDT2a/b - Gas Sensor State
-// ============================================================
-
 export interface GasLevels {
-  ch4: number    // % LEL
-  co: number     // ppm
-  co2: number    // % vol
-  o2: number     // % vol
-  no2?: number   // ppm
+  ch4: number
+  co: number
+  co2: number
+  o2: number
+  no2: number
 }
 
 export interface GasAlert {
@@ -78,155 +75,121 @@ export interface GasAlert {
   gas: string
   level: number
   threshold: number
-  severity: 'low' | 'medium' | 'high' | 'critical'
+  location: Position
   timestamp: string
-  location: string
-  acknowledged: boolean
+  active: boolean
+}
+
+// ---- iDT States ----
+
+export interface RobotState {
+  id: string
+  name: string
+  online: boolean
+  connected: boolean
+  position: Position
+  batteryPct: number
+  mappingProgress: number
+  slamActive: boolean
+  navigationStatus: string
+  hazardsDetected: Hazard[]
+  areaCoveredSqm: number
+  lastUpdated: string
 }
 
 export interface GasSensorState {
   id: string
   name: string
-  status: 'nominal' | 'alert' | 'fault' | 'offline'
-  position: Position
-  levels: GasLevels
-  alerts: GasAlert[]
-  lastCalibration: string
-  lastUpdate: string
   online: boolean
+  connected: boolean
+  position: Position
+  gasLevels: GasLevels
+  alerts: GasAlert[]
+  environmentStatus: string   // "safe" | "warning" | "danger"
+  lastUpdated: string
 }
-
-// ============================================================
-// iDT3a/b - LHD (Load-Haul-Dump) State
-// ============================================================
 
 export interface LHDState {
   id: string
   name: string
-  status: 'idle' | 'loading' | 'hauling' | 'dumping' | 'error' | 'offline'
-  position: Position
-  debrisPercent: number    // bucket fill 0–100
-  fuelPercent: number      // 0–100
-  payloadTonnes: number
-  speed: number
-  heading: number
-  cyclesCompleted: number
-  lastUpdate: string
   online: boolean
+  connected: boolean
+  position: Position
+  payloadTons: number
+  maxPayloadTons: number
+  available: boolean
+  trammingStatus: string   // "idle" | "tramming" | "loading" | "unloading"
+  debrisClearedPct: number
+  fuelPct: number
+  lastUpdated: string
 }
-
-// ============================================================
-// iDT4 - Tele-Remote Operator State
-// ============================================================
 
 export interface TeleRemoteState {
   id: string
   name: string
-  status: 'standby' | 'active' | 'takeover' | 'offline'
-  operatorId: string
-  controlledAsset?: string
-  latencyMs: number
-  sessionStart?: string
-  lastUpdate: string
   online: boolean
+  operatorPresent: boolean
+  overrideActive: boolean
+  targetMachineId: string
+  authorizationLevel: string
+  lastCommand: string
+  lastCommandTime: string
+  lastUpdated: string
 }
 
-// ============================================================
-// cDT1 - Mapping Result
-// ============================================================
-
-export interface MapCell {
-  x: number
-  y: number
-  explored: boolean
-  hazard: boolean
-  passable: boolean
-}
+// ---- cDT Composite Results ----
 
 export interface MappingResult {
-  coveragePercent: number
-  areaCoveredM2: number
-  totalAreaM2: number
-  activeRobots: string[]
-  mapCells: MapCell[]
-  startTime: string
-  lastUpdate: string
-  status: 'idle' | 'mapping' | 'paused' | 'complete'
+  totalAreaSqm: number
+  coveredAreaSqm: number
+  coveragePct: number
+  activeRobots: number   // count, not array
+  map: number[][]
+  timestamp: string
 }
 
-// ============================================================
-// cDT2 - Gas Monitor Result
-// ============================================================
+// cDT1 /state returns this wrapper
+export interface CDT1State {
+  mapping: MappingResult
+  robot1: RobotState | null
+  robot2: RobotState | null
+  timestamp: string
+}
 
 export interface GasMonitorResult {
-  aggregatedLevels: GasLevels
-  activeSensors: string[]
+  averageLevels: GasLevels
+  maxLevels: GasLevels
   activeAlerts: GasAlert[]
-  ventilationStatus: 'nominal' | 'reduced' | 'critical' | 'offline'
-  overallStatus: 'safe' | 'caution' | 'danger'
-  lastUpdate: string
-}
-
-// ============================================================
-// cDT3 - Hazard Report
-// ============================================================
-
-export type HazardSeverity = 'low' | 'medium' | 'high' | 'critical'
-
-export interface Hazard {
-  id: string
-  type: string          // e.g. "rock_fall", "gas_pocket", "structural"
-  severity: HazardSeverity
-  position: Position
-  detectedAt: string
-  clearedAt?: string
-  cleared: boolean
-  description: string
-  detectedBy: string    // robot/sensor id
+  environmentSafe: boolean
+  activeSensors: number
+  timestamp: string
 }
 
 export interface HazardReport {
-  totalHazards: number
-  activeHazards: number
-  clearedHazards: number
   hazards: Hazard[]
-  riskLevel: 'low' | 'medium' | 'high' | 'critical'
-  lastUpdate: string
+  overallRisk: string       // "low" | "medium" | "high" | "critical"
+  safeForEntry: boolean
+  recommendedAction: string
+  timestamp: string
 }
-
-// ============================================================
-// cDT4 - Clearance Status
-// ============================================================
 
 export interface ClearanceStatus {
-  status: 'idle' | 'in_progress' | 'complete' | 'failed'
-  clearancePercent: number
-  activeAssets: string[]
-  hazardsCleared: number
-  hazardsPending: number
-  estimatedCompletionMin: number
-  startTime?: string
-  lastUpdate: string
+  totalDebrisPct: number
+  activeVehicles: number
+  estimatedEtaMinutes: number
+  routeClear: boolean
+  timestamp: string
 }
-
-// ============================================================
-// cDT5 - Intervention Status
-// ============================================================
 
 export interface InterventionStatus {
-  status: 'standby' | 'requested' | 'active' | 'completed' | 'aborted'
-  operatorAssigned?: string
-  reason?: string
-  requestTime?: string
-  startTime?: string
-  endTime?: string
-  notes: string[]
-  lastUpdate: string
+  active: boolean
+  operatorPresent: boolean
+  targetMachine: string
+  lastCommand: string
+  timestamp: string
 }
 
-// ============================================================
-// cDTa - Mission Phase + Status
-// ============================================================
+// ---- Upper cDT Mission ----
 
 export type MissionPhase =
   | 'idle'
@@ -235,116 +198,56 @@ export type MissionPhase =
   | 'clearance'
   | 'verifying'
   | 'complete'
-
-export interface MissionEvent {
-  id: string
-  timestamp: string
-  phase: MissionPhase
-  event: string
-  level: 'info' | 'warning' | 'error' | 'success'
-}
-
-export interface Recommendation {
-  id: string
-  priority: 'low' | 'medium' | 'high' | 'critical'
-  text: string
-  action?: string
-}
+  | 'failed'
 
 export interface MissionStatus {
   phase: MissionPhase
-  startTime?: string
-  endTime?: string
-  missionId: string
-  mapping: MappingResult
-  hazardReport: HazardReport
-  clearance: ClearanceStatus
-  intervention: InterventionStatus
-  recommendations: Recommendation[]
-  eventLog: MissionEvent[]
-  lastUpdate: string
+  startedAt?: string
+  completedAt?: string
+  mapping?: MappingResult | null
+  hazards?: HazardReport | null
+  clearance?: ClearanceStatus | null
+  intervention?: InterventionStatus | null
+  recommendations: string[]
+  log: string[]
+  lastUpdated: string
 }
-
-// ============================================================
-// cDTb - Safe Access Decision
-// ============================================================
-
-export type GatingStatus = 'open' | 'closed' | 'conditional'
 
 export interface SafeAccessDecision {
-  safeToAccess: boolean
+  safe: boolean
   reason: string
-  gatingStatus: GatingStatus
-  gasMonitor: GasMonitorResult
-  hazardReport: HazardReport
+  gasStatus?: GasMonitorResult | null
+  hazardStatus?: HazardReport | null
   ventilationOk: boolean
-  recommendations: Recommendation[]
-  lastUpdate: string
-  confidence: number   // 0–100
+  gatingStatus: string   // "closed" | "open" | "conditional"
+  recommendations: string[]
+  lastUpdated: string
 }
 
-// ============================================================
-// Scenario Runner
-// ============================================================
+// ---- Scenario Runner ----
 
-export type ScenarioState = 'idle' | 'running' | 'paused' | 'complete'
+export type ScenarioState = 'idle' | 'running' | 'complete' | 'failed'
 
 export interface ScenarioStatus {
   state: ScenarioState
-  scenarioId: string
-  description: string
-  elapsedSeconds: number
-  activeEvents: string[]
-  lastUpdate: string
+  log: string[]
+  lastUpdated: string
+  elapsedSeconds?: number
 }
 
-// ============================================================
-// API Response Wrappers
-// ============================================================
+// ---- API Response Wrappers ----
 
-export interface ApiResponse<T> {
-  success: boolean
-  data?: T
-  error?: string
-  timestamp: string
-}
-
-export interface ServiceListResponse {
+export interface ServicesResponse {
   services: ServiceRecord[]
   count: number
-  timestamp: string
 }
 
-export interface PolicyListResponse {
+export interface PoliciesResponse {
   policies: AuthPolicy[]
   count: number
 }
 
-export interface OrchestrationLogResponse {
+export interface OrchLogsResponse {
   logs: OrchestrationLog[]
   count: number
-}
-
-// ============================================================
-// UI-only helper types
-// ============================================================
-
-export interface ServiceNode {
-  id: string
-  label: string
-  type: 'iDT' | 'cDT' | 'core'
-  port: number
-  status: 'online' | 'offline' | 'warning'
-}
-
-export interface ServiceEdge {
-  from: string
-  to: string
-  label?: string
-}
-
-export interface AddPolicyPayload {
-  consumerId: string
-  providerId: string
-  serviceDefinition: string
 }

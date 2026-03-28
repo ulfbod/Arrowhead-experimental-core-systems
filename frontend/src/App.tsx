@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react'
 import SystemView from './components/SystemView'
 import CDTaView from './components/CDTaView'
 import CDTbView from './components/CDTbView'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import usePolling from './hooks/usePolling'
 import { urls, startScenario, resetScenario, injectHazard, triggerGasSpike, clearAll } from './api'
 import type { ScenarioStatus } from './types'
@@ -200,9 +201,15 @@ const App: React.FC = () => {
           PAGE CONTENT
           ==================================================== */}
       <main style={{ flex: 1, overflowY: 'auto' }}>
-        {activeTab === 'system' && <SystemView />}
-        {activeTab === 'cdta'   && <CDTaView />}
-        {activeTab === 'cdtb'   && <CDTbView />}
+        <ErrorBoundary name="System View">
+          {activeTab === 'system' && <SystemView />}
+        </ErrorBoundary>
+        <ErrorBoundary name="cDTa View">
+          {activeTab === 'cdta' && <CDTaView />}
+        </ErrorBoundary>
+        <ErrorBoundary name="cDTb View">
+          {activeTab === 'cdtb' && <CDTbView />}
+        </ErrorBoundary>
       </main>
 
       {/* ====================================================
