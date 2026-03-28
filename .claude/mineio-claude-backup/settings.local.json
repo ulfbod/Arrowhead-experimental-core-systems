@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed -n '4,599p' README.md)",
+      "Read(//tmp/**)",
+      "Bash(git rebase:*)"
+    ]
+  }
+}
