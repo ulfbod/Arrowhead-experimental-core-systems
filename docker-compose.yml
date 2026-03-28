@@ -1,0 +1,401 @@
+version: "3.9"
+
+networks:
+  mineio-net:
+    driver: bridge
+
+services:
+
+  # ── Arrowhead Core ──────────────────────────────────────────────────────────
+  arrowhead:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: arrowhead
+    container_name: arrowhead
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      HOST: "arrowhead"
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  # ── iDT Layer ───────────────────────────────────────────────────────────────
+  idt1a:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: idt-robot
+    container_name: idt1a
+    ports:
+      - "8101:8101"
+    environment:
+      PORT: "8101"
+      HOST: "idt1a"
+      IDT_ID: "idt1a"
+      IDT_NAME: "Inspection Robot A"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+    depends_on:
+      - arrowhead
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  idt1b:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: idt-robot
+    container_name: idt1b
+    ports:
+      - "8102:8102"
+    environment:
+      PORT: "8102"
+      HOST: "idt1b"
+      IDT_ID: "idt1b"
+      IDT_NAME: "Inspection Robot B"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+    depends_on:
+      - arrowhead
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  idt2a:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: idt-gas
+    container_name: idt2a
+    ports:
+      - "8201:8201"
+    environment:
+      PORT: "8201"
+      HOST: "idt2a"
+      IDT_ID: "idt2a"
+      IDT_NAME: "Gas Sensing Unit A"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+    depends_on:
+      - arrowhead
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  idt2b:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: idt-gas
+    container_name: idt2b
+    ports:
+      - "8202:8202"
+    environment:
+      PORT: "8202"
+      HOST: "idt2b"
+      IDT_ID: "idt2b"
+      IDT_NAME: "Gas Sensing Unit B"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+    depends_on:
+      - arrowhead
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  idt3a:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: idt-lhd
+    container_name: idt3a
+    ports:
+      - "8301:8301"
+    environment:
+      PORT: "8301"
+      HOST: "idt3a"
+      IDT_ID: "idt3a"
+      IDT_NAME: "LHD Vehicle A"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+    depends_on:
+      - arrowhead
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  idt3b:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: idt-lhd
+    container_name: idt3b
+    ports:
+      - "8302:8302"
+    environment:
+      PORT: "8302"
+      HOST: "idt3b"
+      IDT_ID: "idt3b"
+      IDT_NAME: "LHD Vehicle B"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+    depends_on:
+      - arrowhead
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  idt4:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: idt-teleremote
+    container_name: idt4
+    ports:
+      - "8401:8401"
+    environment:
+      PORT: "8401"
+      HOST: "idt4"
+      IDT_ID: "idt4"
+      IDT_NAME: "Tele-Remote Station"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+    depends_on:
+      - arrowhead
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  # ── Lower cDT Layer ──────────────────────────────────────────────────────────
+  cdt1:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: cdt1
+    container_name: cdt1
+    ports:
+      - "8501:8501"
+    environment:
+      PORT: "8501"
+      HOST: "cdt1"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+      IDT1B_URL: "http://idt1b:8102"
+    depends_on:
+      - arrowhead
+      - idt1b
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  cdt2:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: cdt2
+    container_name: cdt2
+    ports:
+      - "8502:8502"
+    environment:
+      PORT: "8502"
+      HOST: "cdt2"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+      IDT2B_URL: "http://idt2b:8202"
+    depends_on:
+      - arrowhead
+      - idt2b
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  cdt3:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: cdt3
+    container_name: cdt3
+    ports:
+      - "8503:8503"
+    environment:
+      PORT: "8503"
+      HOST: "cdt3"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+      CDT1_URL: "http://cdt1:8501"
+      CDT2_URL: "http://cdt2:8502"
+      IDT1A_URL: "http://idt1a:8101"
+      IDT1B_URL: "http://idt1b:8102"
+    depends_on:
+      - arrowhead
+      - cdt1
+      - cdt2
+      - idt1a
+      - idt1b
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  cdt4:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: cdt4
+    container_name: cdt4
+    ports:
+      - "8504:8504"
+    environment:
+      PORT: "8504"
+      HOST: "cdt4"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+      IDT3B_URL: "http://idt3b:8302"
+    depends_on:
+      - arrowhead
+      - idt3b
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  cdt5:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: cdt5
+    container_name: cdt5
+    ports:
+      - "8505:8505"
+    environment:
+      PORT: "8505"
+      HOST: "cdt5"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+      IDT4_URL: "http://idt4:8401"
+    depends_on:
+      - arrowhead
+      - idt4
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  # ── Upper cDT Layer ──────────────────────────────────────────────────────────
+  cdta:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: cdta
+    container_name: cdta
+    ports:
+      - "8601:8601"
+    environment:
+      PORT: "8601"
+      HOST: "cdta"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+      CDT1_URL: "http://cdt1:8501"
+      CDT3_URL: "http://cdt3:8503"
+      CDT4_URL: "http://cdt4:8504"
+      CDT5_URL: "http://cdt5:8505"
+    depends_on:
+      - arrowhead
+      - cdt1
+      - cdt3
+      - cdt4
+      - cdt5
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  cdtb:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: cdtb
+    container_name: cdtb
+    ports:
+      - "8602:8602"
+    environment:
+      PORT: "8602"
+      HOST: "cdtb"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+      CDT2_URL: "http://cdt2:8502"
+      CDT3_URL: "http://cdt3:8503"
+    depends_on:
+      - arrowhead
+      - cdt2
+      - cdt3
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  # ── Scenario Runner ──────────────────────────────────────────────────────────
+  scenario:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: scenario
+    container_name: scenario
+    ports:
+      - "8700:8700"
+    environment:
+      PORT: "8700"
+      HOST: "scenario"
+      ARROWHEAD_URL: "http://arrowhead:8000"
+      IDT1A_URL: "http://idt1a:8101"
+      IDT1B_URL: "http://idt1b:8102"
+      IDT2A_URL: "http://idt2a:8201"
+      IDT2B_URL: "http://idt2b:8202"
+      IDT3A_URL: "http://idt3a:8301"
+      IDT3B_URL: "http://idt3b:8302"
+      IDT4_URL: "http://idt4:8401"
+      CDT1_URL: "http://cdt1:8501"
+      CDT2_URL: "http://cdt2:8502"
+      CDT3_URL: "http://cdt3:8503"
+      CDT4_URL: "http://cdt4:8504"
+      CDT5_URL: "http://cdt5:8505"
+      CDTA_URL: "http://cdta:8601"
+      CDTB_URL: "http://cdtb:8602"
+    depends_on:
+      - arrowhead
+      - idt1a
+      - idt1b
+      - idt2a
+      - idt2b
+      - idt3a
+      - idt3b
+      - idt4
+      - cdt1
+      - cdt2
+      - cdt3
+      - cdt4
+      - cdt5
+      - cdta
+      - cdtb
+    networks:
+      - mineio-net
+    restart: unless-stopped
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_ARROWHEAD_URL: "http://localhost:8000"
+      VITE_SCENARIO_URL: "http://localhost:8700"
+    depends_on:
+      - arrowhead
+      - scenario
+    networks:
+      - mineio-net
+    restart: unless-stopped

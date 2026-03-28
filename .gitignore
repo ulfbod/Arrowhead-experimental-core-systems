@@ -1,0 +1,40 @@
+# Go
+backend/vendor/
+backend/bin/
+# Compiled binaries in backend root
+backend/cdta
+backend/cdtb
+backend/scenario
+backend/arrowhead
+backend/idt-robot
+backend/idt-gas
+backend/idt-lhd
+backend/idt-teleremote
+*.exe
+*.test
+*.out
+
+# PDF source material
+*.pdf
+*.pdf:Zone.Identifier
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Docker
+docker-compose.override.yml
