@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(for d:*)",
+      "Bash(do echo:*)",
+      "Read(//home/uffe/projects/MineIO_paper/**)",
+      "Bash(done)",
+      "Bash(go build:*)",
+      "Bash(chmod:*)",
+      "Bash(git reset:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(Part-Autonomous Industrial Mobile Machines\". Implements a three-layer architecture:*)",
+      "Bash(git rm:*)",
+      "Bash(git push:*)",
+      "Bash(ssh:*)"
+    ]
+  }
+}
