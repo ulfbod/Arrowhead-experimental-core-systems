@@ -312,21 +312,25 @@ func (s *CDTbService) generateRecommendations() []string {
 // ---- Component fetch helpers -------------------------------------------------------
 
 func (s *CDTbService) fetchGas() *common.GasMonitorResult {
-	var result common.GasMonitorResult
-	if err := common.DoRequest("GET", s.comps.CDT2+"/state", "", s.id, nil, &result); err != nil {
+	var resp struct {
+		GasMonitor common.GasMonitorResult `json:"gasMonitor"`
+	}
+	if err := common.DoRequest("GET", s.comps.CDT2+"/state", "", s.id, nil, &resp); err != nil {
 		log.Printf("[%s] fetch cDT2 gas state: %v", s.id, err)
 		return nil
 	}
-	return &result
+	return &resp.GasMonitor
 }
 
 func (s *CDTbService) fetchHazards() *common.HazardReport {
-	var result common.HazardReport
-	if err := common.DoRequest("GET", s.comps.CDT3+"/state", "", s.id, nil, &result); err != nil {
+	var resp struct {
+		HazardReport common.HazardReport `json:"hazardReport"`
+	}
+	if err := common.DoRequest("GET", s.comps.CDT3+"/state", "", s.id, nil, &resp); err != nil {
 		log.Printf("[%s] fetch cDT3 hazard state: %v", s.id, err)
 		return nil
 	}
-	return &result
+	return &resp.HazardReport
 }
 
 // ---- HTTP handlers ----------------------------------------------------------------

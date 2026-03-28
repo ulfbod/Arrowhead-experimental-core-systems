@@ -318,39 +318,47 @@ func (s *CDTaService) generateRecommendations() []string {
 // ---- Component fetch helpers -------------------------------------------------------
 
 func (s *CDTaService) fetchMapping() *common.MappingResult {
-	var result common.MappingResult
-	if err := common.DoRequest("GET", s.comps.CDT1+"/state", "", s.id, nil, &result); err != nil {
+	var resp struct {
+		Mapping common.MappingResult `json:"mapping"`
+	}
+	if err := common.DoRequest("GET", s.comps.CDT1+"/state", "", s.id, nil, &resp); err != nil {
 		log.Printf("[%s] fetch cDT1 mapping state: %v", s.id, err)
 		return nil
 	}
-	return &result
+	return &resp.Mapping
 }
 
 func (s *CDTaService) fetchHazards() *common.HazardReport {
-	var result common.HazardReport
-	if err := common.DoRequest("GET", s.comps.CDT3+"/state", "", s.id, nil, &result); err != nil {
+	var resp struct {
+		HazardReport common.HazardReport `json:"hazardReport"`
+	}
+	if err := common.DoRequest("GET", s.comps.CDT3+"/state", "", s.id, nil, &resp); err != nil {
 		log.Printf("[%s] fetch cDT3 hazard state: %v", s.id, err)
 		return nil
 	}
-	return &result
+	return &resp.HazardReport
 }
 
 func (s *CDTaService) fetchClearance() *common.ClearanceStatus {
-	var result common.ClearanceStatus
-	if err := common.DoRequest("GET", s.comps.CDT4+"/state", "", s.id, nil, &result); err != nil {
+	var resp struct {
+		Clearance common.ClearanceStatus `json:"clearance"`
+	}
+	if err := common.DoRequest("GET", s.comps.CDT4+"/state", "", s.id, nil, &resp); err != nil {
 		log.Printf("[%s] fetch cDT4 clearance state: %v", s.id, err)
 		return nil
 	}
-	return &result
+	return &resp.Clearance
 }
 
 func (s *CDTaService) fetchIntervention() *common.InterventionStatus {
-	var result common.InterventionStatus
-	if err := common.DoRequest("GET", s.comps.CDT5+"/state", "", s.id, nil, &result); err != nil {
+	var resp struct {
+		Intervention common.InterventionStatus `json:"intervention"`
+	}
+	if err := common.DoRequest("GET", s.comps.CDT5+"/state", "", s.id, nil, &resp); err != nil {
 		log.Printf("[%s] fetch cDT5 intervention state: %v", s.id, err)
 		return nil
 	}
-	return &result
+	return &resp.Intervention
 }
 
 // ---- HTTP Handlers ----------------------------------------------------------------

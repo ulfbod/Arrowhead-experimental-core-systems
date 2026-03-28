@@ -16,7 +16,11 @@
       "Bash(ssh:*)",
       "Bash(git merge:*)",
       "Bash(go version:*)",
-      "Bash(npm --version)"
+      "Bash(npm --version)",
+      "Bash(pkill -f \"cmd/cdta\")",
+      "Bash(pkill -f \"cmd/cdtb\")",
+      "Bash(grep -E 860[12])",
+      "Bash(netstat -tlnp)"
     ]
   }
 }
