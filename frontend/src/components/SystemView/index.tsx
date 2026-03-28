@@ -396,7 +396,7 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
         {/* Nodes */}
         {GRAPH_NODES.map(node => {
           const rec = serviceMap.get(node.id)
-          const status = rec?.status ?? 'offline'
+          const status = rec ? (rec.online ? 'online' : 'offline') : 'offline'
           const fill = node.type === 'iDT' ? '#1a2744' : node.type === 'cDT' ? '#211830' : '#122030'
           const stroke = typeColor(node.type)
           const dotColor = status === 'online' ? 'var(--green)' : status === 'offline' ? 'var(--red)' : 'var(--amber)'
@@ -519,6 +519,14 @@ const SystemView: React.FC = () => {
   // Build a map: service id → ServiceRecord
   const serviceMap = new Map<string, ServiceRecord>()
   services.forEach(s => serviceMap.set(s.id, s))
+  // Arrowhead Core never registers itself — infer online from a successful fetch
+  if (svcResp) {
+    serviceMap.set('arrowhead', {
+      id: 'arrowhead', name: 'Arrowhead Core', address: 'localhost', port: 8000,
+      serviceType: 'core', capabilities: [], metadata: {},
+      registeredAt: '', lastSeen: new Date().toISOString(), online: true,
+    })
+  }
 
   const handleAddPolicy = useCallback(async (payload: AddPolicyPayload) => {
     await addPolicy(payload)
