@@ -229,10 +229,11 @@ export interface SafeAccessDecision {
 export type ScenarioState = 'idle' | 'running' | 'complete' | 'failed'
 
 export interface ScenarioStatus {
-  state: ScenarioState
-  log: string[]
+  phase: string
+  progress: string[]
   lastUpdated: string
-  elapsedSeconds?: number
+  startedAt?: string
+  completedAt?: string
 }
 
 // ---- API Response Wrappers ----

@@ -30,9 +30,9 @@ const App: React.FC = () => {
   )
 
   const scenarioStateColor =
-    scenario?.state === 'running'  ? 'var(--green)' :
-    scenario?.state === 'paused'   ? 'var(--amber)' :
-    scenario?.state === 'complete' ? 'var(--blue)'  : 'var(--text-muted)'
+    scenario?.phase === 'running'   ? 'var(--green)' :
+    scenario?.phase === 'failed'    ? 'var(--red)'   :
+    scenario?.phase === 'completed' ? 'var(--blue)'  : 'var(--text-muted)'
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)' }}>
@@ -80,7 +80,7 @@ const App: React.FC = () => {
               width: 8, height: 8,
               borderRadius: '50%',
               background: scenarioStateColor,
-              boxShadow: scenario?.state === 'running' ? `0 0 6px ${scenarioStateColor}` : 'none',
+              boxShadow: scenario?.phase === 'running' ? `0 0 6px ${scenarioStateColor}` : 'none',
               flexShrink: 0,
             }}
           />
@@ -88,21 +88,15 @@ const App: React.FC = () => {
             Scenario:&nbsp;
           </span>
           <span style={{ fontWeight: 600, color: scenarioStateColor }}>
-            {scenario?.state ?? 'unknown'}
+            {scenario?.phase ?? 'unknown'}
           </span>
-          {scenario?.elapsedSeconds != null && (
-            <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>
-              {Math.floor(scenario.elapsedSeconds / 60).toString().padStart(2, '0')}:
-              {(scenario.elapsedSeconds % 60).toString().padStart(2, '0')}
-            </span>
-          )}
         </div>
 
         {/* Scenario action buttons */}
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button
             className="btn btn-success btn-sm"
-            disabled={!!scenarioLoading || scenario?.state === 'running'}
+            disabled={!!scenarioLoading || scenario?.phase === 'running'}
             onClick={() => runAction('start', startScenario)}
           >
             {scenarioLoading === 'start' ? <span className="loading-spinner" /> : null}
