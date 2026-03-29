@@ -136,14 +136,18 @@ func (s *CDT3Service) aggregate() {
 		log.Printf("[cdt3] cDT2 fetch error: %v", err)
 	}
 
-	// Fetch hazards from robot 1 via Arrowhead
+	// Fetch hazards from robot 1 (idt1a) directly
 	var r1 common.RobotState
-	err1 := s.ah.CallService("mapping", "GET", "/state", nil, &r1)
+	err1 := common.DoRequest(
+		"GET",
+		envOrDefault("IDT1A_URL", "http://localhost:8101")+"/state",
+		"", "cdt3", nil, &r1,
+	)
 	if err1 != nil {
-		log.Printf("[cdt3] Robot1 fetch error: %v", err1)
+		log.Printf("[cdt3] Robot1 (idt1a) fetch error: %v", err1)
 	}
 
-	// Fetch hazards from robot 2 directly
+	// Fetch hazards from robot 2 (idt1b) directly
 	var r2 common.RobotState
 	err2 := common.DoRequest(
 		"GET",
@@ -151,7 +155,7 @@ func (s *CDT3Service) aggregate() {
 		"", "cdt3", nil, &r2,
 	)
 	if err2 != nil {
-		log.Printf("[cdt3] Robot2 fetch error: %v", err2)
+		log.Printf("[cdt3] Robot2 (idt1b) fetch error: %v", err2)
 	}
 
 	// Collect all hazards

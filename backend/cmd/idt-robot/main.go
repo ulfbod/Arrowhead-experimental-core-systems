@@ -75,6 +75,7 @@ func main() {
 	mux.HandleFunc("/online", svc.handleOnline)
 	mux.HandleFunc("/hazard/inject", svc.handleHazardInject)
 	mux.HandleFunc("/hazard/clear", svc.handleHazardClear)
+	mux.HandleFunc("/simulate/reset", svc.handleSimulateReset)
 
 	handler := common.CORSMiddleware(mux)
 	log.Fatal(http.ListenAndServe(":"+port, handler))
@@ -292,6 +293,25 @@ func (s *RobotService) handleHazardClear(w http.ResponseWriter, r *http.Request)
 	s.mu.Unlock()
 	log.Printf("[%s] Hazard cleared: %s", id, body.ID)
 	common.WriteJSON(w, 200, map[string]string{"status": "cleared"})
+}
+
+func (s *RobotService) handleSimulateReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	s.mu.Lock()
+	s.state.BatteryPct = 100.0
+	s.state.MappingProgress = 0.0
+	s.state.AreaCoveredSqm = 0.0
+	s.state.SlamActive = false
+	s.state.NavigationStatus = "idle"
+	s.state.HazardsDetected = []common.Hazard{}
+	s.state.LastUpdated = time.Now()
+	id := s.state.ID
+	s.mu.Unlock()
+	log.Printf("[%s] State reset to initial values.", id)
+	common.WriteJSON(w, 200, map[string]string{"status": "reset"})
 }
 
 func envOrDefault(key, def string) string {

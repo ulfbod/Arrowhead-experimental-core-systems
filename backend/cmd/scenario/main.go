@@ -418,6 +418,27 @@ func (s *ScenarioService) handleScenarioReset(w http.ResponseWriter, r *http.Req
 	}
 	s.mu.Unlock()
 
+	// Reset all iDT states to initial values
+	for _, target := range []struct{ id, url string }{
+		{"idt1a", s.urls.IDT1a}, {"idt1b", s.urls.IDT1b},
+	} {
+		if err := s.post(target.url+"/simulate/reset", nil); err != nil {
+			log.Printf("[%s] WARNING: reset %s failed: %v", s.id, target.id, err)
+		}
+	}
+	normalGas := map[string]float64{"ch4": 0.1, "co": 5.0, "co2": 0.04, "o2": 20.9, "no2": 0.5}
+	for _, target := range []struct{ id, url string }{
+		{"idt2a", s.urls.IDT2a}, {"idt2b", s.urls.IDT2b},
+	} {
+		s.post(target.url+"/simulate/gas", normalGas)
+	}
+	for _, target := range []struct{ id, url string }{
+		{"idt3a", s.urls.IDT3a}, {"idt3b", s.urls.IDT3b},
+	} {
+		s.post(target.url+"/simulate/reset", nil)
+	}
+	s.post(s.urls.CDTa+"/mission/reset", nil)
+
 	log.Printf("[%s] Scenario reset to idle.", s.id)
 	common.WriteJSON(w, http.StatusOK, map[string]string{"status": "reset", "phase": string(ScenarioIdle)})
 }

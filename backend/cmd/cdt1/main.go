@@ -99,15 +99,18 @@ func (s *CDT1Service) fetchRobotStates() {
 		return
 	}
 
-	// Robot 1: discovered via Arrowhead orchestration for "mapping" capability
+	// Robot 1: direct call to iDT1a
 	var r1 common.RobotState
-	err1 := s.ah.CallService("mapping", "GET", "/state", nil, &r1)
+	err1 := common.DoRequest(
+		"GET",
+		envOrDefault("IDT1A_URL", "http://localhost:8101")+"/state",
+		"", "cdt1", nil, &r1,
+	)
 	if err1 != nil {
-		log.Printf("[cdt1] Robot1 fetch error: %v", err1)
+		log.Printf("[cdt1] Robot1 (idt1a) fetch error: %v", err1)
 	}
 
-	// Robot 2: direct call to iDT1b (Arrowhead returns first authorized provider;
-	// second robot reached via known sidecar URL for demo purposes)
+	// Robot 2: direct call to iDT1b
 	var r2 common.RobotState
 	err2 := common.DoRequest(
 		"GET",
@@ -115,7 +118,7 @@ func (s *CDT1Service) fetchRobotStates() {
 		"", "cdt1", nil, &r2,
 	)
 	if err2 != nil {
-		log.Printf("[cdt1] Robot2 fetch error: %v", err2)
+		log.Printf("[cdt1] Robot2 (idt1b) fetch error: %v", err2)
 	}
 
 	s.mu.Lock()
@@ -183,7 +186,7 @@ func (s *CDT1Service) handleStart(w http.ResponseWriter, r *http.Request) {
 		common.WriteError(w, 405, "POST required")
 		return
 	}
-	err1 := s.ah.CallService("slam", "POST", "/slam/start", nil, nil)
+	err1 := common.DoRequest("POST", envOrDefault("IDT1A_URL", "http://localhost:8101")+"/slam/start", "", "cdt1", nil, nil)
 	err2 := common.DoRequest(
 		"POST",
 		envOrDefault("IDT1B_URL", "http://localhost:8102")+"/slam/start",
@@ -206,7 +209,7 @@ func (s *CDT1Service) handleStop(w http.ResponseWriter, r *http.Request) {
 		common.WriteError(w, 405, "POST required")
 		return
 	}
-	err1 := s.ah.CallService("slam", "POST", "/slam/stop", nil, nil)
+	err1 := common.DoRequest("POST", envOrDefault("IDT1A_URL", "http://localhost:8101")+"/slam/stop", "", "cdt1", nil, nil)
 	err2 := common.DoRequest(
 		"POST",
 		envOrDefault("IDT1B_URL", "http://localhost:8102")+"/slam/stop",

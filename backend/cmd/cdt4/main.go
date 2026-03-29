@@ -98,9 +98,13 @@ func (s *CDT4Service) fetchLHDStates() {
 		return
 	}
 
-	// LHD 1: discovered via Arrowhead for "clearance" capability
+	// LHD 1: direct call to iDT3a
 	var l1 common.LHDState
-	err1 := s.ah.CallService("debris-clearance", "GET", "/state", nil, &l1)
+	err1 := common.DoRequest(
+		"GET",
+		envOrDefault("IDT3A_URL", "http://localhost:8301")+"/state",
+		"", "cdt4", nil, &l1,
+	)
 	if err1 != nil {
 		log.Printf("[cdt4] LHD1 fetch error: %v", err1)
 	}
@@ -200,7 +204,11 @@ func (s *CDT4Service) handleClearanceStart(w http.ResponseWriter, r *http.Reques
 		common.WriteError(w, 405, "POST required")
 		return
 	}
-	err1 := s.ah.CallService("clearance", "POST", "/clearance/start", nil, nil)
+	err1 := common.DoRequest(
+		"POST",
+		envOrDefault("IDT3A_URL", "http://localhost:8301")+"/clearance/start",
+		"", "cdt4", nil, nil,
+	)
 	err2 := common.DoRequest(
 		"POST",
 		envOrDefault("IDT3B_URL", "http://localhost:8302")+"/clearance/start",
@@ -223,7 +231,11 @@ func (s *CDT4Service) handleClearanceStop(w http.ResponseWriter, r *http.Request
 		common.WriteError(w, 405, "POST required")
 		return
 	}
-	err1 := s.ah.CallService("clearance", "POST", "/clearance/stop", nil, nil)
+	err1 := common.DoRequest(
+		"POST",
+		envOrDefault("IDT3A_URL", "http://localhost:8301")+"/clearance/stop",
+		"", "cdt4", nil, nil,
+	)
 	err2 := common.DoRequest(
 		"POST",
 		envOrDefault("IDT3B_URL", "http://localhost:8302")+"/clearance/stop",
@@ -260,7 +272,11 @@ func (s *CDT4Service) handleSimulateReset(w http.ResponseWriter, r *http.Request
 		common.WriteError(w, 405, "POST required")
 		return
 	}
-	err1 := s.ah.CallService("clearance", "POST", "/simulate/reset", nil, nil)
+	err1 := common.DoRequest(
+		"POST",
+		envOrDefault("IDT3A_URL", "http://localhost:8301")+"/simulate/reset",
+		"", "cdt4", nil, nil,
+	)
 	err2 := common.DoRequest(
 		"POST",
 		envOrDefault("IDT3B_URL", "http://localhost:8302")+"/simulate/reset",

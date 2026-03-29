@@ -97,14 +97,18 @@ func (s *CDT2Service) fetchSensorStates() {
 		return
 	}
 
-	// Sensor 1: discovered via Arrowhead for "gas-measurement" capability
+	// Sensor 1: direct call to iDT2a
 	var s1 common.GasSensorState
-	err1 := s.ah.CallService("gas-measurement", "GET", "/state", nil, &s1)
+	err1 := common.DoRequest(
+		"GET",
+		envOrDefault("IDT2A_URL", "http://localhost:8201")+"/state",
+		"", "cdt2", nil, &s1,
+	)
 	if err1 != nil {
-		log.Printf("[cdt2] Sensor1 fetch error: %v", err1)
+		log.Printf("[cdt2] Sensor1 (idt2a) fetch error: %v", err1)
 	}
 
-	// Sensor 2: direct call to iDT2b sidecar URL
+	// Sensor 2: direct call to iDT2b
 	var s2 common.GasSensorState
 	err2 := common.DoRequest(
 		"GET",
@@ -112,7 +116,7 @@ func (s *CDT2Service) fetchSensorStates() {
 		"", "cdt2", nil, &s2,
 	)
 	if err2 != nil {
-		log.Printf("[cdt2] Sensor2 fetch error: %v", err2)
+		log.Printf("[cdt2] Sensor2 (idt2b) fetch error: %v", err2)
 	}
 
 	s.mu.Lock()
@@ -272,7 +276,7 @@ func (s *CDT2Service) handleThreshold(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err1 := s.ah.CallService("gas-measurement", "POST", "/threshold", body, nil)
+	err1 := common.DoRequest("POST", envOrDefault("IDT2A_URL", "http://localhost:8201")+"/threshold", "", "cdt2", body, nil)
 	err2 := common.DoRequest(
 		"POST",
 		envOrDefault("IDT2B_URL", "http://localhost:8202")+"/threshold",
@@ -312,7 +316,7 @@ func (s *CDT2Service) handleSimulateSpike(w http.ResponseWriter, r *http.Request
 	var body map[string]interface{}
 	json.NewDecoder(r.Body).Decode(&body)
 
-	err1 := s.ah.CallService("gas-measurement", "POST", "/simulate/spike", body, nil)
+	err1 := common.DoRequest("POST", envOrDefault("IDT2A_URL", "http://localhost:8201")+"/simulate/spike", "", "cdt2", body, nil)
 	err2 := common.DoRequest(
 		"POST",
 		envOrDefault("IDT2B_URL", "http://localhost:8202")+"/simulate/spike",

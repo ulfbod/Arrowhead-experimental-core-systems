@@ -44,12 +44,12 @@ sleep 3
 
 # ── Lower cDT Layer ────────────────────────────────────────────────────────────
 PORT=8501 ARROWHEAD_URL=http://localhost:8000 \
-  IDT1B_URL=http://localhost:8102 \
+  IDT1A_URL=http://localhost:8101 IDT1B_URL=http://localhost:8102 \
   go run ./cmd/cdt1 &
 PIDS+=($!)
 
 PORT=8502 ARROWHEAD_URL=http://localhost:8000 \
-  IDT2B_URL=http://localhost:8202 \
+  IDT2A_URL=http://localhost:8201 IDT2B_URL=http://localhost:8202 \
   go run ./cmd/cdt2 &
 PIDS+=($!)
 
@@ -60,7 +60,7 @@ PORT=8503 ARROWHEAD_URL=http://localhost:8000 \
 PIDS+=($!)
 
 PORT=8504 ARROWHEAD_URL=http://localhost:8000 \
-  IDT3B_URL=http://localhost:8302 \
+  IDT3A_URL=http://localhost:8301 IDT3B_URL=http://localhost:8302 \
   go run ./cmd/cdt4 &
 PIDS+=($!)
 

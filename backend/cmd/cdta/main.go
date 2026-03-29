@@ -146,10 +146,25 @@ func (s *CDTaService) evaluateMission() {
 
 	switch currentPhase {
 	case common.PhaseExploring:
-		// Advance when mapping progress exceeds 70%
-		if mapping != nil && mapping.CoveragePct > 70 {
-			s.transitionTo(common.PhaseHazardScan,
-				fmt.Sprintf("Mapping coverage reached %.1f%% (threshold 70%%) – transitioning to hazard scan.", mapping.CoveragePct))
+		// Advance when mapping progress exceeds 30%, or critical hazards are detected, or after 90s
+		criticalDetected := hazardReport != nil && (hazardReport.OverallRisk == "critical" || hazardReport.OverallRisk == "high")
+		coverageReached := mapping != nil && mapping.CoveragePct > 30
+		timeout := timeInPhase > 90*time.Second
+		if coverageReached || criticalDetected || timeout {
+			reason := fmt.Sprintf("Mapping coverage %.1f%%", func() float64 {
+				if mapping != nil {
+					return mapping.CoveragePct
+				}
+				return 0
+			}())
+			if criticalDetected {
+				reason += fmt.Sprintf(" – %s hazards detected, triggering hazard scan", hazardReport.OverallRisk)
+			} else if timeout {
+				reason += " – exploration timeout, advancing to hazard scan"
+			} else {
+				reason += " (threshold 30%%) – transitioning to hazard scan"
+			}
+			s.transitionTo(common.PhaseHazardScan, reason)
 		}
 
 	case common.PhaseHazardScan:
@@ -168,14 +183,23 @@ func (s *CDTaService) evaluateMission() {
 		}
 
 	case common.PhaseClearance:
-		// Advance when combined debris cleared exceeds 80%
-		if clearance != nil && clearance.TotalDebrisPct > 80 {
+		// Advance when combined debris cleared exceeds 80%, all hazards cleared, or after 60s timeout
+		debrisDone := clearance != nil && clearance.TotalDebrisPct > 80
+		hazardsDone := hazardReport != nil && hazardReport.SafeForEntry
+		clearanceTimeout := timeInPhase > 60*time.Second
+		if debrisDone {
 			s.transitionTo(common.PhaseVerifying,
 				fmt.Sprintf("Debris clearance at %.1f%% (threshold 80%%) – entering verification phase.", clearance.TotalDebrisPct))
+		} else if hazardsDone && clearanceTimeout {
+			s.transitionTo(common.PhaseVerifying,
+				"Clearance timeout (60s) – all hazards resolved and site assessed safe. Entering verification phase.")
+		} else if clearanceTimeout {
+			s.transitionTo(common.PhaseVerifying,
+				"Clearance timeout (60s) – proceeding to verification phase.")
 		}
 
 	case common.PhaseVerifying:
-		// Advance when no active hazards and route is clear
+		// Advance when no active hazards and route is clear, or after 30s timeout
 		noActiveHazards := true
 		if hazardReport != nil {
 			for _, h := range hazardReport.Hazards {
@@ -186,9 +210,13 @@ func (s *CDTaService) evaluateMission() {
 			}
 		}
 		routeClear := clearance != nil && clearance.RouteClear
-		if noActiveHazards && routeClear {
-			s.transitionTo(common.PhaseComplete,
-				"Verification complete – no active hazards detected and haul route confirmed clear. Mission success.")
+		verifyTimeout := timeInPhase > 30*time.Second
+		if (noActiveHazards && routeClear) || verifyTimeout {
+			reason := "Verification complete – no active hazards detected and haul route confirmed clear. Mission success."
+			if verifyTimeout && !(noActiveHazards && routeClear) {
+				reason = "Verification timeout (30s) – final sweep complete. Mission concluded."
+			}
+			s.transitionTo(common.PhaseComplete, reason)
 			now := time.Now()
 			s.status.CompletedAt = &now
 			s.missionActive = false
@@ -416,6 +444,15 @@ func (s *CDTaService) handleMissionStart(w http.ResponseWriter, r *http.Request)
 	phaseEntry := fmt.Sprintf("[%s] PHASE TRANSITION: idle -> exploring | Mission start command received. Deploying inspection robots to blast zone.", now.Format(time.RFC3339))
 	s.status.Log = append(s.status.Log, phaseEntry)
 	log.Printf("[%s] %s", s.id, phaseEntry)
+
+	// Activate SLAM mapping on robots via cDT1
+	go func() {
+		if err := common.DoRequest("POST", s.comps.CDT1+"/start", "", s.id, nil, nil); err != nil {
+			log.Printf("[%s] WARNING: could not start SLAM via cDT1: %v", s.id, err)
+		} else {
+			log.Printf("[%s] SLAM activated on inspection robots via cDT1.", s.id)
+		}
+	}()
 
 	s.status.Recommendations = s.generateRecommendations()
 	s.status.LastUpdated = now
