@@ -14,8 +14,8 @@ html {
 
 body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  background-color: #0f1117;
-  color: #e0e6ed;
+  background-color: #f8fafc;
+  color: #0f172a;
   line-height: 1.5;
   min-height: 100vh;
   overflow-x: hidden;
@@ -32,11 +32,11 @@ img, svg { display: block; max-width: 100%; }
    ============================================================ */
 :root {
   /* Backgrounds */
-  --bg-primary:    #0f1117;
-  --bg-surface:    #161b27;
-  --bg-elevated:   #1c2333;
-  --bg-hover:      #222a3a;
-  --bg-active:     #263245;
+  --bg-primary:    #f8fafc;
+  --bg-surface:    #ffffff;
+  --bg-elevated:   #f1f5f9;
+  --bg-hover:      #e2e8f0;
+  --bg-active:     #dbeafe;
 
   /* Accent colours */
   --blue:          #2196F3;
@@ -55,14 +55,14 @@ img, svg { display: block; max-width: 100%; }
   --cyan:          #00BCD4;
 
   /* Text */
-  --text-primary:  #e0e6ed;
-  --text-secondary:#8b9ab0;
-  --text-muted:    #4a5568;
-  --text-inverse:  #0f1117;
+  --text-primary:  #0f172a;
+  --text-secondary:#475569;
+  --text-muted:    #94a3b8;
+  --text-inverse:  #ffffff;
 
   /* Borders */
-  --border:        #2a3347;
-  --border-light:  #1e2a3d;
+  --border:        #e2e8f0;
+  --border-light:  #f1f5f9;
 
   /* Status */
   --status-online:  var(--green);
@@ -89,9 +89,9 @@ img, svg { display: block; max-width: 100%; }
   --radius-full: 9999px;
 
   /* Shadows */
-  --shadow-sm:  0 1px 3px rgba(0,0,0,0.4);
-  --shadow:     0 4px 12px rgba(0,0,0,0.5);
-  --shadow-lg:  0 8px 32px rgba(0,0,0,0.6);
+  --shadow-sm:  0 1px 3px rgba(0,0,0,0.08);
+  --shadow:     0 4px 12px rgba(0,0,0,0.12);
+  --shadow-lg:  0 8px 32px rgba(0,0,0,0.16);
 
   /* Transitions */
   --transition: 150ms ease;
@@ -115,7 +115,7 @@ code {
   background: var(--bg-elevated);
   padding: 1px 5px;
   border-radius: var(--radius-sm);
-  color: var(--cyan);
+  color: var(--blue-dark);
 }
 
 /* ============================================================
@@ -202,7 +202,7 @@ code {
 }
 
 .card:hover {
-  border-color: #3a4a63;
+  border-color: #cbd5e1;
 }
 
 .card-header {
@@ -234,7 +234,7 @@ code {
 
 .card-elevated {
   background: var(--bg-elevated);
-  border-color: #2d3a52;
+  border-color: #e2e8f0;
 }
 
 .card-highlight-blue   { border-left: 3px solid var(--blue); }
@@ -370,7 +370,7 @@ code {
 
 .btn-warning {
   background: var(--amber);
-  color: #0f1117;
+  color: #ffffff;
   border-color: var(--amber);
 }
 .btn-warning:hover { background: #FB8C00; border-color: #FB8C00; }
@@ -811,8 +811,8 @@ tbody td {
    ============================================================ */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-primary); }
-::-webkit-scrollbar-thumb { background: #2a3347; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #3a4a63; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 /* ============================================================
    Loading / Error States

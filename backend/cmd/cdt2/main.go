@@ -107,8 +107,9 @@ func main() {
 	mux.HandleFunc("/provider/fail", svc.handleProviderFail)
 	mux.HandleFunc("/provider/recover", svc.handleProviderRecover)
 	mux.HandleFunc("/provider/degrade", svc.handleProviderDegrade)
-	// Experiment support: trigger an immediate poll cycle
+	// Experiment support: trigger an immediate poll cycle + push config from scenario
 	mux.HandleFunc("/trigger-poll", svc.handleTriggerPoll)
+	mux.HandleFunc("/config", svc.handleConfig)
 
 	log.Printf("[%s] Listening on :%s", id, port)
 	log.Fatal(http.ListenAndServe(":"+port, corsMiddleware(mux)))
@@ -378,6 +379,32 @@ func (s *CDT2Service) handleProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	common.WriteJSON(w, 200, s.ps.State())
+}
+
+// handleConfig sets the process-local network delay and orchestration mode.
+// Called by the scenario runner to synchronise experiment config into this process.
+// Body: {"networkDelayMs": 20, "orchestrationMode": "central"}
+func (s *CDT2Service) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	var body struct {
+		NetworkDelayMs    int    `json:"networkDelayMs"`
+		OrchestrationMode string `json:"orchestrationMode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		common.WriteError(w, 400, "invalid JSON")
+		return
+	}
+	common.SetNetworkDelayMs(body.NetworkDelayMs)
+	if body.OrchestrationMode != "" {
+		common.SetOrchestrationMode(body.OrchestrationMode)
+	}
+	common.WriteJSON(w, 200, map[string]interface{}{
+		"networkDelayMs":    body.NetworkDelayMs,
+		"orchestrationMode": common.GetOrchestrationMode(),
+	})
 }
 
 // handleProviderFail forces the named provider into failed state.

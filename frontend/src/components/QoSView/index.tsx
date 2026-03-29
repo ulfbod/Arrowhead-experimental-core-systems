@@ -15,26 +15,26 @@ import type { SourceQoS, ExperimentResults, FailoverEvent } from '../../types'
 
 function QoSBadge({ value, label }: { value: number; label: string }) {
   const pct = Math.round(value * 100)
-  const color = pct >= 90 ? '#22c55e' : pct >= 70 ? '#f59e0b' : '#ef4444'
+  const color = pct >= 90 ? '#16a34a' : pct >= 70 ? '#d97706' : '#dc2626'
   return (
     <span style={{ marginRight: 12, fontSize: 13 }}>
-      <span style={{ color: '#94a3b8' }}>{label}: </span>
+      <span style={{ color: '#64748b' }}>{label}: </span>
       <span style={{ color, fontWeight: 600 }}>{label === 'Latency' ? `${value.toFixed(1)}ms` : `${pct}%`}</span>
     </span>
   )
 }
 
 function ProviderRow({ p, isActive }: { p: import('../../types').ProviderState; isActive: boolean }) {
-  const bg = isActive ? '#1e3a5f' : '#1e293b'
-  const border = isActive ? '1px solid #3b82f6' : '1px solid #334155'
+  const bg = isActive ? '#eff6ff' : '#ffffff'
+  const border = isActive ? '1px solid #3b82f6' : '1px solid #e2e8f0'
   return (
     <div style={{ padding: '8px 12px', background: bg, border, borderRadius: 6, marginBottom: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-        <span style={{ fontWeight: 600, color: '#f1f5f9' }}>{p.id}</span>
-        {p.primary && <span style={{ fontSize: 11, background: '#1d4ed8', color: '#bfdbfe', padding: '1px 6px', borderRadius: 3 }}>PRIMARY</span>}
-        {isActive && <span style={{ fontSize: 11, background: '#166534', color: '#bbf7d0', padding: '1px 6px', borderRadius: 3 }}>ACTIVE</span>}
-        {!p.online && <span style={{ fontSize: 11, background: '#7f1d1d', color: '#fecaca', padding: '1px 6px', borderRadius: 3 }}>OFFLINE</span>}
-        {p.degraded && <span style={{ fontSize: 11, background: '#78350f', color: '#fde68a', padding: '1px 6px', borderRadius: 3 }}>DEGRADED</span>}
+        <span style={{ fontWeight: 600, color: '#0f172a' }}>{p.id}</span>
+        {p.primary && <span style={{ fontSize: 11, background: '#dbeafe', color: '#1d4ed8', padding: '1px 6px', borderRadius: 3 }}>PRIMARY</span>}
+        {isActive && <span style={{ fontSize: 11, background: '#dcfce7', color: '#166534', padding: '1px 6px', borderRadius: 3 }}>ACTIVE</span>}
+        {!p.online && <span style={{ fontSize: 11, background: '#fee2e2', color: '#dc2626', padding: '1px 6px', borderRadius: 3 }}>OFFLINE</span>}
+        {p.degraded && <span style={{ fontSize: 11, background: '#fef3c7', color: '#92400e', padding: '1px 6px', borderRadius: 3 }}>DEGRADED</span>}
       </div>
       <div>
         <QoSBadge value={p.qos.accuracy} label="Accuracy" />
@@ -47,17 +47,17 @@ function ProviderRow({ p, isActive }: { p: import('../../types').ProviderState; 
 
 function ProviderPanel({ title, qos }: { title: string; qos: SourceQoS | null }) {
   if (!qos) return (
-    <div style={{ background: '#1e293b', borderRadius: 8, padding: 16, marginBottom: 16 }}>
-      <div style={{ color: '#94a3b8' }}>{title} – loading…</div>
+    <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+      <div style={{ color: '#64748b' }}>{title} – loading…</div>
     </div>
   )
   const degradedBadge = qos.degraded
-    ? <span style={{ marginLeft: 8, fontSize: 11, background: '#78350f', color: '#fde68a', padding: '2px 6px', borderRadius: 3 }}>DEGRADED</span>
+    ? <span style={{ marginLeft: 8, fontSize: 11, background: '#fef3c7', color: '#92400e', padding: '2px 6px', borderRadius: 3 }}>DEGRADED</span>
     : null
   return (
-    <div style={{ background: '#1e293b', borderRadius: 8, padding: 16, marginBottom: 16 }}>
-      <div style={{ fontWeight: 600, color: '#f1f5f9', marginBottom: 10 }}>
-        {title} – <span style={{ color: '#94a3b8', fontSize: 13 }}>{qos.capability}</span>{degradedBadge}
+    <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+      <div style={{ fontWeight: 600, color: '#0f172a', marginBottom: 10 }}>
+        {title} – <span style={{ color: '#64748b', fontSize: 13 }}>{qos.capability}</span>{degradedBadge}
       </div>
       {qos.providers.map(p => <ProviderRow key={p.id} p={p} isActive={p.active} />)}
       {qos.recentFailovers.length > 0 && (
@@ -71,18 +71,18 @@ function FailoverHistory({ events }: { events: FailoverEvent[] }) {
   const recent = [...events].reverse().slice(0, 5)
   return (
     <div style={{ marginTop: 10 }}>
-      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Recent failover events</div>
+      <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Recent failover events</div>
       {recent.map(ev => (
-        <div key={ev.eventId} style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 4, padding: '6px 10px', marginBottom: 4, fontSize: 12 }}>
-          <div style={{ color: '#f1f5f9' }}>
-            <span style={{ color: '#f87171' }}>{ev.prevProvider}</span>
+        <div key={ev.eventId} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 4, padding: '6px 10px', marginBottom: 4, fontSize: 12 }}>
+          <div style={{ color: '#0f172a' }}>
+            <span style={{ color: '#dc2626' }}>{ev.prevProvider}</span>
             {' → '}
-            <span style={{ color: '#4ade80' }}>{ev.nextProvider}</span>
-            <span style={{ color: '#94a3b8', marginLeft: 8 }}>
+            <span style={{ color: '#16a34a' }}>{ev.nextProvider}</span>
+            <span style={{ color: '#64748b', marginLeft: 8 }}>
               mode={ev.orchestrationMode} net={ev.networkDelayMs}ms
             </span>
           </div>
-          <div style={{ color: '#94a3b8', marginTop: 2 }}>
+          <div style={{ color: '#64748b', marginTop: 2 }}>
             decision={ev.decisionDelayMs.toFixed(1)}ms &nbsp;
             total={ev.failToSwitchMs.toFixed(0)}ms &nbsp;
             acc: {(ev.qosBefore.accuracy * 100).toFixed(0)}% → {(ev.qosAfter.accuracy * 100).toFixed(0)}%
@@ -104,17 +104,19 @@ function ExperimentControl({
   expRunning: boolean
 }) {
   const btnStyle = (active: boolean) => ({
-    padding: '6px 14px', borderRadius: 4, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
-    background: active ? '#1d4ed8' : '#334155', color: active ? '#fff' : '#94a3b8',
+    padding: '6px 14px', borderRadius: 4, border: '1px solid', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+    background: active ? '#2563eb' : '#f1f5f9',
+    color: active ? '#fff' : '#475569',
+    borderColor: active ? '#2563eb' : '#e2e8f0',
   })
 
   return (
-    <div style={{ background: '#1e293b', borderRadius: 8, padding: 16, marginBottom: 16 }}>
-      <div style={{ fontWeight: 600, color: '#f1f5f9', marginBottom: 12 }}>Experiment Controls</div>
+    <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+      <div style={{ fontWeight: 600, color: '#0f172a', marginBottom: 12 }}>Experiment Controls</div>
 
       {/* Orchestration mode */}
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Orchestration Mode</div>
+        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Orchestration Mode</div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button style={btnStyle(orchMode === 'local')} onClick={() => setOrchMode('local')}>Local Failover</button>
           <button style={btnStyle(orchMode === 'central')} onClick={() => setOrchMode('central')}>Centralized (Arrowhead)</button>
@@ -123,28 +125,28 @@ function ExperimentControl({
 
       {/* Network delay */}
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>
-          Simulated Network Delay: <strong style={{ color: '#f1f5f9' }}>{netDelay}ms</strong>
+        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>
+          Simulated Network Delay: <strong style={{ color: '#0f172a' }}>{netDelay}ms</strong>
         </div>
         <input
           type="range" min={0} max={50} step={5} value={netDelay}
           onChange={e => setNetDelay(Number(e.target.value))}
           style={{ width: '100%', accentColor: '#3b82f6' }}
         />
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748b' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#94a3b8' }}>
           <span>0ms</span><span>10ms</span><span>20ms</span><span>30ms</span><span>40ms</span><span>50ms</span>
         </div>
       </div>
 
       {/* Quick fault injection */}
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Manual Fault Injection (idt2a)</div>
+        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Manual Fault Injection (idt2a)</div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button style={{ padding: '5px 12px', background: '#7f1d1d', color: '#fecaca', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+          <button style={{ padding: '5px 12px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
             onClick={() => failSensor('idt2a')}>
             Fail idt2a
           </button>
-          <button style={{ padding: '5px 12px', background: '#166534', color: '#bbf7d0', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+          <button style={{ padding: '5px 12px', background: '#dcfce7', color: '#166534', border: '1px solid #86efac', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
             onClick={() => recoverSensor('idt2a')}>
             Recover idt2a
           </button>
@@ -152,12 +154,12 @@ function ExperimentControl({
       </div>
 
       {/* Experiment runner */}
-      <div style={{ borderTop: '1px solid #334155', paddingTop: 12 }}>
-        <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>
+      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 12 }}>
+        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>
           Full Experiment (0–50ms × local/central × 5 runs each → CSV)
         </div>
         <button
-          style={{ padding: '8px 16px', background: expRunning ? '#1e3a5f' : '#1d4ed8', color: '#fff', border: 'none', borderRadius: 4, cursor: expRunning ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600 }}
+          style={{ padding: '8px 16px', background: expRunning ? '#dbeafe' : '#2563eb', color: expRunning ? '#1d4ed8' : '#fff', border: 'none', borderRadius: 4, cursor: expRunning ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600 }}
           onClick={onRunExperiment}
           disabled={expRunning}
         >
@@ -170,10 +172,10 @@ function ExperimentControl({
 
 function ExperimentResultsTable({ results }: { results: ExperimentResults }) {
   return (
-    <div style={{ background: '#1e293b', borderRadius: 8, padding: 16, marginBottom: 16 }}>
-      <div style={{ fontWeight: 600, color: '#f1f5f9', marginBottom: 4 }}>
+    <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+      <div style={{ fontWeight: 600, color: '#0f172a', marginBottom: 4 }}>
         Experiment Results
-        <span style={{ fontSize: 11, color: '#64748b', marginLeft: 8 }}>
+        <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>
           CSV: {results.csvPath}
         </span>
       </div>
@@ -186,28 +188,28 @@ function ExperimentResultsTable({ results }: { results: ExperimentResults }) {
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid #334155' }}>
+            <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
               {['Network Delay (ms)', 'Local Decision (ms)', 'Central Decision (ms)', 'Local Runs', 'Central Runs'].map(h => (
-                <th key={h} style={{ padding: '6px 10px', color: '#94a3b8', textAlign: 'left' }}>{h}</th>
+                <th key={h} style={{ padding: '6px 10px', color: '#64748b', textAlign: 'left', background: '#f8fafc' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {results.summary.map(s => (
-              <tr key={s.networkDelayMs} style={{ borderBottom: '1px solid #1e293b' }}>
-                <td style={{ padding: '5px 10px', color: '#f1f5f9' }}>{s.networkDelayMs}</td>
-                <td style={{ padding: '5px 10px', color: '#4ade80' }}>{s.avgLocalDecisionMs.toFixed(1)}</td>
-                <td style={{ padding: '5px 10px', color: '#f87171' }}>{s.avgCentralDecisionMs.toFixed(1)}</td>
-                <td style={{ padding: '5px 10px', color: '#94a3b8' }}>{s.localRuns}</td>
-                <td style={{ padding: '5px 10px', color: '#94a3b8' }}>{s.centralRuns}</td>
+              <tr key={s.networkDelayMs} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                <td style={{ padding: '5px 10px', color: '#0f172a' }}>{s.networkDelayMs}</td>
+                <td style={{ padding: '5px 10px', color: '#16a34a', fontWeight: 600 }}>{s.avgLocalDecisionMs.toFixed(1)}</td>
+                <td style={{ padding: '5px 10px', color: '#dc2626', fontWeight: 600 }}>{s.avgCentralDecisionMs.toFixed(1)}</td>
+                <td style={{ padding: '5px 10px', color: '#64748b' }}>{s.localRuns}</td>
+                <td style={{ padding: '5px 10px', color: '#64748b' }}>{s.centralRuns}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <div style={{ marginTop: 12, padding: 10, background: '#0f172a', borderRadius: 6, fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>
-        <div style={{ color: '#64748b', marginBottom: 4 }}># gnuplot command:</div>
+      <div style={{ marginTop: 12, padding: 10, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>
+        <div style={{ color: '#94a3b8', marginBottom: 4 }}># gnuplot command:</div>
         <div>{'plot "failover_delay_vs_network_delay.csv" using 1:2 with lines title "Local", \\'}</div>
         <div>{'     "" using 1:3 with lines title "Centralized"'}</div>
       </div>
@@ -289,14 +291,14 @@ export default function QoSView() {
   }
 
   return (
-    <div style={{ padding: 20, color: '#f1f5f9' }}>
-      <h2 style={{ margin: '0 0 4px', color: '#f1f5f9' }}>QoS &amp; Failover Evaluation</h2>
+    <div style={{ padding: 20, color: '#0f172a' }}>
+      <h2 style={{ margin: '0 0 4px', color: '#0f172a' }}>QoS &amp; Failover Evaluation</h2>
       <p style={{ margin: '0 0 20px', color: '#64748b', fontSize: 14 }}>
         Monitor provider health, inject failures, and run network latency experiments.
       </p>
 
       {error && (
-        <div style={{ background: '#7f1d1d', border: '1px solid #ef4444', color: '#fecaca', padding: '8px 12px', borderRadius: 6, marginBottom: 12, fontSize: 13 }}>
+        <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', color: '#dc2626', padding: '8px 12px', borderRadius: 6, marginBottom: 12, fontSize: 13 }}>
           {error}
         </div>
       )}

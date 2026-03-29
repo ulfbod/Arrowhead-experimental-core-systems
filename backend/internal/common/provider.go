@@ -195,7 +195,7 @@ func (ps *ProviderSelector) Do(method, path string, body, result interface{}) (Q
 		// Phase 5: retry on the fallback provider immediately.
 		retryStart := time.Now()
 		retryErr := DoRequest(method, nextCfg.URL+path, "", ps.cdtID, body, result)
-		retryElapsed := float64(time.Since(retryStart).Milliseconds())
+		retryElapsed := float64(time.Since(retryStart)) / float64(time.Millisecond)
 
 		ps.mu.Lock()
 		nh := ps.health[nextIdx]
@@ -204,7 +204,7 @@ func (ps *ProviderSelector) Do(method, path string, body, result interface{}) (Q
 
 		// DecisionDelayMs = time from detection (threshold hit) to the switch call.
 		// In local mode this is ~0ms; in central mode it includes the Arrowhead round-trip.
-		decisionDelayMs := float64(retryStart.Sub(detectedAt).Milliseconds())
+		decisionDelayMs := float64(retryStart.Sub(detectedAt)) / float64(time.Millisecond)
 
 		ev := FailoverEvent{
 			EventID:           fmt.Sprintf("fo-%d", retryStart.UnixNano()),
@@ -215,7 +215,7 @@ func (ps *ProviderSelector) Do(method, path string, body, result interface{}) (Q
 			FailureTime:       failureTime,
 			DetectionTime:     detectedAt,
 			SwitchTime:        retryStart,
-			FailToSwitchMs:    float64(retryStart.Sub(failureTime).Milliseconds()),
+			FailToSwitchMs:    float64(retryStart.Sub(failureTime)) / float64(time.Millisecond),
 			DecisionDelayMs:   decisionDelayMs,
 			OrchestrationMode: GetOrchestrationMode(),
 			NetworkDelayMs:    netDelay,
@@ -246,6 +246,10 @@ func (ps *ProviderSelector) Do(method, path string, body, result interface{}) (Q
 // On success it updates ps.activeIdx and returns the index and config.
 // On error it falls back to the local pre-configured list.
 func (ps *ProviderSelector) discoverViaCentral(current int) (int, ProviderConfig) {
+	// Simulate Arrowhead round-trip overhead: request + response = 2×networkDelay.
+	if delay := GetNetworkDelayMs(); delay > 0 {
+		time.Sleep(2 * time.Duration(delay) * time.Millisecond)
+	}
 	orch, err := ps.ah.Discover(ps.capability)
 	if err != nil {
 		log.Printf("[%s] Central discovery for %q failed: %v – falling back to local list",

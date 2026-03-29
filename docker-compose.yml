@@ -185,9 +185,14 @@ services:
       PORT: "8501"
       HOST: "cdt1"
       ARROWHEAD_URL: "http://arrowhead:8000"
+      IDT1A_URL: "http://idt1a:8101"
       IDT1B_URL: "http://idt1b:8102"
+      LOG_DIR: "/app/logs"
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       - arrowhead
+      - idt1a
       - idt1b
     networks:
       - mineio-net
@@ -206,9 +211,14 @@ services:
       PORT: "8502"
       HOST: "cdt2"
       ARROWHEAD_URL: "http://arrowhead:8000"
+      IDT2A_URL: "http://idt2a:8201"
       IDT2B_URL: "http://idt2b:8202"
+      LOG_DIR: "/app/logs"
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       - arrowhead
+      - idt2a
       - idt2b
     networks:
       - mineio-net
@@ -362,6 +372,9 @@ services:
       CDT5_URL: "http://cdt5:8505"
       CDTA_URL: "http://cdta:8601"
       CDTB_URL: "http://cdtb:8602"
+      LOG_DIR: "/app/logs"
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       - arrowhead
       - idt1a

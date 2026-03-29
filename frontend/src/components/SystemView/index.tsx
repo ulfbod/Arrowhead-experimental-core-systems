@@ -341,7 +341,7 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
       >
         <defs>
           <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-            <path d="M0,0 L0,6 L8,3 z" fill="#3a4a63" />
+            <path d="M0,0 L0,6 L8,3 z" fill="#94a3b8" />
           </marker>
           <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
             <path d="M0,0 L0,6 L8,3 z" fill="var(--blue)" />
@@ -397,7 +397,7 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
         {GRAPH_NODES.map(node => {
           const rec = serviceMap.get(node.id)
           const status = rec ? (rec.online ? 'online' : 'offline') : 'offline'
-          const fill = node.type === 'iDT' ? '#1a2744' : node.type === 'cDT' ? '#211830' : '#122030'
+          const fill = node.type === 'iDT' ? '#eff6ff' : node.type === 'cDT' ? '#f5f3ff' : '#f0f9ff'
           const stroke = typeColor(node.type)
           const dotColor = status === 'online' ? 'var(--green)' : status === 'offline' ? 'var(--red)' : 'var(--amber)'
           const lines = node.label.split('\n')

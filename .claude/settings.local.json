@@ -72,7 +72,11 @@
       "Bash(python3 -c \"import json,sys; print\\(json.load\\(sys.stdin\\)\\)\")",
       "Bash(npm run:*)",
       "Bash(npx tsc:*)",
-      "Bash(go vet:*)"
+      "Bash(go vet:*)",
+      "Bash(bash -n /home/uffe/projects/MineIO_paper/run_experiment.sh)",
+      "Bash(command -v docker)",
+      "Bash(snap list:*)",
+      "Bash(apt list:*)"
     ]
   }
 }

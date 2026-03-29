@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -85,15 +86,20 @@ type ExperimentResults struct {
 	CompletedAt   time.Time             `json:"completedAt"`
 }
 
-// ExperimentSummary holds the averaged failover delay for one network delay value.
+// ExperimentSummary holds the averaged failover delay and confidence intervals
+// for one network delay value.
 type ExperimentSummary struct {
-	NetworkDelayMs        int     `json:"networkDelayMs"`
-	AvgLocalDecisionMs    float64 `json:"avgLocalDecisionMs"`
-	AvgCentralDecisionMs  float64 `json:"avgCentralDecisionMs"`
-	AvgLocalFailToSwitchMs    float64 `json:"avgLocalFailToSwitchMs"`
-	AvgCentralFailToSwitchMs  float64 `json:"avgCentralFailToSwitchMs"`
-	LocalRuns             int     `json:"localRuns"`
-	CentralRuns           int     `json:"centralRuns"`
+	NetworkDelayMs           int     `json:"networkDelayMs"`
+	AvgLocalDecisionMs       float64 `json:"avgLocalDecisionMs"`
+	LocalP10Ms               float64 `json:"localP10Ms"`
+	LocalP90Ms               float64 `json:"localP90Ms"`
+	AvgCentralDecisionMs     float64 `json:"avgCentralDecisionMs"`
+	CentralP10Ms             float64 `json:"centralP10Ms"`
+	CentralP90Ms             float64 `json:"centralP90Ms"`
+	AvgLocalFailToSwitchMs   float64 `json:"avgLocalFailToSwitchMs"`
+	AvgCentralFailToSwitchMs float64 `json:"avgCentralFailToSwitchMs"`
+	LocalRuns                int     `json:"localRuns"`
+	CentralRuns              int     `json:"centralRuns"`
 }
 
 // ---- Service ----------------------------------------------------------------------
@@ -474,11 +480,23 @@ func (s *ScenarioService) runSingleFailoverTest(netDelay int, mode string, run i
 	common.SetNetworkDelayMs(0)
 	_ = s.post(s.urls.IDT2a+"/simulate/recover", nil)
 	_ = s.post(s.urls.CDT2+"/provider/recover", map[string]string{"providerId": "idt2a"})
+	// Also reset config in cdt2's process.
+	_ = s.post(s.urls.CDT2+"/config", map[string]interface{}{
+		"networkDelayMs": 0, "orchestrationMode": "local",
+	})
 	time.Sleep(100 * time.Millisecond) // brief stabilisation
 
-	// 2. Apply experiment configuration.
+	// 2. Apply experiment configuration — set in THIS process and propagate to cdt2.
+	//    cdt2 runs in a separate OS process with its own globals, so it must be told
+	//    the delay and mode explicitly via HTTP.
 	common.SetNetworkDelayMs(netDelay)
 	common.SetOrchestrationMode(mode)
+	if err := s.post(s.urls.CDT2+"/config", map[string]interface{}{
+		"networkDelayMs": netDelay, "orchestrationMode": mode,
+	}); err != nil {
+		result.Error = fmt.Sprintf("push config to cdt2: %v", err)
+		return result
+	}
 
 	// 3. Inject failure on primary sensor (idt2a → returns HTTP 503).
 	if err := s.post(s.urls.IDT2a+"/simulate/fail", nil); err != nil {
@@ -520,14 +538,32 @@ func (s *ScenarioService) runSingleFailoverTest(netDelay int, mode string, run i
 	return result
 }
 
-// computeSummary averages decision delay over all successful runs per (delay, mode).
+// percentile returns the p-th percentile (0–100) of a sorted slice.
+func percentile(sorted []float64, p float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if len(sorted) == 1 {
+		return sorted[0]
+	}
+	idx := p / 100.0 * float64(len(sorted)-1)
+	lo := int(idx)
+	hi := lo + 1
+	if hi >= len(sorted) {
+		return sorted[len(sorted)-1]
+	}
+	frac := idx - float64(lo)
+	return sorted[lo]*(1-frac) + sorted[hi]*frac
+}
+
+// computeSummary computes mean, p10, p90 of decision delay per (delay, mode).
 func computeSummary(delays []int, runs []ExperimentRun) []ExperimentSummary {
 	type key struct {
 		delay int
 		mode  string
 	}
 	type accum struct {
-		sumDecision   float64
+		decisions     []float64
 		sumFailSwitch float64
 		count         int
 	}
@@ -541,7 +577,7 @@ func computeSummary(delays []int, runs []ExperimentRun) []ExperimentSummary {
 		if acc[k] == nil {
 			acc[k] = &accum{}
 		}
-		acc[k].sumDecision += r.FailoverDelayMs
+		acc[k].decisions = append(acc[k].decisions, r.FailoverDelayMs)
 		acc[k].sumFailSwitch += r.FailToSwitchMs
 		acc[k].count++
 	}
@@ -550,12 +586,22 @@ func computeSummary(delays []int, runs []ExperimentRun) []ExperimentSummary {
 	for i, d := range delays {
 		s := ExperimentSummary{NetworkDelayMs: d}
 		if a := acc[key{d, "local"}]; a != nil && a.count > 0 {
-			s.AvgLocalDecisionMs = a.sumDecision / float64(a.count)
+			sort.Float64s(a.decisions)
+			sum := 0.0
+			for _, v := range a.decisions { sum += v }
+			s.AvgLocalDecisionMs = sum / float64(a.count)
+			s.LocalP10Ms = percentile(a.decisions, 10)
+			s.LocalP90Ms = percentile(a.decisions, 90)
 			s.AvgLocalFailToSwitchMs = a.sumFailSwitch / float64(a.count)
 			s.LocalRuns = a.count
 		}
 		if a := acc[key{d, "central"}]; a != nil && a.count > 0 {
-			s.AvgCentralDecisionMs = a.sumDecision / float64(a.count)
+			sort.Float64s(a.decisions)
+			sum := 0.0
+			for _, v := range a.decisions { sum += v }
+			s.AvgCentralDecisionMs = sum / float64(a.count)
+			s.CentralP10Ms = percentile(a.decisions, 10)
+			s.CentralP90Ms = percentile(a.decisions, 90)
 			s.AvgCentralFailToSwitchMs = a.sumFailSwitch / float64(a.count)
 			s.CentralRuns = a.count
 		}
@@ -565,8 +611,15 @@ func computeSummary(delays []int, runs []ExperimentRun) []ExperimentSummary {
 }
 
 // writeAggregatedCSV writes failover_delay_vs_network_delay.csv.
-// Format: network_delay_ms,failover_delay_local_ms,failover_delay_central_ms
-// This file is directly usable with gnuplot.
+//
+// Columns:
+//
+//	network_delay_ms  local_avg_ms  local_p10_ms  local_p90_ms  central_avg_ms  central_p10_ms  central_p90_ms
+//
+// The file is directly usable with gnuplot errorbars:
+//
+//	plot "file.csv" using 1:2:3:4 with yerrorbars title "Local", \
+//	     ""          using 1:5:6:7 with yerrorbars title "Centralized"
 func (s *ScenarioService) writeAggregatedCSV(summary []ExperimentSummary) (string, error) {
 	if err := os.MkdirAll(s.logDir, 0o755); err != nil {
 		return "", err
@@ -579,12 +632,20 @@ func (s *ScenarioService) writeAggregatedCSV(summary []ExperimentSummary) (strin
 	defer f.Close()
 
 	w := csv.NewWriter(f)
-	_ = w.Write([]string{"network_delay_ms", "failover_delay_local_ms", "failover_delay_central_ms"})
+	_ = w.Write([]string{
+		"network_delay_ms",
+		"local_avg_ms", "local_p10_ms", "local_p90_ms",
+		"central_avg_ms", "central_p10_ms", "central_p90_ms",
+	})
 	for _, s := range summary {
 		_ = w.Write([]string{
 			strconv.Itoa(s.NetworkDelayMs),
-			fmt.Sprintf("%.2f", s.AvgLocalDecisionMs),
-			fmt.Sprintf("%.2f", s.AvgCentralDecisionMs),
+			fmt.Sprintf("%.3f", s.AvgLocalDecisionMs),
+			fmt.Sprintf("%.3f", s.LocalP10Ms),
+			fmt.Sprintf("%.3f", s.LocalP90Ms),
+			fmt.Sprintf("%.3f", s.AvgCentralDecisionMs),
+			fmt.Sprintf("%.3f", s.CentralP10Ms),
+			fmt.Sprintf("%.3f", s.CentralP90Ms),
 		})
 	}
 	w.Flush()
