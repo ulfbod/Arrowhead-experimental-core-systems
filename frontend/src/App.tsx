@@ -2,12 +2,13 @@ import React, { useState, useCallback } from 'react'
 import SystemView from './components/SystemView'
 import CDTaView from './components/CDTaView'
 import CDTbView from './components/CDTbView'
+import QoSView from './components/QoSView'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import usePolling from './hooks/usePolling'
 import { urls, startScenario, resetScenario, injectHazard, triggerGasSpike, clearAll } from './api'
 import type { ScenarioStatus } from './types'
 
-type Tab = 'system' | 'cdta' | 'cdtb'
+type Tab = 'system' | 'cdta' | 'cdtb' | 'qos'
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('system')
@@ -167,6 +168,7 @@ const App: React.FC = () => {
           { id: 'system', label: 'System View' },
           { id: 'cdta',   label: 'cDTa: Inspection & Recovery' },
           { id: 'cdtb',   label: 'cDTb: Hazard Monitoring' },
+          { id: 'qos',    label: 'QoS & Failover' },
         ] as { id: Tab; label: string }[]).map(tab => (
           <button
             key={tab.id}
@@ -203,6 +205,9 @@ const App: React.FC = () => {
         </ErrorBoundary>
         <ErrorBoundary name="cDTb View">
           {activeTab === 'cdtb' && <CDTbView />}
+        </ErrorBoundary>
+        <ErrorBoundary name="QoS View">
+          {activeTab === 'qos' && <QoSView />}
         </ErrorBoundary>
       </main>
 

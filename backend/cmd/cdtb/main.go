@@ -30,13 +30,15 @@ const (
 type CDTbService struct {
 	mu          sync.RWMutex
 	decision    common.SafeAccessDecision
+	gasQoS      common.SourceQoS // QoS state propagated from cDT2
 	comps       struct {
 		CDT2 string
 		CDT3 string
 	}
 	ah             *common.ArrowheadClient
 	id             string
-	gateManualOpen bool // tracks manual gate override
+	gateManualOpen bool
+	streamLog      *common.StreamLogger
 }
 
 func main() {
@@ -48,14 +50,24 @@ func main() {
 
 	cdt2URL := envOrDefault("CDT2_URL", "http://localhost:8502")
 	cdt3URL := envOrDefault("CDT3_URL", "http://localhost:8503")
+	logDir := envOrDefault("LOG_DIR", "./logs")
 
 	log.Printf("[%s] Starting %s on :%s", id, name, port)
 	log.Printf("[%s] Composing: cDT2=%s cDT3=%s", id, cdt2URL, cdt3URL)
 
+	streamLog, err := common.NewStreamLogger(logDir, "cdtb_gas_stream.csv",
+		"timestamp_ms,timestamp_iso,source_cdt,active_provider,on_fallback,"+
+			"ch4_avg,co_avg,o2_avg,accuracy,latency_ms,reliability,"+
+			"qos_degraded,safe_for_entry,gate_status")
+	if err != nil {
+		log.Printf("[%s] WARNING: cannot open stream log: %v", id, err)
+	}
+
 	now := time.Now()
 	svc := &CDTbService{
-		id: id,
-		ah: common.NewArrowheadClient(ahURL, id),
+		id:        id,
+		ah:        common.NewArrowheadClient(ahURL, id),
+		streamLog: streamLog,
 		decision: common.SafeAccessDecision{
 			Safe:            false,
 			Reason:          "System initialising – first assessment pending.",
@@ -115,7 +127,7 @@ func (s *CDTbService) pollLoop() {
 // assess fetches component states, recomputes the safe-access decision, and logs
 // any relevant state changes.
 func (s *CDTbService) assess() {
-	gasResult := s.fetchGas()
+	gasResult, gasQoS := s.fetchGas()
 	hazardReport := s.fetchHazards()
 
 	s.mu.Lock()
@@ -123,6 +135,9 @@ func (s *CDTbService) assess() {
 
 	s.decision.GasStatus = gasResult
 	s.decision.HazardStatus = hazardReport
+	if gasQoS != nil {
+		s.gasQoS = *gasQoS
+	}
 
 	// ---- Ventilation check ----
 	ventOK := false
@@ -227,6 +242,40 @@ func (s *CDTbService) assess() {
 
 	s.decision.Recommendations = s.generateRecommendations()
 	s.decision.LastUpdated = time.Now()
+
+	// Add QoS degradation advisory if active
+	if s.gasQoS.Degraded {
+		s.decision.Recommendations = append([]string{
+			fmt.Sprintf("QoS WARNING: Gas monitoring on fallback provider %q – accuracy %.0f%%, reliability %.0f%%. Verify readings independently.",
+				s.gasQoS.Active.ID,
+				s.gasQoS.Active.QoS.Accuracy*100,
+				s.gasQoS.Active.QoS.Reliability*100),
+		}, s.decision.Recommendations...)
+	}
+
+	// Write stream log row
+	now := time.Now()
+	var ch4, co, o2 float64
+	if gasResult != nil {
+		ch4 = gasResult.AverageLevels.CH4
+		co = gasResult.AverageLevels.CO
+		o2 = gasResult.AverageLevels.O2
+	}
+	onFallback := s.gasQoS.Degraded
+	s.streamLog.WriteRow(
+		now.UnixMilli(),
+		now.Format(time.RFC3339),
+		"cdt2",
+		s.gasQoS.Active.ID,
+		onFallback,
+		ch4, co, o2,
+		s.gasQoS.Active.QoS.Accuracy,
+		s.gasQoS.Active.QoS.LatencyMs,
+		s.gasQoS.Active.QoS.Reliability,
+		s.gasQoS.Degraded,
+		s.decision.Safe,
+		s.decision.GatingStatus,
+	)
 }
 
 // generateRecommendations produces contextual recommendations. Caller must hold s.mu.
@@ -311,15 +360,16 @@ func (s *CDTbService) generateRecommendations() []string {
 
 // ---- Component fetch helpers -------------------------------------------------------
 
-func (s *CDTbService) fetchGas() *common.GasMonitorResult {
+func (s *CDTbService) fetchGas() (*common.GasMonitorResult, *common.SourceQoS) {
 	var resp struct {
 		GasMonitor common.GasMonitorResult `json:"gasMonitor"`
+		QoS        *common.SourceQoS       `json:"qos"`
 	}
 	if err := common.DoRequest("GET", s.comps.CDT2+"/state", "", s.id, nil, &resp); err != nil {
 		log.Printf("[%s] fetch cDT2 gas state: %v", s.id, err)
-		return nil
+		return nil, nil
 	}
-	return &resp.GasMonitor
+	return &resp.GasMonitor, resp.QoS
 }
 
 func (s *CDTbService) fetchHazards() *common.HazardReport {
@@ -353,8 +403,19 @@ func (s *CDTbService) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *CDTbService) handleState(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	d := s.decision
+	gasQoS := s.gasQoS
 	s.mu.RUnlock()
-	common.WriteJSON(w, http.StatusOK, d)
+	common.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"safe":            d.Safe,
+		"reason":          d.Reason,
+		"gasStatus":       d.GasStatus,
+		"hazardStatus":    d.HazardStatus,
+		"ventilationOk":   d.VentilationOK,
+		"gatingStatus":    d.GatingStatus,
+		"recommendations": d.Recommendations,
+		"gasQoS":          gasQoS,
+		"lastUpdated":     d.LastUpdated,
+	})
 }
 
 func (s *CDTbService) handleGas(w http.ResponseWriter, r *http.Request) {
@@ -528,7 +589,7 @@ func (s *CDTbService) handleVentilationCheck(w http.ResponseWriter, r *http.Requ
 	log.Printf("[%s] Ventilation check triggered.", s.id)
 
 	// Fetch fresh gas data
-	gas := s.fetchGas()
+	gas, _ := s.fetchGas()
 
 	s.mu.Lock()
 	s.decision.GasStatus = gas

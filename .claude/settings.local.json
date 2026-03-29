@@ -69,7 +69,10 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(''''hazard:'''', d\\)\" __NEW_LINE_6e33b42724d0a497__ sleep 5 __NEW_LINE_6e33b42724d0a497__ echo \"\" echo \"=== cDT3 risk after hazard inject ===\" curl -s http://localhost:8503/risk)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(''''phase:'''', d.get\\(''''phase''''\\)\\)\")",
       "Bash(curl -s -X POST http://localhost:8700/scenario/inject-hazard -H \"Content-Type: application/json\" -d '{\"\"\"\"robotId\"\"\"\":\"\"\"\"idt1a\"\"\"\",\"\"\"\"type\"\"\"\":\"\"\"\"misfire\"\"\"\",\"\"\"\"severity\"\"\"\":\"\"\"\"high\"\"\"\"}')",
-      "Bash(python3 -c \"import json,sys; print\\(json.load\\(sys.stdin\\)\\)\")"
+      "Bash(python3 -c \"import json,sys; print\\(json.load\\(sys.stdin\\)\\)\")",
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(go vet:*)"
     ]
   }
 }

@@ -5,14 +5,23 @@ package main
 // and cDT services in a defined sequence. It does not use Arrowhead orchestration
 // for its own calls – it reaches services by their configured URLs directly and
 // identifies itself via X-Consumer-ID headers.
+//
+// QoS Experiment endpoints:
+//   POST /scenario/config?mode=local|central   – set failover orchestration mode
+//   POST /scenario/network-delay?ms=X          – set simulated network delay (0–50 ms)
+//   POST /scenario/experiment/run              – run full failover delay experiment
+//   GET  /scenario/experiment/results          – return latest experiment results as JSON
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
 	"mineio/internal/common"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -55,14 +64,50 @@ type ScenarioState struct {
 	LastUpdated time.Time     `json:"lastUpdated"`
 }
 
+// ---- Experiment result types -------------------------------------------------------
+
+// ExperimentRun holds the result of one (networkDelay, mode, run) triple.
+type ExperimentRun struct {
+	NetworkDelayMs  int     `json:"networkDelayMs"`
+	Mode            string  `json:"mode"`
+	Run             int     `json:"run"`
+	FailoverDelayMs float64 `json:"failoverDelayMs"` // DecisionDelayMs from FailoverEvent
+	FailToSwitchMs  float64 `json:"failToSwitchMs"`
+	Success         bool    `json:"success"`
+	Error           string  `json:"error,omitempty"`
+}
+
+// ExperimentResults aggregates all runs and computed averages.
+type ExperimentResults struct {
+	Runs          []ExperimentRun       `json:"runs"`
+	Summary       []ExperimentSummary   `json:"summary"`
+	CSVPath       string                `json:"csvPath"`
+	CompletedAt   time.Time             `json:"completedAt"`
+}
+
+// ExperimentSummary holds the averaged failover delay for one network delay value.
+type ExperimentSummary struct {
+	NetworkDelayMs        int     `json:"networkDelayMs"`
+	AvgLocalDecisionMs    float64 `json:"avgLocalDecisionMs"`
+	AvgCentralDecisionMs  float64 `json:"avgCentralDecisionMs"`
+	AvgLocalFailToSwitchMs    float64 `json:"avgLocalFailToSwitchMs"`
+	AvgCentralFailToSwitchMs  float64 `json:"avgCentralFailToSwitchMs"`
+	LocalRuns             int     `json:"localRuns"`
+	CentralRuns           int     `json:"centralRuns"`
+}
+
 // ---- Service ----------------------------------------------------------------------
 
 type ScenarioService struct {
-	mu    sync.RWMutex
-	state ScenarioState
-	urls  serviceURLs
-	id    string
-	ah    *common.ArrowheadClient
+	mu              sync.RWMutex
+	state           ScenarioState
+	urls            serviceURLs
+	id              string
+	ah              *common.ArrowheadClient
+	logDir          string
+	expMu           sync.Mutex
+	expResults      *ExperimentResults
+	expRunning      bool
 }
 
 func main() {
@@ -71,6 +116,7 @@ func main() {
 	port := envOrDefault("PORT", "8700")
 	ahURL := envOrDefault("ARROWHEAD_URL", "http://localhost:8000")
 	host := envOrDefault("HOST", "localhost")
+	logDir := envOrDefault("LOG_DIR", "./logs")
 
 	urls := serviceURLs{
 		IDT1a: envOrDefault("IDT1A_URL", "http://localhost:8101"),
@@ -93,9 +139,10 @@ func main() {
 
 	now := time.Now()
 	svc := &ScenarioService{
-		id:  id,
-		ah:  common.NewArrowheadClient(ahURL, id),
-		urls: urls,
+		id:     id,
+		ah:     common.NewArrowheadClient(ahURL, id),
+		urls:   urls,
+		logDir: logDir,
 		state: ScenarioState{
 			Phase:       ScenarioIdle,
 			Progress:    []string{fmt.Sprintf("[%s] Scenario runner initialised. Ready for POST /scenario/start.", now.Format(time.RFC3339))},
@@ -125,6 +172,16 @@ func main() {
 	router.Handle("/scenario/inject-hazard", svc.handleInjectHazard)
 	router.Handle("/scenario/gas-spike", svc.handleGasSpike)
 	router.Handle("/scenario/clear-all", svc.handleClearAll)
+	router.Handle("/scenario/sensor-fail", svc.handleSensorFail)
+	router.Handle("/scenario/sensor-degrade", svc.handleSensorDegrade)
+	router.Handle("/scenario/sensor-recover", svc.handleSensorRecover)
+	router.Handle("/scenario/robot-fail", svc.handleRobotFail)
+	router.Handle("/scenario/robot-recover", svc.handleRobotRecover)
+	// QoS experiment control
+	router.Handle("/scenario/config", svc.handleConfig)
+	router.Handle("/scenario/network-delay", svc.handleNetworkDelay)
+	router.Handle("/scenario/experiment/run", svc.handleExperimentRun)
+	router.Handle("/scenario/experiment/results", svc.handleExperimentResults)
 
 	log.Printf("[%s] Listening on :%s", id, port)
 	log.Fatal(http.ListenAndServe(":"+port, router))
@@ -258,7 +315,6 @@ func (s *ScenarioService) runPostBlastScenario() {
 	s.logProgress("Step 5: Activating SLAM mapping on inspection robots via cDT1...")
 	if err := s.post(s.urls.CDT1+"/slam/start", nil); err != nil {
 		s.logProgress(fmt.Sprintf("  WARNING: Could not start SLAM via cDT1: %v", err))
-		// Also try directly on the robots as fallback
 		s.logProgress("  Attempting direct SLAM start on iDT1a and iDT1b as fallback...")
 		if err2 := s.post(s.urls.IDT1a+"/slam/start", nil); err2 != nil {
 			s.logProgress(fmt.Sprintf("  WARNING: iDT1a SLAM start failed: %v", err2))
@@ -303,7 +359,6 @@ func (s *ScenarioService) runPostBlastScenario() {
 func (s *ScenarioService) logScenarioProgress(tick int) {
 	s.logProgress(fmt.Sprintf("--- Progress check #%d ---", tick))
 
-	// cDTa mission status
 	var mStatus common.MissionStatus
 	if err := common.DoRequest("GET", s.urls.CDTa+"/state", "", s.id, nil, &mStatus); err == nil {
 		coverage := 0.0
@@ -320,7 +375,6 @@ func (s *ScenarioService) logScenarioProgress(tick int) {
 		s.logProgress(fmt.Sprintf("  cDTa: unreachable (%v)", err))
 	}
 
-	// cDTb safe-access decision
 	var access common.SafeAccessDecision
 	if err := common.DoRequest("GET", s.urls.CDTb+"/state", "", s.id, nil, &access); err == nil {
 		s.logProgress(fmt.Sprintf("  cDTb safe-access: safe=%v gate=%q | %s",
@@ -330,7 +384,6 @@ func (s *ScenarioService) logScenarioProgress(tick int) {
 	}
 }
 
-// logProgress appends a timestamped message to the progress log.
 func (s *ScenarioService) logProgress(msg string) {
 	entry := fmt.Sprintf("[%s] %s", time.Now().Format(time.RFC3339), msg)
 	log.Printf("[%s] %s", s.id, msg)
@@ -347,9 +400,195 @@ func (s *ScenarioService) markFailed() {
 	s.mu.Unlock()
 }
 
-// post is a convenience wrapper for POST calls to scenario-managed services.
 func (s *ScenarioService) post(url string, body interface{}) error {
 	return common.DoRequest("POST", url, "", s.id, body, nil)
+}
+
+// ---- Experiment automation ---------------------------------------------------------
+
+// runFailoverExperiment executes the full failover delay experiment:
+//   For each networkDelay in 0..50 (step 5):
+//     For each mode in {local, central}:
+//       For run in 1..runsPerPoint:
+//         1. Reset providers to primary
+//         2. Set networkDelay + mode
+//         3. Inject failure on primary iDT sensor
+//         4. Pre-mark failure in cDT2 ProviderSelector (bypasses poll wait)
+//         5. Trigger immediate cDT2 poll → failover fires
+//         6. Record DecisionDelayMs from returned FailoverEvent
+//         7. Recover primary iDT sensor + cDT2 provider
+//
+// Results are written to failover_delay_vs_network_delay.csv.
+func (s *ScenarioService) runFailoverExperiment(runsPerPoint int) {
+	log.Printf("[%s] === FAILOVER EXPERIMENT STARTED (runsPerPoint=%d) ===", s.id, runsPerPoint)
+
+	delays := []int{0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50}
+	modes := []string{"local", "central"}
+
+	var allRuns []ExperimentRun
+
+	for _, netDelay := range delays {
+		for _, mode := range modes {
+			for run := 1; run <= runsPerPoint; run++ {
+				r := s.runSingleFailoverTest(netDelay, mode, run)
+				allRuns = append(allRuns, r)
+				log.Printf("[%s] exp delay=%dms mode=%s run=%d → decision=%.1fms failToSwitch=%.1fms ok=%v",
+					s.id, netDelay, mode, run, r.FailoverDelayMs, r.FailToSwitchMs, r.Success)
+				// Brief pause between runs to let services stabilise
+				time.Sleep(200 * time.Millisecond)
+			}
+		}
+	}
+
+	// Reset experiment globals
+	common.SetNetworkDelayMs(0)
+	common.SetOrchestrationMode("local")
+
+	summary := computeSummary(delays, allRuns)
+	csvPath, _ := s.writeAggregatedCSV(summary)
+
+	s.expMu.Lock()
+	s.expResults = &ExperimentResults{
+		Runs:        allRuns,
+		Summary:     summary,
+		CSVPath:     csvPath,
+		CompletedAt: time.Now(),
+	}
+	s.expRunning = false
+	s.expMu.Unlock()
+
+	log.Printf("[%s] === FAILOVER EXPERIMENT COMPLETE – CSV: %s ===", s.id, csvPath)
+}
+
+// runSingleFailoverTest runs one (delay, mode, run) triple.
+// It returns an ExperimentRun with the measured DecisionDelayMs.
+func (s *ScenarioService) runSingleFailoverTest(netDelay int, mode string, run int) ExperimentRun {
+	result := ExperimentRun{
+		NetworkDelayMs: netDelay,
+		Mode:           mode,
+		Run:            run,
+	}
+
+	// 1. Recover primary sensor (idt2a) on both the iDT and the cDT2 ProviderSelector.
+	//    Do this WITHOUT network delay to ensure clean reset.
+	common.SetNetworkDelayMs(0)
+	_ = s.post(s.urls.IDT2a+"/simulate/recover", nil)
+	_ = s.post(s.urls.CDT2+"/provider/recover", map[string]string{"providerId": "idt2a"})
+	time.Sleep(100 * time.Millisecond) // brief stabilisation
+
+	// 2. Apply experiment configuration.
+	common.SetNetworkDelayMs(netDelay)
+	common.SetOrchestrationMode(mode)
+
+	// 3. Inject failure on primary sensor (idt2a → returns HTTP 503).
+	if err := s.post(s.urls.IDT2a+"/simulate/fail", nil); err != nil {
+		result.Error = fmt.Sprintf("inject fail: %v", err)
+		return result
+	}
+
+	// 4. Pre-mark the ProviderSelector so failure threshold is already reached.
+	//    The next Do() call in cDT2 will immediately trigger the failover.
+	if err := s.post(s.urls.CDT2+"/provider/fail", map[string]string{"providerId": "idt2a"}); err != nil {
+		result.Error = fmt.Sprintf("mark failed: %v", err)
+		return result
+	}
+
+	// 5. Trigger an immediate poll cycle on cDT2. This calls Do() which:
+	//    - Tries idt2a → gets 503 (failure already counted + threshold pre-set → shouldSwitch)
+	//    - In local mode: picks fallback from list, retries
+	//    - In central mode: calls Arrowhead (adds ~2×networkDelay), picks fallback, retries
+	//    The endpoint returns the latest FailoverEvent.
+	var pollResp struct {
+		Status         string               `json:"status"`
+		ActiveProvider string               `json:"activeProvider"`
+		LatestFailover *common.FailoverEvent `json:"latestFailover"`
+	}
+	if err := common.DoRequest("POST", s.urls.CDT2+"/trigger-poll", "", s.id, nil, &pollResp); err != nil {
+		result.Error = fmt.Sprintf("trigger-poll: %v", err)
+		return result
+	}
+
+	if pollResp.LatestFailover == nil {
+		result.Error = "no failover event recorded after trigger-poll"
+		return result
+	}
+
+	ev := pollResp.LatestFailover
+	result.FailoverDelayMs = ev.DecisionDelayMs
+	result.FailToSwitchMs = ev.FailToSwitchMs
+	result.Success = true
+	return result
+}
+
+// computeSummary averages decision delay over all successful runs per (delay, mode).
+func computeSummary(delays []int, runs []ExperimentRun) []ExperimentSummary {
+	type key struct {
+		delay int
+		mode  string
+	}
+	type accum struct {
+		sumDecision   float64
+		sumFailSwitch float64
+		count         int
+	}
+	acc := map[key]*accum{}
+
+	for _, r := range runs {
+		if !r.Success {
+			continue
+		}
+		k := key{r.NetworkDelayMs, r.Mode}
+		if acc[k] == nil {
+			acc[k] = &accum{}
+		}
+		acc[k].sumDecision += r.FailoverDelayMs
+		acc[k].sumFailSwitch += r.FailToSwitchMs
+		acc[k].count++
+	}
+
+	summary := make([]ExperimentSummary, len(delays))
+	for i, d := range delays {
+		s := ExperimentSummary{NetworkDelayMs: d}
+		if a := acc[key{d, "local"}]; a != nil && a.count > 0 {
+			s.AvgLocalDecisionMs = a.sumDecision / float64(a.count)
+			s.AvgLocalFailToSwitchMs = a.sumFailSwitch / float64(a.count)
+			s.LocalRuns = a.count
+		}
+		if a := acc[key{d, "central"}]; a != nil && a.count > 0 {
+			s.AvgCentralDecisionMs = a.sumDecision / float64(a.count)
+			s.AvgCentralFailToSwitchMs = a.sumFailSwitch / float64(a.count)
+			s.CentralRuns = a.count
+		}
+		summary[i] = s
+	}
+	return summary
+}
+
+// writeAggregatedCSV writes failover_delay_vs_network_delay.csv.
+// Format: network_delay_ms,failover_delay_local_ms,failover_delay_central_ms
+// This file is directly usable with gnuplot.
+func (s *ScenarioService) writeAggregatedCSV(summary []ExperimentSummary) (string, error) {
+	if err := os.MkdirAll(s.logDir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(s.logDir, "failover_delay_vs_network_delay.csv")
+	f, err := os.Create(path)
+	if err != nil {
+		return path, err
+	}
+	defer f.Close()
+
+	w := csv.NewWriter(f)
+	_ = w.Write([]string{"network_delay_ms", "failover_delay_local_ms", "failover_delay_central_ms"})
+	for _, s := range summary {
+		_ = w.Write([]string{
+			strconv.Itoa(s.NetworkDelayMs),
+			fmt.Sprintf("%.2f", s.AvgLocalDecisionMs),
+			fmt.Sprintf("%.2f", s.AvgCentralDecisionMs),
+		})
+	}
+	w.Flush()
+	return path, w.Error()
 }
 
 // ---- HTTP Handlers ----------------------------------------------------------------
@@ -418,7 +657,6 @@ func (s *ScenarioService) handleScenarioReset(w http.ResponseWriter, r *http.Req
 	}
 	s.mu.Unlock()
 
-	// Reset all iDT states to initial values
 	for _, target := range []struct{ id, url string }{
 		{"idt1a", s.urls.IDT1a}, {"idt1b", s.urls.IDT1b},
 	} {
@@ -452,9 +690,9 @@ func (s *ScenarioService) handleScenarioLog(w http.ResponseWriter, r *http.Reque
 		progress = []string{}
 	}
 	common.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"phase":   phase,
-		"log":     progress,
-		"count":   len(progress),
+		"phase":     phase,
+		"log":       progress,
+		"count":     len(progress),
 		"timestamp": time.Now(),
 	})
 }
@@ -474,7 +712,6 @@ func (s *ScenarioService) handleInjectHazard(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Map robotId to URL
 	robotURLs := map[string]string{
 		"idt1a": s.urls.IDT1a,
 		"idt1b": s.urls.IDT1b,
@@ -540,7 +777,6 @@ func (s *ScenarioService) handleClearAll(w http.ResponseWriter, r *http.Request)
 
 	results := map[string]string{}
 
-	// Clear all hazards on both robots
 	for _, target := range []struct{ id, url string }{
 		{"idt1a", s.urls.IDT1a},
 		{"idt1b", s.urls.IDT1b},
@@ -554,7 +790,6 @@ func (s *ScenarioService) handleClearAll(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// Normalise gas on both sensors
 	normalGas := map[string]float64{"ch4": 0.1, "co": 5.0, "co2": 0.04, "o2": 20.9, "no2": 0.5}
 	for _, target := range []struct{ id, url string }{
 		{"idt2a", s.urls.IDT2a},
@@ -572,10 +807,280 @@ func (s *ScenarioService) handleClearAll(w http.ResponseWriter, r *http.Request)
 	s.logProgress("Clear-all complete. cDTb should reassess gate status within 4 seconds.")
 
 	common.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"status":  "clear-all complete",
-		"results": results,
-		"message": "All hazards cleared and gas normalised. Monitor cDTb /state for updated gate status.",
+		"status":    "clear-all complete",
+		"results":   results,
+		"message":   "All hazards cleared and gas normalised. Monitor cDTb /state for updated gate status.",
 		"timestamp": time.Now(),
+	})
+}
+
+// ---- QoS failure injection handlers -----------------------------------------------
+
+func (s *ScenarioService) handleSensorFail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var body struct {
+		Sensor string `json:"sensor"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Sensor == "" {
+		common.WriteError(w, http.StatusBadRequest, `body must be {"sensor":"idt2a"}`)
+		return
+	}
+	sensorURLs := map[string]string{"idt2a": s.urls.IDT2a, "idt2b": s.urls.IDT2b}
+	url, ok := sensorURLs[body.Sensor]
+	if !ok {
+		common.WriteError(w, http.StatusBadRequest, fmt.Sprintf("unknown sensor %q – valid: idt2a, idt2b", body.Sensor))
+		return
+	}
+	if err := s.post(url+"/simulate/fail", nil); err != nil {
+		common.WriteError(w, http.StatusBadGateway, fmt.Sprintf("sensor fail injection failed: %v", err))
+		return
+	}
+	msg := fmt.Sprintf("Sensor %s set to FAIL mode (HTTP 503 on /state).", body.Sensor)
+	s.logProgress(msg)
+	common.WriteJSON(w, http.StatusOK, map[string]string{"status": "failure mode activated", "sensor": body.Sensor})
+}
+
+func (s *ScenarioService) handleSensorDegrade(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var body struct {
+		Sensor      string  `json:"sensor"`
+		NoiseFactor float64 `json:"noiseFactor"`
+		LatencyMs   int     `json:"latencyMs"`
+	}
+	body.NoiseFactor = 5.0
+	body.LatencyMs = 100
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Sensor == "" {
+		common.WriteError(w, http.StatusBadRequest, `body must be {"sensor":"idt2a","noiseFactor":5.0,"latencyMs":100}`)
+		return
+	}
+	sensorURLs := map[string]string{"idt2a": s.urls.IDT2a, "idt2b": s.urls.IDT2b}
+	url, ok := sensorURLs[body.Sensor]
+	if !ok {
+		common.WriteError(w, http.StatusBadRequest, fmt.Sprintf("unknown sensor %q – valid: idt2a, idt2b", body.Sensor))
+		return
+	}
+	payload := map[string]interface{}{"noiseFactor": body.NoiseFactor, "latencyMs": body.LatencyMs}
+	if err := s.post(url+"/simulate/degrade", payload); err != nil {
+		common.WriteError(w, http.StatusBadGateway, fmt.Sprintf("sensor degrade injection failed: %v", err))
+		return
+	}
+	msg := fmt.Sprintf("Sensor %s set to DEGRADE mode (noiseFactor=%.1f latencyMs=%d).", body.Sensor, body.NoiseFactor, body.LatencyMs)
+	s.logProgress(msg)
+	common.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "degraded", "sensor": body.Sensor, "noiseFactor": body.NoiseFactor, "latencyMs": body.LatencyMs,
+	})
+}
+
+func (s *ScenarioService) handleSensorRecover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var body struct {
+		Sensor string `json:"sensor"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Sensor == "" {
+		common.WriteError(w, http.StatusBadRequest, `body must be {"sensor":"idt2a"}`)
+		return
+	}
+	sensorURLs := map[string]string{"idt2a": s.urls.IDT2a, "idt2b": s.urls.IDT2b}
+	url, ok := sensorURLs[body.Sensor]
+	if !ok {
+		common.WriteError(w, http.StatusBadRequest, fmt.Sprintf("unknown sensor %q – valid: idt2a, idt2b", body.Sensor))
+		return
+	}
+	if err := s.post(url+"/simulate/recover", nil); err != nil {
+		common.WriteError(w, http.StatusBadGateway, fmt.Sprintf("sensor recover failed: %v", err))
+		return
+	}
+	msg := fmt.Sprintf("Sensor %s RECOVERED – normal operation restored.", body.Sensor)
+	s.logProgress(msg)
+	common.WriteJSON(w, http.StatusOK, map[string]string{"status": "recovered", "sensor": body.Sensor})
+}
+
+func (s *ScenarioService) handleRobotFail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var body struct {
+		Robot string `json:"robot"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Robot == "" {
+		common.WriteError(w, http.StatusBadRequest, `body must be {"robot":"idt1a"}`)
+		return
+	}
+	robotURLs := map[string]string{"idt1a": s.urls.IDT1a, "idt1b": s.urls.IDT1b}
+	url, ok := robotURLs[body.Robot]
+	if !ok {
+		common.WriteError(w, http.StatusBadRequest, fmt.Sprintf("unknown robot %q – valid: idt1a, idt1b", body.Robot))
+		return
+	}
+	if err := s.post(url+"/simulate/fail", nil); err != nil {
+		common.WriteError(w, http.StatusBadGateway, fmt.Sprintf("robot fail injection failed: %v", err))
+		return
+	}
+	msg := fmt.Sprintf("Robot %s set to FAIL mode (HTTP 503 on /state).", body.Robot)
+	s.logProgress(msg)
+	common.WriteJSON(w, http.StatusOK, map[string]string{"status": "failure mode activated", "robot": body.Robot})
+}
+
+func (s *ScenarioService) handleRobotRecover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var body struct {
+		Robot string `json:"robot"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Robot == "" {
+		common.WriteError(w, http.StatusBadRequest, `body must be {"robot":"idt1a"}`)
+		return
+	}
+	robotURLs := map[string]string{"idt1a": s.urls.IDT1a, "idt1b": s.urls.IDT1b}
+	url, ok := robotURLs[body.Robot]
+	if !ok {
+		common.WriteError(w, http.StatusBadRequest, fmt.Sprintf("unknown robot %q – valid: idt1a, idt1b", body.Robot))
+		return
+	}
+	if err := s.post(url+"/simulate/recover", nil); err != nil {
+		common.WriteError(w, http.StatusBadGateway, fmt.Sprintf("robot recover failed: %v", err))
+		return
+	}
+	msg := fmt.Sprintf("Robot %s RECOVERED – normal operation restored.", body.Robot)
+	s.logProgress(msg)
+	common.WriteJSON(w, http.StatusOK, map[string]string{"status": "recovered", "robot": body.Robot})
+}
+
+// ---- QoS experiment handlers -------------------------------------------------------
+
+// handleConfig sets the orchestration mode.
+// POST /scenario/config?mode=local  (or mode=central)
+// Also accepts JSON body: {"mode":"local"}
+func (s *ScenarioService) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+
+	mode := r.URL.Query().Get("mode")
+	if mode == "" {
+		var body struct {
+			Mode string `json:"mode"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		mode = body.Mode
+	}
+	if mode != "local" && mode != "central" {
+		common.WriteError(w, http.StatusBadRequest, `mode must be "local" or "central"`)
+		return
+	}
+
+	common.SetOrchestrationMode(mode)
+	s.logProgress(fmt.Sprintf("Orchestration mode set to %q.", mode))
+	common.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "mode": mode})
+}
+
+// handleNetworkDelay sets the simulated network delay.
+// POST /scenario/network-delay?ms=20
+// Also accepts JSON body: {"ms":20}
+func (s *ScenarioService) handleNetworkDelay(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+
+	msStr := r.URL.Query().Get("ms")
+	ms := 0
+	if msStr != "" {
+		fmt.Sscanf(msStr, "%d", &ms)
+	} else {
+		var body struct {
+			Ms int `json:"ms"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		ms = body.Ms
+	}
+	if ms < 0 {
+		ms = 0
+	}
+
+	common.SetNetworkDelayMs(ms)
+	s.logProgress(fmt.Sprintf("Network delay set to %dms.", ms))
+	common.WriteJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "networkDelayMs": ms})
+}
+
+// handleExperimentRun launches the full failover delay experiment asynchronously.
+// POST /scenario/experiment/run
+// Optional body: {"runsPerPoint": 5}
+func (s *ScenarioService) handleExperimentRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+
+	s.expMu.Lock()
+	if s.expRunning {
+		s.expMu.Unlock()
+		common.WriteError(w, http.StatusConflict, "experiment already running – wait for completion or GET /scenario/experiment/results")
+		return
+	}
+	s.expRunning = true
+	s.expMu.Unlock()
+
+	var body struct {
+		RunsPerPoint int `json:"runsPerPoint"`
+	}
+	body.RunsPerPoint = 5 // default
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.RunsPerPoint < 1 {
+		body.RunsPerPoint = 1
+	}
+	if body.RunsPerPoint > 20 {
+		body.RunsPerPoint = 20
+	}
+
+	go s.runFailoverExperiment(body.RunsPerPoint)
+
+	common.WriteJSON(w, http.StatusAccepted, map[string]interface{}{
+		"status":       "experiment started",
+		"runsPerPoint": body.RunsPerPoint,
+		"totalRuns":    11 * 2 * body.RunsPerPoint, // 11 delays × 2 modes × N runs
+		"message":      "Experiment running in background. Poll GET /scenario/experiment/results for status.",
+	})
+}
+
+// handleExperimentResults returns the latest experiment results.
+// GET /scenario/experiment/results
+func (s *ScenarioService) handleExperimentResults(w http.ResponseWriter, r *http.Request) {
+	s.expMu.Lock()
+	running := s.expRunning
+	results := s.expResults
+	s.expMu.Unlock()
+
+	if running {
+		common.WriteJSON(w, http.StatusAccepted, map[string]interface{}{
+			"status":  "running",
+			"message": "Experiment in progress. Check back later.",
+		})
+		return
+	}
+	if results == nil {
+		common.WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"status":  "no results",
+			"message": "No experiment has been run yet. POST /scenario/experiment/run to start.",
+		})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "completed",
+		"results": results,
 	})
 }
 

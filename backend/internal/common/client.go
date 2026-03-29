@@ -7,10 +7,60 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
 var httpClient = &http.Client{Timeout: 5 * time.Second}
+
+// ---- Global experiment config -------------------------------------------------------
+
+// globalNetworkDelayMs is an artificial delay (ms) injected into every HTTP call.
+// Set via SetNetworkDelayMs; read atomically in DoRequest.
+var globalNetworkDelayMs int64 // atomic
+
+// SetNetworkDelayMs configures the simulated network delay for all service calls.
+func SetNetworkDelayMs(ms int) {
+	if ms < 0 {
+		ms = 0
+	}
+	atomic.StoreInt64(&globalNetworkDelayMs, int64(ms))
+	log.Printf("[common] Network delay set to %dms", ms)
+}
+
+// GetNetworkDelayMs returns the current simulated network delay in ms.
+func GetNetworkDelayMs() int {
+	return int(atomic.LoadInt64(&globalNetworkDelayMs))
+}
+
+// globalOrchMode controls how cDTs handle failover: "local" or "central".
+// "local"   – fallback provider is pre-configured; switch is immediate.
+// "central" – failing cDT asks the Arrowhead orchestrator for a new provider.
+var (
+	orchModeMu     sync.RWMutex
+	globalOrchMode = "local"
+)
+
+// SetOrchestrationMode sets the active orchestration mode ("local" or "central").
+func SetOrchestrationMode(mode string) {
+	if mode != "local" && mode != "central" {
+		mode = "local"
+	}
+	orchModeMu.Lock()
+	globalOrchMode = mode
+	orchModeMu.Unlock()
+	log.Printf("[common] Orchestration mode set to %q", mode)
+}
+
+// GetOrchestrationMode returns the active orchestration mode.
+func GetOrchestrationMode() string {
+	orchModeMu.RLock()
+	defer orchModeMu.RUnlock()
+	return globalOrchMode
+}
+
+// ---- Arrowhead client ---------------------------------------------------------------
 
 // ArrowheadClient handles communication with the Arrowhead core
 type ArrowheadClient struct {
@@ -66,8 +116,14 @@ func (c *ArrowheadClient) CallService(serviceName, method, path string, body int
 	return DoRequest(method, url, orch.AuthToken, c.ConsumerID, body, result)
 }
 
-// DoRequest makes a raw HTTP request with auth headers
+// DoRequest makes a raw HTTP request with auth headers.
+// It applies the global simulated network delay before sending.
 func DoRequest(method, url, token, consumerID string, body interface{}, result interface{}) error {
+	// Simulate network latency on every call.
+	if delay := GetNetworkDelayMs(); delay > 0 {
+		time.Sleep(time.Duration(delay) * time.Millisecond)
+	}
+
 	var reqBody io.Reader
 	if body != nil {
 		data, _ := json.Marshal(body)

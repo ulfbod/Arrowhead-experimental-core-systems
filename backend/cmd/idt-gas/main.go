@@ -13,20 +13,28 @@ import (
 	"time"
 )
 
-type GasService struct {
-	mu    sync.RWMutex
-	state common.GasSensorState
-	ah    *common.ArrowheadClient
-}
-
 // Gas threshold constants
 const (
-	thresholdCH4 = 1.0   // %
-	thresholdCO  = 25.0  // ppm
+	thresholdCH4    = 1.0  // %
+	thresholdCO     = 25.0 // ppm
 	thresholdO2Low  = 19.5 // %
 	thresholdO2High = 23.0 // %
-	thresholdNO2 = 3.0   // ppm
+	thresholdNO2    = 3.0  // ppm
 )
+
+type simDegradeParams struct {
+	active         bool
+	noiseFactor    float64 // multiplier for noise amplitude (>1 = noisier/less accurate)
+	extraLatencyMs int     // artificial response delay
+}
+
+type GasService struct {
+	mu       sync.RWMutex
+	state    common.GasSensorState
+	ah       *common.ArrowheadClient
+	simFail  bool             // when true, all state endpoints return HTTP 503
+	degrade  simDegradeParams // when active, adds noise and latency
+}
 
 func main() {
 	id := envOrDefault("IDT_ID", "idt2a")
@@ -46,11 +54,7 @@ func main() {
 			Connected: true,
 			Position:  common.Position{X: rand.Float64() * 100, Y: rand.Float64() * 100, Z: 0},
 			GasLevels: common.GasLevels{
-				CH4: 0.1,
-				CO:  5.0,
-				CO2: 0.04,
-				O2:  20.9,
-				NO2: 0.5,
+				CH4: 0.1, CO: 5.0, CO2: 0.04, O2: 20.9, NO2: 0.5,
 			},
 			Alerts:            []common.GasAlert{},
 			EnvironmentStatus: "safe",
@@ -84,6 +88,10 @@ func main() {
 	mux.HandleFunc("/online", svc.handleOnline)
 	mux.HandleFunc("/simulate/gas", svc.handleSimulateGas)
 	mux.HandleFunc("/simulate/spike", svc.handleSimulateSpike)
+	// QoS failure injection endpoints
+	mux.HandleFunc("/simulate/fail", svc.handleSimulateFail)
+	mux.HandleFunc("/simulate/degrade", svc.handleSimulateDegrade)
+	mux.HandleFunc("/simulate/recover", svc.handleSimulateRecover)
 
 	handler := common.CORSMiddleware(mux)
 	log.Fatal(http.ListenAndServe(":"+port, handler))
@@ -94,17 +102,18 @@ func (s *GasService) simulate() {
 	defer ticker.Stop()
 	for range ticker.C {
 		s.mu.Lock()
-		if s.state.Online && s.state.Connected {
+		if s.state.Online && s.state.Connected && !s.simFail {
 			g := &s.state.GasLevels
-
-			// Fluctuate gas levels with realistic noise
-			g.CH4 = clamp(g.CH4+(rand.Float64()-0.48)*0.02, 0, 5)
-			g.CO = clamp(g.CO+(rand.Float64()-0.48)*0.5, 0, 200)
-			g.CO2 = clamp(g.CO2+(rand.Float64()-0.5)*0.005, 0.03, 5)
-			g.O2 = clamp(g.O2+(rand.Float64()-0.5)*0.05, 16, 25)
-			g.NO2 = clamp(g.NO2+(rand.Float64()-0.48)*0.05, 0, 20)
-
-			// Evaluate thresholds and generate/clear alerts
+			nf := 1.0
+			if s.degrade.active {
+				nf = s.degrade.noiseFactor
+			}
+			// Fluctuate gas levels with realistic noise (amplified when degraded)
+			g.CH4 = clamp(g.CH4+(rand.Float64()-0.48)*0.02*nf, 0, 5)
+			g.CO = clamp(g.CO+(rand.Float64()-0.48)*0.5*nf, 0, 200)
+			g.CO2 = clamp(g.CO2+(rand.Float64()-0.5)*0.005*nf, 0.03, 5)
+			g.O2 = clamp(g.O2+(rand.Float64()-0.5)*0.05*nf, 16, 25)
+			g.NO2 = clamp(g.NO2+(rand.Float64()-0.48)*0.05*nf, 0, 20)
 			s.evaluateAlerts()
 			s.state.LastUpdated = time.Now()
 		}
@@ -128,24 +137,21 @@ func (s *GasService) evaluateAlerts() {
 		{"O2-high", s.state.GasLevels.O2, thresholdO2High, s.state.GasLevels.O2 > thresholdO2High},
 		{"NO2", s.state.GasLevels.NO2, thresholdNO2, s.state.GasLevels.NO2 > thresholdNO2},
 	}
-
 	for _, c := range checks {
 		found := false
 		for i := range s.state.Alerts {
 			if s.state.Alerts[i].Gas == c.gas && s.state.Alerts[i].Active {
 				found = true
 				if !c.exceeded {
-					// Clear the alert
 					s.state.Alerts[i].Active = false
 				} else {
-					// Update level
 					s.state.Alerts[i].Level = c.level
 				}
 				break
 			}
 		}
 		if !found && c.exceeded {
-			alert := common.GasAlert{
+			s.state.Alerts = append(s.state.Alerts, common.GasAlert{
 				ID:        fmt.Sprintf("alert-%s-%d", c.gas, now.UnixNano()),
 				Gas:       c.gas,
 				Level:     c.level,
@@ -153,13 +159,10 @@ func (s *GasService) evaluateAlerts() {
 				Location:  s.state.Position,
 				Timestamp: now,
 				Active:    true,
-			}
-			s.state.Alerts = append(s.state.Alerts, alert)
+			})
 			log.Printf("[%s] Gas alert: %s = %.3f (threshold %.3f)", s.state.ID, c.gas, c.level, c.threshold)
 		}
 	}
-
-	// Trim old inactive alerts (keep last 50)
 	var active, inactive []common.GasAlert
 	for _, a := range s.state.Alerts {
 		if a.Active {
@@ -172,8 +175,6 @@ func (s *GasService) evaluateAlerts() {
 		inactive = inactive[len(inactive)-20:]
 	}
 	s.state.Alerts = append(active, inactive...)
-
-	// Set environment status
 	hasActive := len(active) > 0
 	hasCritical := false
 	for _, a := range active {
@@ -192,14 +193,50 @@ func (s *GasService) evaluateAlerts() {
 	}
 }
 
+// failCheck returns true and writes 503 if simFail mode is active.
+func (s *GasService) failCheck(w http.ResponseWriter) bool {
+	s.mu.RLock()
+	fail := s.simFail
+	s.mu.RUnlock()
+	if fail {
+		common.WriteError(w, 503, "sensor failure simulated")
+		return true
+	}
+	return false
+}
+
+// degradeLatency adds an artificial delay when degraded.
+func (s *GasService) degradeLatency() {
+	s.mu.RLock()
+	d := s.degrade
+	s.mu.RUnlock()
+	if d.active && d.extraLatencyMs > 0 {
+		time.Sleep(time.Duration(d.extraLatencyMs) * time.Millisecond)
+	}
+}
+
 func (s *GasService) handleState(w http.ResponseWriter, r *http.Request) {
+	if s.failCheck(w) {
+		return
+	}
+	s.degradeLatency()
 	s.mu.RLock()
 	state := s.state
+	degraded := s.degrade.active
 	s.mu.RUnlock()
-	common.WriteJSON(w, 200, state)
+	// Include degraded flag in response so cDT2 can observe it
+	type resp struct {
+		common.GasSensorState
+		SimDegraded bool `json:"simDegraded"`
+	}
+	common.WriteJSON(w, 200, resp{state, degraded})
 }
 
 func (s *GasService) handleMeasurements(w http.ResponseWriter, r *http.Request) {
+	if s.failCheck(w) {
+		return
+	}
+	s.degradeLatency()
 	s.mu.RLock()
 	levels := s.state.GasLevels
 	alerts := s.state.Alerts
@@ -209,13 +246,14 @@ func (s *GasService) handleMeasurements(w http.ResponseWriter, r *http.Request) 
 		alerts = []common.GasAlert{}
 	}
 	common.WriteJSON(w, 200, map[string]interface{}{
-		"gasLevels": levels,
-		"alerts":    alerts,
-		"timestamp": ts,
+		"gasLevels": levels, "alerts": alerts, "timestamp": ts,
 	})
 }
 
 func (s *GasService) handleAlerts(w http.ResponseWriter, r *http.Request) {
+	if s.failCheck(w) {
+		return
+	}
 	s.mu.RLock()
 	alerts := s.state.Alerts
 	s.mu.RUnlock()
@@ -303,17 +341,73 @@ func (s *GasService) handleSimulateSpike(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.mu.Lock()
-	// Trigger dangerous gas spike
-	s.state.GasLevels.CH4 = 2.5  // well above 1% threshold
-	s.state.GasLevels.CO = 80.0  // well above 25ppm threshold
-	s.state.GasLevels.O2 = 17.0  // below 19.5% threshold
-	s.state.GasLevels.NO2 = 8.0  // above 3ppm threshold
+	s.state.GasLevels.CH4 = 2.5
+	s.state.GasLevels.CO = 80.0
+	s.state.GasLevels.O2 = 17.0
+	s.state.GasLevels.NO2 = 8.0
 	s.state.GasLevels.CO2 = 1.2
 	s.evaluateAlerts()
 	id := s.state.ID
 	s.mu.Unlock()
 	log.Printf("[%s] Gas spike simulated!", id)
 	common.WriteJSON(w, 200, map[string]string{"status": "spike triggered", "message": "dangerous gas levels injected"})
+}
+
+// handleSimulateFail makes all read endpoints return HTTP 503.
+func (s *GasService) handleSimulateFail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	s.mu.Lock()
+	s.simFail = true
+	id := s.state.ID
+	s.mu.Unlock()
+	log.Printf("[%s] FAILURE MODE activated – /state will return 503", id)
+	common.WriteJSON(w, 200, map[string]string{"status": "failure mode activated"})
+}
+
+// handleSimulateDegrade degrades sensor accuracy and adds latency.
+// Body: {"noiseFactor": 5.0, "latencyMs": 100}
+// noiseFactor>1 = noisier readings (lower accuracy). latencyMs = extra response delay.
+func (s *GasService) handleSimulateDegrade(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	var body struct {
+		NoiseFactor float64 `json:"noiseFactor"` // default 5.0
+		LatencyMs   int     `json:"latencyMs"`   // default 100
+	}
+	body.NoiseFactor = 5.0
+	body.LatencyMs = 100
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.NoiseFactor <= 0 {
+		body.NoiseFactor = 5.0
+	}
+	s.mu.Lock()
+	s.degrade = simDegradeParams{active: true, noiseFactor: body.NoiseFactor, extraLatencyMs: body.LatencyMs}
+	id := s.state.ID
+	s.mu.Unlock()
+	log.Printf("[%s] DEGRADE MODE: noiseFactor=%.1f latencyMs=%d", id, body.NoiseFactor, body.LatencyMs)
+	common.WriteJSON(w, 200, map[string]interface{}{
+		"status": "degraded", "noiseFactor": body.NoiseFactor, "latencyMs": body.LatencyMs,
+	})
+}
+
+// handleSimulateRecover clears failure and degradation modes.
+func (s *GasService) handleSimulateRecover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	s.mu.Lock()
+	s.simFail = false
+	s.degrade = simDegradeParams{}
+	id := s.state.ID
+	s.mu.Unlock()
+	log.Printf("[%s] RECOVERED – normal operation restored", id)
+	common.WriteJSON(w, 200, map[string]string{"status": "recovered"})
 }
 
 func clamp(v, lo, hi float64) float64 {

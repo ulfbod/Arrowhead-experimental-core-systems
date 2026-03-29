@@ -11,14 +11,25 @@ import (
 	"time"
 )
 
+// ---- QoS configuration for gas sensors ----
+// Primary (idt2a): higher accuracy, lower latency.
+// Fallback (idt2b): slightly lower accuracy, higher latency.
+var gasProviders = []common.ProviderConfig{
+	{ID: "idt2a", Primary: true, NominalAccuracy: 0.95, NominalLatencyMs: 10, NominalReliability: 0.98},
+	{ID: "idt2b", Primary: false, NominalAccuracy: 0.85, NominalLatencyMs: 15, NominalReliability: 0.95},
+}
+
 type CDT2Service struct {
 	mu         sync.RWMutex
 	gasResult  common.GasMonitorResult
 	sensor1    *common.GasSensorState
 	sensor2    *common.GasSensorState
+	sensorQoS  common.SourceQoS       // QoS state for the primary (failover-managed) sensor
+	ps         *common.ProviderSelector // manages sensor1: idt2a (primary) → idt2b (fallback)
 	ah         *common.ArrowheadClient
 	connected  bool
 	serviceLog []string
+	streamLog  *common.StreamLogger
 }
 
 func main() {
@@ -27,8 +38,26 @@ func main() {
 	port := envOrDefault("PORT", "8502")
 	ahURL := envOrDefault("ARROWHEAD_URL", "http://localhost:8000")
 	host := envOrDefault("HOST", "localhost")
+	logDir := envOrDefault("LOG_DIR", "./logs")
+
+	// Inject URLs into provider configs from environment
+	gasProviders[0].URL = envOrDefault("IDT2A_URL", "http://localhost:8201")
+	gasProviders[1].URL = envOrDefault("IDT2B_URL", "http://localhost:8202")
 
 	log.Printf("[%s] Starting %s on :%s", id, name, port)
+
+	evLog, err := common.NewFailoverLogger(logDir, "failover_events.csv")
+	if err != nil {
+		log.Printf("[%s] WARNING: cannot open failover log: %v", id, err)
+	}
+
+	streamLog, err := common.NewStreamLogger(logDir, "cdt2_gas_stream.csv",
+		"timestamp_ms,timestamp_iso,active_provider,on_fallback,"+
+			"ch4_pct,co_ppm,co2_pct,o2_pct,no2_ppm,"+
+			"accuracy,latency_ms,reliability,freshness_ms,degraded")
+	if err != nil {
+		log.Printf("[%s] WARNING: cannot open stream log: %v", id, err)
+	}
 
 	svc := &CDT2Service{
 		ah:        common.NewArrowheadClient(ahURL, id),
@@ -42,6 +71,8 @@ func main() {
 			Timestamp:       time.Now(),
 		},
 		serviceLog: []string{},
+		streamLog:  streamLog,
+		ps: common.NewProviderSelector(id, "gas-measurement", gasProviders, 3, evLog, common.NewArrowheadClient(ahURL, id)),
 	}
 
 	portInt := 8502
@@ -61,9 +92,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, 200, map[string]interface{}{
-			"status":    "ok",
-			"id":        id,
-			"timestamp": time.Now(),
+			"status": "ok", "id": id, "timestamp": time.Now(),
 		})
 	})
 	mux.HandleFunc("/state", svc.handleState)
@@ -73,12 +102,18 @@ func main() {
 	mux.HandleFunc("/simulate/spike", svc.handleSimulateSpike)
 	mux.HandleFunc("/logs", svc.handleLogs)
 	mux.HandleFunc("/connectivity", svc.handleConnectivity)
+	// Provider QoS management endpoints (used by scenario runner)
+	mux.HandleFunc("/providers", svc.handleProviders)
+	mux.HandleFunc("/provider/fail", svc.handleProviderFail)
+	mux.HandleFunc("/provider/recover", svc.handleProviderRecover)
+	mux.HandleFunc("/provider/degrade", svc.handleProviderDegrade)
+	// Experiment support: trigger an immediate poll cycle
+	mux.HandleFunc("/trigger-poll", svc.handleTriggerPoll)
 
 	log.Printf("[%s] Listening on :%s", id, port)
 	log.Fatal(http.ListenAndServe(":"+port, corsMiddleware(mux)))
 }
 
-// pollLoop fetches sensor states every 3 seconds.
 func (s *CDT2Service) pollLoop() {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
@@ -91,33 +126,26 @@ func (s *CDT2Service) fetchSensorStates() {
 	s.mu.RLock()
 	connected := s.connected
 	s.mu.RUnlock()
-
 	if !connected {
 		log.Printf("[cdt2] Connectivity disabled, skipping poll")
 		return
 	}
 
-	// Sensor 1: direct call to iDT2a
+	// Sensor 1: managed by ProviderSelector (idt2a primary → idt2b fallback).
 	var s1 common.GasSensorState
-	err1 := common.DoRequest(
-		"GET",
-		envOrDefault("IDT2A_URL", "http://localhost:8201")+"/state",
-		"", "cdt2", nil, &s1,
-	)
+	qos1, err1 := s.ps.Do("GET", "/state", nil, &s1)
 	if err1 != nil {
-		log.Printf("[cdt2] Sensor1 (idt2a) fetch error: %v", err1)
+		log.Printf("[cdt2] Sensor1 fetch error (provider=%s): %v", s.ps.ActiveProviderID(), err1)
 	}
 
-	// Sensor 2: direct call to iDT2b
+	// Sensor 2: always direct to idt2b (independent reading).
 	var s2 common.GasSensorState
-	err2 := common.DoRequest(
-		"GET",
-		envOrDefault("IDT2B_URL", "http://localhost:8202")+"/state",
-		"", "cdt2", nil, &s2,
-	)
+	err2 := common.DoRequest("GET", gasProviders[1].URL+"/state", "", "cdt2", nil, &s2)
 	if err2 != nil {
 		log.Printf("[cdt2] Sensor2 (idt2b) fetch error: %v", err2)
 	}
+
+	psState := s.ps.State()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -132,7 +160,7 @@ func (s *CDT2Service) fetchSensorStates() {
 			activeSensorStates = append(activeSensorStates, s1)
 		}
 		s.addLogLocked(fmt.Sprintf("Sensor1 (%s): CH4=%.2f%% CO=%.1fppm env=%s",
-			s1.ID, s1.GasLevels.CH4, s1.GasLevels.CO, s1.EnvironmentStatus))
+			psState.Active.ID, s1.GasLevels.CH4, s1.GasLevels.CO, s1.EnvironmentStatus))
 	}
 	if err2 == nil {
 		s.sensor2 = &s2
@@ -156,6 +184,20 @@ func (s *CDT2Service) fetchSensorStates() {
 		ActiveSensors:   activeSensors,
 		Timestamp:       time.Now(),
 	}
+	s.sensorQoS = psState
+
+	// Write stream log row
+	now := time.Now()
+	onFallback := psState.Active.ID != gasProviders[0].ID
+	s.streamLog.WriteRow(
+		now.UnixMilli(),
+		now.Format(time.RFC3339),
+		psState.Active.ID,
+		onFallback,
+		avg.CH4, avg.CO, avg.CO2, avg.O2, avg.NO2,
+		qos1.Accuracy, qos1.LatencyMs, qos1.Reliability, qos1.FreshnessMs,
+		psState.Degraded,
+	)
 }
 
 // aggregateGasLevels computes per-gas average and max across active sensors.
@@ -172,7 +214,6 @@ func aggregateGasLevels(sensors []common.GasSensorState) (avg, max common.GasLev
 		avg.CO2 += s.GasLevels.CO2
 		avg.O2 += s.GasLevels.O2
 		avg.NO2 += s.GasLevels.NO2
-
 		if s.GasLevels.CH4 > max.CH4 {
 			max.CH4 = s.GasLevels.CH4
 		}
@@ -182,7 +223,6 @@ func aggregateGasLevels(sensors []common.GasSensorState) (avg, max common.GasLev
 		if s.GasLevels.CO2 > max.CO2 {
 			max.CO2 = s.GasLevels.CO2
 		}
-		// O2: lower is worse; track minimum as "max hazard"
 		if max.O2 == 0 || s.GasLevels.O2 < max.O2 {
 			max.O2 = s.GasLevels.O2
 		}
@@ -198,7 +238,6 @@ func aggregateGasLevels(sensors []common.GasSensorState) (avg, max common.GasLev
 	return
 }
 
-// collectAlerts merges active alerts from all sensors, deduplicating by ID.
 func collectAlerts(sensors []common.GasSensorState) []common.GasAlert {
 	seen := map[string]bool{}
 	var alerts []common.GasAlert
@@ -216,24 +255,18 @@ func collectAlerts(sensors []common.GasSensorState) []common.GasAlert {
 	return alerts
 }
 
-// isEnvironmentSafe returns false if any threshold is exceeded or active alerts exist.
 func isEnvironmentSafe(max common.GasLevels, alerts []common.GasAlert) bool {
-	if max.CH4 >= 1.0 {
-		return false
-	}
-	if max.CO >= 25.0 {
+	if max.CH4 >= 1.0 || max.CO >= 25.0 {
 		return false
 	}
 	if max.O2 != 0 && max.O2 < 19.5 {
 		return false
 	}
-	if len(alerts) > 0 {
-		return false
-	}
-	return true
+	return len(alerts) == 0
 }
 
-// handleState returns the full composite gas monitoring result.
+// ---- HTTP handlers ----
+
 func (s *CDT2Service) handleState(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		common.WriteError(w, 405, "GET required")
@@ -245,11 +278,11 @@ func (s *CDT2Service) handleState(w http.ResponseWriter, r *http.Request) {
 		"gasMonitor": s.gasResult,
 		"sensor1":    s.sensor1,
 		"sensor2":    s.sensor2,
+		"qos":        s.sensorQoS,
 		"timestamp":  time.Now(),
 	})
 }
 
-// handleAlerts returns only the combined active alert list.
 func (s *CDT2Service) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		common.WriteError(w, 405, "GET required")
@@ -258,13 +291,10 @@ func (s *CDT2Service) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	common.WriteJSON(w, 200, map[string]interface{}{
-		"alerts":    s.gasResult.ActiveAlerts,
-		"count":     len(s.gasResult.ActiveAlerts),
-		"timestamp": time.Now(),
+		"alerts": s.gasResult.ActiveAlerts, "count": len(s.gasResult.ActiveAlerts), "timestamp": time.Now(),
 	})
 }
 
-// handleThreshold accepts a POST body with new threshold values and forwards to both sensors.
 func (s *CDT2Service) handleThreshold(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		common.WriteError(w, 405, "POST required")
@@ -275,25 +305,16 @@ func (s *CDT2Service) handleThreshold(w http.ResponseWriter, r *http.Request) {
 		common.WriteError(w, 400, "invalid JSON body")
 		return
 	}
-
-	err1 := common.DoRequest("POST", envOrDefault("IDT2A_URL", "http://localhost:8201")+"/threshold", "", "cdt2", body, nil)
-	err2 := common.DoRequest(
-		"POST",
-		envOrDefault("IDT2B_URL", "http://localhost:8202")+"/threshold",
-		"", "cdt2", body, nil,
-	)
+	err1 := common.DoRequest("POST", gasProviders[0].URL+"/threshold", "", "cdt2", body, nil)
+	err2 := common.DoRequest("POST", gasProviders[1].URL+"/threshold", "", "cdt2", body, nil)
 	s.mu.Lock()
 	s.addLogLocked("Updated gas thresholds on both sensors")
 	s.mu.Unlock()
-	log.Printf("[cdt2] /threshold: sensor1_ok=%v sensor2_ok=%v", err1 == nil, err2 == nil)
 	common.WriteJSON(w, 200, map[string]interface{}{
-		"status":  "thresholds updated",
-		"sensor1": err1 == nil,
-		"sensor2": err2 == nil,
+		"status": "thresholds updated", "sensor1": err1 == nil, "sensor2": err2 == nil,
 	})
 }
 
-// handleSensors returns the last-known individual sensor states.
 func (s *CDT2Service) handleSensors(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		common.WriteError(w, 405, "GET required")
@@ -301,13 +322,9 @@ func (s *CDT2Service) handleSensors(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	common.WriteJSON(w, 200, map[string]interface{}{
-		"sensor1": s.sensor1,
-		"sensor2": s.sensor2,
-	})
+	common.WriteJSON(w, 200, map[string]interface{}{"sensor1": s.sensor1, "sensor2": s.sensor2})
 }
 
-// handleSimulateSpike triggers a gas spike simulation on both sensors.
 func (s *CDT2Service) handleSimulateSpike(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		common.WriteError(w, 405, "POST required")
@@ -315,25 +332,16 @@ func (s *CDT2Service) handleSimulateSpike(w http.ResponseWriter, r *http.Request
 	}
 	var body map[string]interface{}
 	json.NewDecoder(r.Body).Decode(&body)
-
-	err1 := common.DoRequest("POST", envOrDefault("IDT2A_URL", "http://localhost:8201")+"/simulate/spike", "", "cdt2", body, nil)
-	err2 := common.DoRequest(
-		"POST",
-		envOrDefault("IDT2B_URL", "http://localhost:8202")+"/simulate/spike",
-		"", "cdt2", body, nil,
-	)
+	err1 := common.DoRequest("POST", gasProviders[0].URL+"/simulate/spike", "", "cdt2", body, nil)
+	err2 := common.DoRequest("POST", gasProviders[1].URL+"/simulate/spike", "", "cdt2", body, nil)
 	s.mu.Lock()
 	s.addLogLocked("Triggered gas spike simulation on both sensors")
 	s.mu.Unlock()
-	log.Printf("[cdt2] /simulate/spike: sensor1_ok=%v sensor2_ok=%v", err1 == nil, err2 == nil)
 	common.WriteJSON(w, 200, map[string]interface{}{
-		"status":  "spike triggered",
-		"sensor1": err1 == nil,
-		"sensor2": err2 == nil,
+		"status": "spike triggered", "sensor1": err1 == nil, "sensor2": err2 == nil,
 	})
 }
 
-// handleLogs returns recent service log entries.
 func (s *CDT2Service) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		common.WriteError(w, 405, "GET required")
@@ -344,7 +352,6 @@ func (s *CDT2Service) handleLogs(w http.ResponseWriter, r *http.Request) {
 	common.WriteJSON(w, 200, map[string]interface{}{"logs": s.serviceLog})
 }
 
-// handleConnectivity toggles a simulated connectivity issue.
 func (s *CDT2Service) handleConnectivity(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		common.WriteError(w, 405, "PUT required")
@@ -361,11 +368,95 @@ func (s *CDT2Service) handleConnectivity(w http.ResponseWriter, r *http.Request)
 	s.connected = body.Connected
 	s.addLogLocked(fmt.Sprintf("Connectivity set to %v", body.Connected))
 	s.mu.Unlock()
-	log.Printf("[cdt2] Connectivity toggled: %v", body.Connected)
 	common.WriteJSON(w, 200, map[string]bool{"connected": body.Connected})
 }
 
-// addLogLocked appends a timestamped log entry. Caller must hold s.mu (write).
+// handleProviders returns the QoS state of all managed providers.
+func (s *CDT2Service) handleProviders(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		common.WriteError(w, 405, "GET required")
+		return
+	}
+	common.WriteJSON(w, 200, s.ps.State())
+}
+
+// handleProviderFail forces the named provider into failed state.
+// Body: {"providerId": "idt2a"}
+func (s *CDT2Service) handleProviderFail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	var body struct {
+		ProviderID string `json:"providerId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ProviderID == "" {
+		common.WriteError(w, 400, "providerId required")
+		return
+	}
+	s.ps.MarkFailed(body.ProviderID)
+	common.WriteJSON(w, 200, map[string]string{"status": "failed", "providerId": body.ProviderID})
+}
+
+// handleProviderRecover recovers the named provider.
+func (s *CDT2Service) handleProviderRecover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	var body struct {
+		ProviderID string `json:"providerId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ProviderID == "" {
+		common.WriteError(w, 400, "providerId required")
+		return
+	}
+	s.ps.MarkRecovered(body.ProviderID)
+	common.WriteJSON(w, 200, map[string]string{"status": "recovered", "providerId": body.ProviderID})
+}
+
+// handleProviderDegrade degrades the named provider's QoS.
+// Body: {"providerId": "idt2a", "accuracyFactor": 0.6, "latencyMs": 100}
+func (s *CDT2Service) handleProviderDegrade(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	var body struct {
+		ProviderID     string  `json:"providerId"`
+		AccuracyFactor float64 `json:"accuracyFactor"`
+		LatencyMs      float64 `json:"latencyMs"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ProviderID == "" {
+		common.WriteError(w, 400, "providerId required")
+		return
+	}
+	if body.AccuracyFactor <= 0 || body.AccuracyFactor > 1 {
+		body.AccuracyFactor = 0.65
+	}
+	s.ps.MarkDegraded(body.ProviderID, body.AccuracyFactor, body.LatencyMs)
+	common.WriteJSON(w, 200, map[string]interface{}{
+		"status": "degraded", "providerId": body.ProviderID,
+		"accuracyFactor": body.AccuracyFactor, "latencyMs": body.LatencyMs,
+	})
+}
+
+// handleTriggerPoll forces an immediate poll of iDT providers.
+// Used by the experiment runner to bypass the normal ticker interval.
+func (s *CDT2Service) handleTriggerPoll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	s.fetchSensorStates()
+	ev := s.ps.LatestFailoverEvent()
+	common.WriteJSON(w, 200, map[string]interface{}{
+		"status":         "polled",
+		"activeProvider": s.ps.ActiveProviderID(),
+		"latestFailover": ev,
+	})
+}
+
 func (s *CDT2Service) addLogLocked(msg string) {
 	entry := fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), msg)
 	if len(s.serviceLog) >= 50 {

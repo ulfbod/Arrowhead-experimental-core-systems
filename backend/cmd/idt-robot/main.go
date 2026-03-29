@@ -14,9 +14,13 @@ import (
 )
 
 type RobotService struct {
-	mu    sync.RWMutex
-	state common.RobotState
-	ah    *common.ArrowheadClient
+	mu          sync.RWMutex
+	state       common.RobotState
+	ah          *common.ArrowheadClient
+	simFail     bool    // returns 503 on /state
+	degraded    bool    // slows SLAM rate, adds latency
+	slamSlowPct float64 // fraction of normal SLAM speed when degraded (default 0.3)
+	latencyMs   int     // extra response delay when degraded
 }
 
 func main() {
@@ -29,7 +33,8 @@ func main() {
 	log.Printf("[%s] Starting %s on :%s", id, name, port)
 
 	svc := &RobotService{
-		ah: common.NewArrowheadClient(ahURL, id),
+		ah:          common.NewArrowheadClient(ahURL, id),
+		slamSlowPct: 0.3,
 		state: common.RobotState{
 			ID:               id,
 			Name:             name,
@@ -76,6 +81,9 @@ func main() {
 	mux.HandleFunc("/hazard/inject", svc.handleHazardInject)
 	mux.HandleFunc("/hazard/clear", svc.handleHazardClear)
 	mux.HandleFunc("/simulate/reset", svc.handleSimulateReset)
+	mux.HandleFunc("/simulate/fail", svc.handleSimulateFail)
+	mux.HandleFunc("/simulate/degrade", svc.handleSimulateDegrade)
+	mux.HandleFunc("/simulate/recover", svc.handleSimulateRecover)
 
 	handler := common.CORSMiddleware(mux)
 	log.Fatal(http.ListenAndServe(":"+port, handler))
@@ -100,10 +108,14 @@ func (s *RobotService) simulate() {
 				s.state.Position.X = math.Max(0, math.Min(100, s.state.Position.X))
 				s.state.Position.Y = math.Max(0, math.Min(100, s.state.Position.Y))
 			}
-			// SLAM / mapping progress
+			// SLAM / mapping progress (slowed when degraded)
 			if s.state.SlamActive && s.state.MappingProgress < 100 {
-				s.state.MappingProgress = math.Min(100, s.state.MappingProgress+0.05)
-				s.state.AreaCoveredSqm = s.state.MappingProgress * 50 // up to 5000 sqm total
+				rate := 0.05
+				if s.degraded {
+					rate = 0.05 * s.slamSlowPct
+				}
+				s.state.MappingProgress = math.Min(100, s.state.MappingProgress+rate)
+				s.state.AreaCoveredSqm = s.state.MappingProgress * 50
 			}
 			// Random hazard detection (low probability)
 			if rand.Float64() < 0.005 && len(s.state.HazardsDetected) < 5 {
@@ -126,9 +138,23 @@ func (s *RobotService) simulate() {
 
 func (s *RobotService) handleState(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
+	fail := s.simFail
+	latMs := s.latencyMs
+	degraded := s.degraded
 	state := s.state
 	s.mu.RUnlock()
-	common.WriteJSON(w, 200, state)
+	if fail {
+		common.WriteError(w, 503, "robot failure simulated")
+		return
+	}
+	if degraded && latMs > 0 {
+		time.Sleep(time.Duration(latMs) * time.Millisecond)
+	}
+	type resp struct {
+		common.RobotState
+		SimDegraded bool `json:"simDegraded"`
+	}
+	common.WriteJSON(w, 200, resp{state, degraded})
 }
 
 func (s *RobotService) handleMap(w http.ResponseWriter, r *http.Request) {
@@ -312,6 +338,64 @@ func (s *RobotService) handleSimulateReset(w http.ResponseWriter, r *http.Reques
 	s.mu.Unlock()
 	log.Printf("[%s] State reset to initial values.", id)
 	common.WriteJSON(w, 200, map[string]string{"status": "reset"})
+}
+
+func (s *RobotService) handleSimulateFail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	s.mu.Lock()
+	s.simFail = true
+	id := s.state.ID
+	s.mu.Unlock()
+	log.Printf("[%s] FAILURE MODE activated – /state will return 503", id)
+	common.WriteJSON(w, 200, map[string]string{"status": "failure mode activated"})
+}
+
+// handleSimulateDegrade slows SLAM and adds response latency.
+// Body: {"slamSlowPct": 0.3, "latencyMs": 150}
+func (s *RobotService) handleSimulateDegrade(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	var body struct {
+		SlamSlowPct float64 `json:"slamSlowPct"` // 0–1, fraction of normal rate
+		LatencyMs   int     `json:"latencyMs"`
+	}
+	body.SlamSlowPct = 0.3
+	body.LatencyMs = 150
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.SlamSlowPct <= 0 || body.SlamSlowPct > 1 {
+		body.SlamSlowPct = 0.3
+	}
+	s.mu.Lock()
+	s.degraded = true
+	s.slamSlowPct = body.SlamSlowPct
+	s.latencyMs = body.LatencyMs
+	id := s.state.ID
+	s.mu.Unlock()
+	log.Printf("[%s] DEGRADE MODE: slamSlowPct=%.2f latencyMs=%d", id, body.SlamSlowPct, body.LatencyMs)
+	common.WriteJSON(w, 200, map[string]interface{}{
+		"status": "degraded", "slamSlowPct": body.SlamSlowPct, "latencyMs": body.LatencyMs,
+	})
+}
+
+func (s *RobotService) handleSimulateRecover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	s.mu.Lock()
+	s.simFail = false
+	s.degraded = false
+	s.slamSlowPct = 0.3
+	s.latencyMs = 0
+	id := s.state.ID
+	s.mu.Unlock()
+	log.Printf("[%s] RECOVERED – normal operation restored", id)
+	common.WriteJSON(w, 200, map[string]string{"status": "recovered"})
 }
 
 func envOrDefault(key, def string) string {

@@ -33,8 +33,12 @@ type CDTaService struct {
 	ah     *common.ArrowheadClient
 	id     string
 
+	// QoS
+	mappingQoS common.SourceQoS
+	streamLog  *common.StreamLogger
+
 	// internal control
-	missionActive bool
+	missionActive  bool
 	phaseEnteredAt time.Time
 }
 
@@ -56,11 +60,20 @@ func main() {
 	log.Printf("[%s] Composing: cDT1=%s cDT3=%s cDT4=%s cDT5=%s",
 		id, comps.CDT1, comps.CDT3, comps.CDT4, comps.CDT5)
 
+	logDir := envOrDefault("LOG_DIR", "./logs")
+	streamLog, err := common.NewStreamLogger(logDir, "cdta_mapping_stream.csv",
+		"timestamp_ms,timestamp_iso,source_cdt,active_provider,on_fallback,"+
+			"coverage_pct,phase,accuracy,latency_ms,reliability,freshness_ms,degraded")
+	if err != nil {
+		log.Printf("[%s] WARNING: cannot open stream log: %v", id, err)
+	}
+
 	now := time.Now()
 	svc := &CDTaService{
-		id:    id,
-		comps: comps,
-		ah:    common.NewArrowheadClient(ahURL, id),
+		id:        id,
+		comps:     comps,
+		ah:        common.NewArrowheadClient(ahURL, id),
+		streamLog: streamLog,
 		status: common.MissionStatus{
 			Phase:           common.PhaseIdle,
 			Recommendations: []string{"System ready. Issue POST /mission/start to begin post-blast inspection mission."},
@@ -122,16 +135,56 @@ func (s *CDTaService) pollLoop() {
 // evaluateMission fetches component states and drives the phase state machine.
 func (s *CDTaService) evaluateMission() {
 	// Fetch component data (outside the lock so HTTP calls don't stall readers).
-	mapping := s.fetchMapping()
+	mapping, mappingQoS := s.fetchMapping()
 	hazardReport := s.fetchHazards()
 	clearance := s.fetchClearance()
 	intervention := s.fetchIntervention()
+
+	// Write stream log row (outside lock)
+	if s.streamLog != nil {
+		now := time.Now()
+		s.mu.RLock()
+		phase := s.status.Phase
+		s.mu.RUnlock()
+
+		activeProvider := "unknown"
+		onFallback := false
+		accuracy := 0.0
+		latencyMs := 0.0
+		reliability := 0.0
+		freshnessMs := 0.0
+		degraded := false
+		if mappingQoS != nil {
+			activeProvider = mappingQoS.Active.ID
+			onFallback = !mappingQoS.Active.Primary
+			accuracy = mappingQoS.Active.QoS.Accuracy
+			latencyMs = mappingQoS.Active.QoS.LatencyMs
+			reliability = mappingQoS.Active.QoS.Reliability
+			freshnessMs = mappingQoS.Active.QoS.FreshnessMs
+			degraded = mappingQoS.Degraded
+		}
+		coveragePct := 0.0
+		if mapping != nil {
+			coveragePct = mapping.CoveragePct
+		}
+		s.streamLog.WriteRow(
+			now.UnixMilli(), now.Format(time.RFC3339),
+			"cdt1", activeProvider, onFallback,
+			coveragePct, string(phase),
+			accuracy, latencyMs, reliability, freshnessMs, degraded,
+		)
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if !s.missionActive {
 		return
+	}
+
+	// Store QoS state
+	if mappingQoS != nil {
+		s.mappingQoS = *mappingQoS
 	}
 
 	// Update sub-results
@@ -345,15 +398,16 @@ func (s *CDTaService) generateRecommendations() []string {
 
 // ---- Component fetch helpers -------------------------------------------------------
 
-func (s *CDTaService) fetchMapping() *common.MappingResult {
+func (s *CDTaService) fetchMapping() (*common.MappingResult, *common.SourceQoS) {
 	var resp struct {
 		Mapping common.MappingResult `json:"mapping"`
+		QoS     *common.SourceQoS    `json:"qos"`
 	}
 	if err := common.DoRequest("GET", s.comps.CDT1+"/state", "", s.id, nil, &resp); err != nil {
 		log.Printf("[%s] fetch cDT1 mapping state: %v", s.id, err)
-		return nil
+		return nil, nil
 	}
-	return &resp.Mapping
+	return &resp.Mapping, resp.QoS
 }
 
 func (s *CDTaService) fetchHazards() *common.HazardReport {
@@ -407,8 +461,22 @@ func (s *CDTaService) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *CDTaService) handleState(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	status := s.status
+	mappingQoS := s.mappingQoS
 	s.mu.RUnlock()
-	common.WriteJSON(w, http.StatusOK, status)
+	common.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"id":          s.id,
+		"phase":       status.Phase,
+		"startedAt":   status.StartedAt,
+		"completedAt": status.CompletedAt,
+		"mapping":     status.Mapping,
+		"hazards":     status.Hazards,
+		"clearance":   status.Clearance,
+		"intervention": status.Intervention,
+		"recommendations": status.Recommendations,
+		"log":         status.Log,
+		"lastUpdated": status.LastUpdated,
+		"mappingQoS":  mappingQoS,
+	})
 }
 
 func (s *CDTaService) handleMissionStart(w http.ResponseWriter, r *http.Request) {

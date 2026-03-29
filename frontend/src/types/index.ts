@@ -236,6 +236,81 @@ export interface ScenarioStatus {
   completedAt?: string
 }
 
+// ---- QoS and Provider Types ----
+
+export interface QoSMetrics {
+  accuracy: number
+  latencyMs: number
+  reliability: number
+  freshnessMs: number
+}
+
+export interface ProviderState {
+  id: string
+  url: string
+  primary: boolean
+  active: boolean
+  online: boolean
+  degraded: boolean
+  qos: QoSMetrics
+}
+
+export interface FailoverEvent {
+  eventId: string
+  cdtId: string
+  capability: string
+  prevProvider: string
+  nextProvider: string
+  failureTime: string
+  detectionTime: string
+  switchTime: string
+  failToSwitchMs: number
+  decisionDelayMs: number
+  orchestrationMode: string
+  networkDelayMs: number
+  reason: string
+  qosBefore: QoSMetrics
+  qosAfter: QoSMetrics
+}
+
+export interface SourceQoS {
+  capability: string
+  active: ProviderState
+  providers: ProviderState[]
+  degraded: boolean
+  recentFailovers: FailoverEvent[]
+  lastUpdated: string
+}
+
+// ---- Experiment Types ----
+
+export interface ExperimentRun {
+  networkDelayMs: number
+  mode: string
+  run: number
+  failoverDelayMs: number
+  failToSwitchMs: number
+  success: boolean
+  error?: string
+}
+
+export interface ExperimentSummary {
+  networkDelayMs: number
+  avgLocalDecisionMs: number
+  avgCentralDecisionMs: number
+  avgLocalFailToSwitchMs: number
+  avgCentralFailToSwitchMs: number
+  localRuns: number
+  centralRuns: number
+}
+
+export interface ExperimentResults {
+  runs: ExperimentRun[]
+  summary: ExperimentSummary[]
+  csvPath: string
+  completedAt: string
+}
+
 // ---- API Response Wrappers ----
 
 export interface ServicesResponse {

@@ -20,6 +20,8 @@ import type {
   ServicesResponse,
   PoliciesResponse,
   OrchLogsResponse,
+  SourceQoS,
+  ExperimentResults,
 } from '../types'
 
 // ============================================================
@@ -206,6 +208,34 @@ export const triggerGasSpike = (): Promise<void> =>
 
 export const clearAll = (): Promise<void> =>
   post<void>(PORTS.SCENARIO, '/scenario/clear-all')
+
+// ============================================================
+// QoS / Experiment  (:8700 scenario + :8502 cDT2)
+// ============================================================
+
+export const getCDT2Providers = (): Promise<SourceQoS> =>
+  get<SourceQoS>(PORTS.CDT2, '/providers')
+
+export const getCDT1Providers = (): Promise<SourceQoS> =>
+  get<SourceQoS>(PORTS.CDT1, '/providers')
+
+export const setOrchestrationMode = (mode: 'local' | 'central'): Promise<void> =>
+  post<void>(PORTS.SCENARIO, `/scenario/config?mode=${mode}`)
+
+export const setNetworkDelay = (ms: number): Promise<void> =>
+  post<void>(PORTS.SCENARIO, `/scenario/network-delay?ms=${ms}`)
+
+export const runExperiment = (runsPerPoint = 5): Promise<void> =>
+  post<void>(PORTS.SCENARIO, '/scenario/experiment/run', { runsPerPoint })
+
+export const getExperimentResults = (): Promise<{ status: string; results?: ExperimentResults }> =>
+  get(PORTS.SCENARIO, '/scenario/experiment/results')
+
+export const failSensor = (sensor: string): Promise<void> =>
+  post<void>(PORTS.SCENARIO, '/scenario/sensor-fail', { sensor })
+
+export const recoverSensor = (sensor: string): Promise<void> =>
+  post<void>(PORTS.SCENARIO, '/scenario/sensor-recover', { sensor })
 
 // ============================================================
 // URL map for usePolling
