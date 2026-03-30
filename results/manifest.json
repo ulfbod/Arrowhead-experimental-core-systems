@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-03-30T18:34:29Z",
+  "generated_at": "2026-03-30T19:20:21Z",
   "base_seed": 1234,
   "runs": 50,
   "scenario": "all",
@@ -9,13 +9,31 @@
   ],
   "seed_schedule": "seed_i = 1234 + i   for i = 0 .. 49",
   "reproducibility": "python scripts/experiments.py --seed 1234 --runs 50 --scenario all",
+  "tradeoff_provider_A": "quality sensor: high acc [0.88-0.99], slow [40-80ms], reliable [0.90-0.99]",
+  "tradeoff_provider_B": "fast sensor: low acc [0.50-0.74], fast [3-15ms], less reliable [0.68-0.87]",
+  "degradation_nominal_idt2a": {
+    "accuracy": 0.97,
+    "latency_ms": 20.0,
+    "reliability": 0.99
+  },
+  "degradation_nominal_idt2b": {
+    "accuracy": 0.75,
+    "latency_ms": 8.0,
+    "reliability": 0.91
+  },
   "utility_weights_degradation": {
     "accuracy": 0.4,
     "latency": 0.3,
     "reliability": 0.3
   },
   "utility_threshold": 0.55,
+  "qos_switch_hysteresis": 0.06,
   "availability_threshold": 0.15,
-  "sim_duration_s": 60,
+  "sim_duration_s": 120,
+  "recovery_duration_s": 10,
+  "degrade_rate_range": [
+    0.04,
+    0.15
+  ],
   "max_latency_ms_normalization": 100.0
 }

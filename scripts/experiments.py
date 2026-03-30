@@ -35,13 +35,20 @@ except ImportError:
 
 # ── Experiment constants ──────────────────────────────────────────────────────
 
-MAX_LATENCY_MS            = 100.0   # latency above this contributes 0 to utility
-SIM_DURATION_S            = 60      # degradation simulation length (seconds)
-SIM_TIMESTEP_S            = 1       # one measurement per second
+MAX_LATENCY_MS = 100.0   # latency above this contributes 0 to utility
+
+# Degradation simulation
+SIM_DURATION_S          = 120    # 2 minutes: enough for two degradation episodes
+RECOVERY_DURATION_S     = 10     # seconds of gradual recovery after hard fail
+
+# Degradation rates (accuracy units per second)
+DEGRADE_RATE_MIN = 0.04
+DEGRADE_RATE_MAX = 0.15
 
 # Failover thresholds
-UTILITY_FAILOVER_THRESHOLD       = 0.55   # QoS-aware: switch below this
-AVAILABILITY_FAILOVER_THRESHOLD  = 0.15   # availability-based: switch when reliability < this
+UTILITY_FAILOVER_THRESHOLD      = 0.55   # QoS-aware emergency switch
+QOS_SWITCH_HYSTERESIS           = 0.06   # QoS-aware proactive switch-back margin
+AVAILABILITY_FAILOVER_THRESHOLD = 0.15   # availability-based: switch when reliability < this
 
 # Weight sweep for trade-off analysis (w_accuracy from 0 → 1 in 21 steps)
 ALPHA_STEPS = np.linspace(0.0, 1.0, 21)
@@ -51,18 +58,74 @@ DEGRADE_W_ACC = 0.40
 DEGRADE_W_LAT = 0.30
 DEGRADE_W_REL = 0.30
 
+# ── Nominal QoS for degradation experiment ────────────────────────────────────
+# idt2a: high-accuracy/slow quality sensor — clearly preferred when healthy
+# idt2b: low-latency/fast sensor — useful fallback, lower quality
+#
+# Healthy utilities (w_acc=0.40, w_lat=0.30, w_rel=0.30):
+#   idt2a = 0.40*0.97 + 0.30*(1-20/100) + 0.30*0.99 = 0.388+0.240+0.297 = 0.925
+#   idt2b = 0.40*0.75 + 0.30*(1- 8/100) + 0.30*0.91 = 0.300+0.276+0.273 = 0.849
+#   Gap = 0.076 > QOS_SWITCH_HYSTERESIS (0.06) → QoS-aware switches back after recovery
+NOMINAL_QOS = {
+    "idt2a": {"accuracy": 0.97, "latency_ms": 20.0, "reliability": 0.99},
+    "idt2b": {"accuracy": 0.75, "latency_ms":  8.0, "reliability": 0.91},
+}
+
 
 # ── Core utility function ─────────────────────────────────────────────────────
 
 def compute_utility(accuracy: float, latency_ms: float, reliability: float,
                     w_accuracy: float, w_latency: float, w_reliability: float) -> float:
-    """Weighted additive utility over normalized QoS attributes.
+    """Weighted additive utility over normalised QoS attributes.
 
     Latency is inverted so lower latency → higher utility contribution.
-    All attributes and the result are in [0, 1].
+    Result is in [0, 1].
     """
     lat_score = 1.0 - min(1.0, latency_ms / MAX_LATENCY_MS)
     return w_accuracy * accuracy + w_latency * lat_score + w_reliability * reliability
+
+
+# ── Multi-episode degradation model ──────────────────────────────────────────
+
+def _provider_qos_at(t: float, nominal: dict, episodes: list) -> dict:
+    """Return live QoS of a provider at time t given a list of degradation episodes.
+
+    Each episode is a dict with keys:
+        onset_s, rate, fail_at_s, recover_at_s
+    Phases per episode:
+        [onset_s, fail_at_s)         gradual degradation
+        [fail_at_s, recover_at_s)    hard failure (zero accuracy/reliability)
+        [recover_at_s, recover_at_s + RECOVERY_DURATION_S)  gradual recovery
+    Nominal QoS outside all episode windows.
+    """
+    for ep in episodes:
+        onset_s, rate = ep["onset_s"], ep["rate"]
+        fail_at_s     = ep["fail_at_s"]
+        recover_at_s  = ep["recover_at_s"]
+        recovery_end  = recover_at_s + RECOVERY_DURATION_S
+
+        if onset_s <= t < fail_at_s:
+            elapsed = t - onset_s
+            return {
+                "accuracy":    max(0.0, nominal["accuracy"]    - elapsed * rate),
+                "latency_ms":  nominal["latency_ms"] * (1.0 + elapsed * rate * 2.0),
+                "reliability": max(0.0, nominal["reliability"] - elapsed * rate * 0.8),
+            }
+        if fail_at_s <= t < recover_at_s:
+            return {
+                "accuracy":    0.0,
+                "latency_ms":  nominal["latency_ms"] * 5.0,
+                "reliability": 0.0,
+            }
+        if recover_at_s <= t < recovery_end:
+            frac = (t - recover_at_s) / RECOVERY_DURATION_S
+            return {
+                "accuracy":    nominal["accuracy"]    * frac,
+                "latency_ms":  nominal["latency_ms"]  * (4.0 - 3.0 * frac),  # 4× → 1×
+                "reliability": nominal["reliability"] * frac,
+            }
+
+    return dict(nominal)
 
 
 # ── Experiment 1: QoS Trade-off Analysis ─────────────────────────────────────
@@ -70,9 +133,9 @@ def compute_utility(accuracy: float, latency_ms: float, reliability: float,
 def run_tradeoff(runs: int, base_seed: int, output_dir: Path) -> None:
     """Sweep the accuracy weight from 0 to 1 across N runs with randomised QoS profiles.
 
-    For each run a unique seed is used to sample provider QoS profiles.
-    The same set of alpha values is evaluated in every run so results are
-    directly comparable across runs.
+    Provider A ("quality sensor"): high accuracy, slow, highly reliable.
+    Provider B ("fast sensor"):    lower accuracy, fast, less reliable.
+    The structural contrast creates a genuine accuracy–latency crossover near α ≈ 0.35.
 
     Per-run files: results/tradeoff/runs/run_NNNN_seed_SSSS.csv
     Aggregated:    results/tradeoff/aggregated.csv
@@ -83,7 +146,9 @@ def run_tradeoff(runs: int, base_seed: int, output_dir: Path) -> None:
 
     header = [
         "run", "seed", "alpha",
+        # Provider A: accurate/slow (quality sensor)
         "prov_a_accuracy", "prov_a_latency_ms", "prov_a_reliability",
+        # Provider B: fast/noisy (speed sensor)
         "prov_b_accuracy", "prov_b_latency_ms", "prov_b_reliability",
         "utility_a", "utility_b",
         "selected", "selected_utility", "best_utility", "regret",
@@ -95,19 +160,20 @@ def run_tradeoff(runs: int, base_seed: int, output_dir: Path) -> None:
         seed = base_seed + run
         rng  = np.random.default_rng(seed)
 
-        # Randomise QoS profiles for this run.
-        # Provider A (primary): typically better accuracy/reliability, lower latency.
-        # Provider B (fallback): slightly weaker profile, broader range.
+        # Provider A: high accuracy, high reliability, slow (quality sensor).
+        # Provider B: low accuracy, low reliability, fast (speed sensor).
+        # The ranges are intentionally non-overlapping in the latency dimension
+        # so the accuracy–latency trade-off is always visible.
         profiles = {
             "idt2a": {
-                "accuracy":    float(rng.uniform(0.65, 1.00)),
-                "latency_ms":  float(rng.uniform(5.0,  55.0)),
-                "reliability": float(rng.uniform(0.75, 1.00)),
+                "accuracy":    float(rng.uniform(0.88, 0.99)),   # always high
+                "latency_ms":  float(rng.uniform(40.0, 80.0)),   # always slow
+                "reliability": float(rng.uniform(0.90, 0.99)),   # always reliable
             },
             "idt2b": {
-                "accuracy":    float(rng.uniform(0.50, 0.90)),
-                "latency_ms":  float(rng.uniform(8.0,  75.0)),
-                "reliability": float(rng.uniform(0.60, 0.92)),
+                "accuracy":    float(rng.uniform(0.50, 0.74)),   # always lower
+                "latency_ms":  float(rng.uniform(3.0,  15.0)),   # always fast
+                "reliability": float(rng.uniform(0.68, 0.87)),   # always less reliable
             },
         }
 
@@ -125,10 +191,10 @@ def run_tradeoff(runs: int, base_seed: int, output_dir: Path) -> None:
                 for pid, p in profiles.items()
             }
 
-            selected       = max(utilities, key=utilities.get)
-            best_utility   = max(utilities.values())
-            sel_utility    = utilities[selected]
-            regret         = best_utility - sel_utility   # 0 by construction for argmax
+            selected     = max(utilities, key=utilities.get)
+            best_utility = max(utilities.values())
+            sel_utility  = utilities[selected]
+            regret       = best_utility - sel_utility
 
             pa, pb = profiles["idt2a"], profiles["idt2b"]
             row = {
@@ -165,17 +231,21 @@ def run_tradeoff(runs: int, base_seed: int, output_dir: Path) -> None:
 
 def run_degradation(runs: int, base_seed: int, output_dir: Path,
                     methods: tuple = ("qos_aware", "availability_based")) -> None:
-    """Simulate controlled service degradation and compare selection strategies.
+    """Simulate two sequential degradation episodes and compare selection strategies.
 
-    For each run the degradation scenario is randomised (which provider degrades,
-    onset time, degradation rate, hard-failure time).  Two selection strategies
-    are evaluated on the *same* scenario so the comparison is paired.
+    Episode 1: one provider degrades, hard-fails, then recovers.
+    Episode 2: the OTHER provider degrades, hard-fails, then recovers.
+    Both episodes use the same RNG-drawn parameters but affect different providers,
+    so the QoS-aware method faces two distinct adaptation challenges per run.
 
-    Degradation model (for the affected provider):
-      accuracy(t)    = max(0, nominal - max(0, t - onset) * rate)
-      reliability(t) = max(0, nominal - max(0, t - onset) * rate * 0.8)
-      latency(t)     = nominal * (1 + max(0, t - onset) * rate * 2.0)
-      at t >= fail_at: accuracy=0, reliability=0, latency=5×nominal
+    QoS-aware strategy:
+      - Switch if active utility < UTILITY_FAILOVER_THRESHOLD (emergency).
+      - Switch if an alternative is better by > QOS_SWITCH_HYSTERESIS (proactive).
+      This enables switch-back to the primary after it recovers.
+
+    Availability-based strategy:
+      - Switch only when active reliability < AVAILABILITY_FAILOVER_THRESHOLD.
+      - Never switches back proactively — only reacts to hard failures.
 
     Per-run files: results/degradation/runs/run_NNNN_seed_SSSS.csv
     Aggregated:    results/degradation/aggregated.csv
@@ -186,7 +256,11 @@ def run_degradation(runs: int, base_seed: int, output_dir: Path,
 
     header = [
         "run", "seed",
-        "degraded_provider", "onset_s", "degrade_rate", "fail_at_s",
+        # Episode 1
+        "degraded1", "onset1_s", "rate1", "fail1_s", "recover1_s",
+        # Episode 2
+        "degraded2", "onset2_s", "rate2", "fail2_s", "recover2_s",
+        # Timestep
         "t", "method",
         "active_provider",
         "accuracy", "latency_ms", "reliability",
@@ -195,72 +269,81 @@ def run_degradation(runs: int, base_seed: int, output_dir: Path,
     ]
     all_rows: list = []
 
-    # Nominal QoS (fixed across runs for clean degradation comparison)
-    nominal = {
-        "idt2a": {"accuracy": 0.95, "latency_ms": 10.0, "reliability": 0.98},
-        "idt2b": {"accuracy": 0.85, "latency_ms": 15.0, "reliability": 0.95},
-    }
-
     for run in range(runs):
         seed = base_seed + run
         rng  = np.random.default_rng(seed)
 
-        # Randomise degradation scenario for this run
-        degraded_provider = str(rng.choice(["idt2a", "idt2b"]))
-        onset_s           = float(rng.uniform(5.0,  25.0))
-        degrade_rate      = float(rng.uniform(0.02,  0.12))
-        fail_at_s         = float(onset_s + rng.uniform(10.0, 25.0))
+        # ── Episode 1 ──────────────────────────────────────────────────────────
+        providers    = ["idt2a", "idt2b"]
+        degraded1    = str(rng.choice(providers))
+        degraded2    = "idt2b" if degraded1 == "idt2a" else "idt2a"
+
+        onset1_s     = float(rng.uniform(10.0, 18.0))
+        rate1        = float(rng.uniform(DEGRADE_RATE_MIN, DEGRADE_RATE_MAX))
+        fail1_s      = float(onset1_s  + rng.uniform(8.0,  14.0))
+        recover1_s   = float(fail1_s   + rng.uniform(6.0,  10.0))
+        recovery_end1 = recover1_s + RECOVERY_DURATION_S
+
+        # ── Episode 2 starts after provider 1 has fully recovered ─────────────
+        onset2_s     = float(recovery_end1 + rng.uniform(6.0, 14.0))
+        rate2        = float(rng.uniform(DEGRADE_RATE_MIN, DEGRADE_RATE_MAX))
+        fail2_s      = float(onset2_s  + rng.uniform(8.0,  14.0))
+        recover2_s   = float(fail2_s   + rng.uniform(6.0,  10.0))
+
+        # Episode tables per provider
+        ep_map: dict = {"idt2a": [], "idt2b": []}
+        ep_map[degraded1].append({
+            "onset_s": onset1_s, "rate": rate1,
+            "fail_at_s": fail1_s, "recover_at_s": recover1_s,
+        })
+        ep_map[degraded2].append({
+            "onset_s": onset2_s, "rate": rate2,
+            "fail_at_s": fail2_s, "recover_at_s": recover2_s,
+        })
 
         meta = {
             "run": run, "seed": seed,
-            "degraded_provider": degraded_provider,
-            "onset_s":       round(onset_s,      3),
-            "degrade_rate":  round(degrade_rate,  5),
-            "fail_at_s":     round(fail_at_s,     3),
+            "degraded1":  degraded1,
+            "onset1_s":   round(onset1_s,   3),
+            "rate1":      round(rate1,       5),
+            "fail1_s":    round(fail1_s,     3),
+            "recover1_s": round(recover1_s,  3),
+            "degraded2":  degraded2,
+            "onset2_s":   round(onset2_s,    3),
+            "rate2":      round(rate2,        5),
+            "fail2_s":    round(fail2_s,      3),
+            "recover2_s": round(recover2_s,   3),
         }
 
         run_rows: list = []
 
         for method in methods:
-            active      = "idt2a"   # both strategies start on primary
+            active      = "idt2a"
             prev_active = active
 
             for t in range(SIM_DURATION_S + 1):
                 tf = float(t)
 
-                # Compute live QoS of each provider at time t
-                qos: dict = {}
-                for pid, nom in nominal.items():
-                    if pid == degraded_provider:
-                        elapsed = max(0.0, tf - onset_s)
-                        if tf >= fail_at_s:
-                            qos[pid] = {
-                                "accuracy":    0.0,
-                                "latency_ms":  nom["latency_ms"] * 5.0,
-                                "reliability": 0.0,
-                            }
-                        else:
-                            qos[pid] = {
-                                "accuracy":    max(0.0, nom["accuracy"]    - elapsed * degrade_rate),
-                                "latency_ms":  nom["latency_ms"] * (1.0 + elapsed * degrade_rate * 2.0),
-                                "reliability": max(0.0, nom["reliability"] - elapsed * degrade_rate * 0.8),
-                            }
-                    else:
-                        qos[pid] = dict(nom)
+                # Live QoS at this timestep
+                qos = {
+                    pid: _provider_qos_at(tf, NOMINAL_QOS[pid], ep_map[pid])
+                    for pid in providers
+                }
 
-                # Selection decision for this timestep
+                # ── Selection decision ────────────────────────────────────────
                 if method == "qos_aware":
-                    aq = qos[active]
+                    aq      = qos[active]
                     u_active = compute_utility(
                         aq["accuracy"], aq["latency_ms"], aq["reliability"],
                         DEGRADE_W_ACC, DEGRADE_W_LAT, DEGRADE_W_REL,
                     )
-                    if u_active < UTILITY_FAILOVER_THRESHOLD:
-                        alternatives = [p for p in qos if p != active]
+                    alternatives = [p for p in qos if p != active]
+                    if alternatives:
                         best_alt = max(
                             alternatives,
                             key=lambda p: compute_utility(
-                                qos[p]["accuracy"], qos[p]["latency_ms"], qos[p]["reliability"],
+                                qos[p]["accuracy"], qos[p]["latency_ms"],
+                                qos[p]["reliability"],
                                 DEGRADE_W_ACC, DEGRADE_W_LAT, DEGRADE_W_REL,
                             ),
                         )
@@ -269,10 +352,15 @@ def run_degradation(runs: int, base_seed: int, output_dir: Path,
                             qos[best_alt]["reliability"],
                             DEGRADE_W_ACC, DEGRADE_W_LAT, DEGRADE_W_REL,
                         )
-                        if u_alt > u_active:
+                        # Emergency switch (below threshold) OR proactive switch-back
+                        should_switch = (
+                            u_active < UTILITY_FAILOVER_THRESHOLD
+                            or u_alt > u_active + QOS_SWITCH_HYSTERESIS
+                        )
+                        if should_switch and u_alt > u_active:
                             active = best_alt
 
-                else:  # availability_based
+                else:  # availability_based — only reacts to hard failures
                     if qos[active]["reliability"] < AVAILABILITY_FAILOVER_THRESHOLD:
                         for alt in [p for p in qos if p != active]:
                             if qos[alt]["reliability"] >= AVAILABILITY_FAILOVER_THRESHOLD:
@@ -280,9 +368,9 @@ def run_degradation(runs: int, base_seed: int, output_dir: Path,
                                 break
 
                 failover_event = 1 if active != prev_active else 0
-                prev_active = active
+                prev_active    = active
 
-                aq = qos[active]
+                aq      = qos[active]
                 utility = compute_utility(
                     aq["accuracy"], aq["latency_ms"], aq["reliability"],
                     DEGRADE_W_ACC, DEGRADE_W_LAT, DEGRADE_W_REL,
@@ -306,8 +394,8 @@ def run_degradation(runs: int, base_seed: int, output_dir: Path,
         _write_csv(csv_path, header, run_rows)
         print(
             f"  [degradation] run={run:3d}  seed={seed}  "
-            f"degraded={degraded_provider}  onset={onset_s:.1f}s  "
-            f"rate={degrade_rate:.3f}  fail={fail_at_s:.1f}s",
+            f"ep1={degraded1}@{onset1_s:.1f}s(rate={rate1:.3f})  "
+            f"ep2={degraded2}@{onset2_s:.1f}s(rate={rate2:.3f})",
             flush=True,
         )
 
@@ -337,14 +425,21 @@ def _write_manifest(output_dir: Path, base_seed: int, runs: int,
             f"python scripts/experiments.py "
             f"--seed {base_seed} --runs {runs} --scenario {scenario}"
         ),
+        "tradeoff_provider_A": "quality sensor: high acc [0.88-0.99], slow [40-80ms], reliable [0.90-0.99]",
+        "tradeoff_provider_B": "fast sensor: low acc [0.50-0.74], fast [3-15ms], less reliable [0.68-0.87]",
+        "degradation_nominal_idt2a": NOMINAL_QOS["idt2a"],
+        "degradation_nominal_idt2b": NOMINAL_QOS["idt2b"],
         "utility_weights_degradation": {
             "accuracy":    DEGRADE_W_ACC,
             "latency":     DEGRADE_W_LAT,
             "reliability": DEGRADE_W_REL,
         },
         "utility_threshold":           UTILITY_FAILOVER_THRESHOLD,
+        "qos_switch_hysteresis":       QOS_SWITCH_HYSTERESIS,
         "availability_threshold":      AVAILABILITY_FAILOVER_THRESHOLD,
         "sim_duration_s":              SIM_DURATION_S,
+        "recovery_duration_s":         RECOVERY_DURATION_S,
+        "degrade_rate_range":          [DEGRADE_RATE_MIN, DEGRADE_RATE_MAX],
         "max_latency_ms_normalization": MAX_LATENCY_MS,
     }
     output_dir.mkdir(parents=True, exist_ok=True)

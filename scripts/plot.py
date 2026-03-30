@@ -6,11 +6,10 @@ Reads CSV files produced by experiments.py (and the Go failover benchmark) and
 writes PNG + PDF figures suitable for embedding in a paper or README.
 
 Output files (in --output-dir):
-  tradeoff_utility_vs_weight.{png,pdf}
-  tradeoff_qos_metrics_vs_weight.{png,pdf}
-  degradation_utility_over_time.{png,pdf}
-  degradation_utility_advantage.{png,pdf}
-  failover_delay_vs_network_delay.{png,pdf}   (from Go benchmark CSV)
+  tradeoff_provider_utilities.{png,pdf}        ← both provider utility curves + crossover
+  tradeoff_qos_metrics_vs_weight.{png,pdf}     ← 3-panel: accuracy / latency / reliability
+  degradation_combined.{png,pdf}               ← 2-panel: utility + advantage (stacked)
+  failover_delay_vs_network_delay.{png,pdf}    ← Go benchmark (if CSV present)
 
 Usage:
   python scripts/plot.py --input-dir results/ --output-dir docs/figures/
@@ -25,37 +24,41 @@ from pathlib import Path
 try:
     import numpy as np
     import matplotlib
-    matplotlib.use("Agg")   # non-interactive backend; no display required
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import matplotlib.ticker as ticker
+    import matplotlib.patches as mpatches
+    import matplotlib.lines  as mlines
 except ImportError as exc:
     print(f"ERROR: {exc}\n  pip install numpy matplotlib", file=sys.stderr)
     sys.exit(1)
 
-# ── House style ───────────────────────────────────────────────────────────────
+# ── Publication style ─────────────────────────────────────────────────────────
 
-COLORS = {
-    "primary":            "#2563eb",   # blue
-    "fallback":           "#dc2626",   # red
-    "qos_aware":          "#2563eb",   # blue
-    "availability_based": "#dc2626",   # red
-    "local":              "#16a34a",   # green
-    "central":            "#9333ea",   # purple
-    "neutral":            "#64748b",   # slate
-}
-BAND_ALPHA  = 0.18
-LINE_WIDTH  = 2.0
-MARKER_SIZE = 4
-FIG_DPI     = 150
-SIM_DURATION_S = 60   # must match experiments.py constant
+# Colors chosen to be distinguishable in both color and grayscale print.
+COLOR_PROPOSED  = "#1d4ed8"   # dark blue
+COLOR_BASELINE  = "#b91c1c"   # dark red
+COLOR_PROVIDER_A = "#1d4ed8"  # blue  (quality / accurate)
+COLOR_PROVIDER_B = "#b91c1c"  # red   (fast / noisy)
+COLOR_DEGRADE   = "#d1d5db"   # light gray for degradation windows
+COLOR_LOCAL     = "#15803d"   # green
+COLOR_CENTRAL   = "#7c3aed"   # purple
+
+LW_MAIN   = 2.2    # main median curve
+LW_BAND   = 0.9    # p10/p90 marker lines
+LW_ZERO   = 0.9    # zero-reference line
+BAND_FILL_ALPHA = 0.12
+MARKER_EVERY    = 8   # place a marker every N x-values on median curves
+FIG_DPI         = 150
+SIM_DURATION_S  = 120   # must match experiments.py
 
 
-def _style(ax):
-    """Apply minimal publication style to axes."""
+def _style(ax, ylim=None):
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.45, color="gray")
+    ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.55, color="#9ca3af")
     ax.tick_params(labelsize=9)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
 
 
 def _save(fig, directory: Path, name: str) -> None:
@@ -75,20 +78,65 @@ def _read_csv(path: Path) -> list:
 # ── Statistical helpers ───────────────────────────────────────────────────────
 
 def _band(values_by_x: dict, x_keys: list) -> tuple:
-    """Return (x_arr, median_arr, p10_arr, p90_arr) from a {key → [values]} dict."""
+    """Return (x, median, p10, p90) arrays from a {x → [values]} dict."""
     medians, p10s, p90s = [], [], []
     for x in x_keys:
         v = np.array(values_by_x[x], dtype=float)
-        medians.append(float(np.median(v)))
-        p10s.append(float(np.percentile(v, 10)))
-        p90s.append(float(np.percentile(v, 90)))
+        medians.append(np.median(v))
+        p10s.append(np.percentile(v, 10))
+        p90s.append(np.percentile(v, 90))
     return (
         np.array(x_keys, dtype=float),
         np.array(medians), np.array(p10s), np.array(p90s),
     )
 
 
-# ── Plot 1+2: QoS Trade-off Analysis ─────────────────────────────────────────
+def _plot_with_band(ax, x, med, p10, p90, color, linestyle="-", label_med=None,
+                    label_band=None, marker=None):
+    """Plot a median curve with explicit dashed p10/p90 lines and a light fill."""
+    kw = dict(color=color, linewidth=LW_MAIN, linestyle=linestyle, zorder=3)
+    if marker:
+        step = max(1, len(x) // MARKER_EVERY)
+        kw.update(marker=marker, markevery=step, markersize=5, markeredgewidth=0.8)
+    ax.plot(x, med, label=label_med, **kw)
+
+    # Thin dashed p10/p90 lines
+    band_kw = dict(color=color, linewidth=LW_BAND, linestyle="--", alpha=0.70, zorder=2)
+    ax.plot(x, p10, **band_kw)
+    ax.plot(x, p90, label=label_band, **band_kw)
+
+    # Subtle fill between p10 and p90
+    ax.fill_between(x, p10, p90, color=color, alpha=BAND_FILL_ALPHA, zorder=1)
+
+
+# ── Degradation window helper ─────────────────────────────────────────────────
+
+def _shade_degrade_windows(ax, rows, alpha_fill=0.18):
+    """Shade the typical degradation + hard-fail window across runs on axes ax.
+
+    Uses the median onset and hard-fail times for each episode.
+    """
+    for ep_n in (1, 2):
+        key_onset = f"onset{ep_n}_s"
+        key_fail  = f"fail{ep_n}_s"
+        # collect unique (run) values (one per run × per method, so deduplicate by run)
+        seen = set()
+        onsets, fails = [], []
+        for r in rows:
+            rid = r["run"]
+            if rid in seen:
+                continue
+            seen.add(rid)
+            onsets.append(float(r[key_onset]))
+            fails.append(float(r[key_fail]))
+        if not onsets:
+            continue
+        med_onset = float(np.median(onsets))
+        med_fail  = float(np.median(fails))
+        ax.axvspan(med_onset, med_fail, color=COLOR_DEGRADE, alpha=alpha_fill, zorder=0)
+
+
+# ── Plot 1: QoS Trade-off — provider utility crossover ───────────────────────
 
 def plot_tradeoff(input_dir: Path, output_dir: Path) -> None:
     agg = input_dir / "tradeoff" / "aggregated.csv"
@@ -97,60 +145,100 @@ def plot_tradeoff(input_dir: Path, output_dir: Path) -> None:
         return
 
     rows = _read_csv(agg)
+    n_runs = len({r["run"] for r in rows})
 
-    # Group data by alpha value
-    utility_by_a: dict = defaultdict(list)
-    acc_sel_by_a: dict = defaultdict(list)
-    lat_sel_by_a: dict = defaultdict(list)
-    rel_sel_by_a: dict = defaultdict(list)
+    # Collect utility of each provider per alpha (not just selected)
+    util_a_by_alpha: dict = defaultdict(list)
+    util_b_by_alpha: dict = defaultdict(list)
+    # Also track which is selected for the summary panel
+    sel_util_by_alpha: dict = defaultdict(list)
+
+    for r in rows:
+        alpha = round(float(r["alpha"]), 4)
+        util_a_by_alpha[alpha].append(float(r["utility_a"]))
+        util_b_by_alpha[alpha].append(float(r["utility_b"]))
+        sel_util_by_alpha[alpha].append(float(r["selected_utility"]))
+
+    alphas = sorted(util_a_by_alpha.keys())
+
+    # ── Figure 1A: both provider utilities (with crossover) ───────────────────
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+
+    x, med_a, p10_a, p90_a = _band(util_a_by_alpha, alphas)
+    x, med_b, p10_b, p90_b = _band(util_b_by_alpha, alphas)
+
+    _plot_with_band(ax, x, med_a, p10_a, p90_a,
+                    color=COLOR_PROVIDER_A, linestyle="-", marker="o",
+                    label_med="Provider A — quality sensor (median)",
+                    label_band="Provider A (p10 / p90)")
+    _plot_with_band(ax, x, med_b, p10_b, p90_b,
+                    color=COLOR_PROVIDER_B, linestyle="--", marker="s",
+                    label_med="Provider B — fast sensor (median)",
+                    label_band="Provider B (p10 / p90)")
+
+    # Mark the approximate crossover region (where A's median crosses B's)
+    crossover_alphas = [alphas[i] for i in range(len(alphas) - 1)
+                        if (med_a[i] < med_b[i]) != (med_a[i+1] < med_b[i+1])]
+    for ca in crossover_alphas:
+        ax.axvline(ca, color="#6b7280", linewidth=1.0, linestyle=":", zorder=2)
+        ax.text(ca + 0.02, 0.08, f"crossover\nα ≈ {ca:.2f}",
+                fontsize=7.5, color="#374151", va="bottom")
+
+    ax.set_xlabel(r"Accuracy weight $w_\mathrm{acc}$  (latency and reliability share $1-w_\mathrm{acc}$ equally)",
+                  fontsize=10)
+    ax.set_ylabel("Provider utility", fontsize=11)
+    ax.set_title("QoS Trade-off: Provider Utility vs. Accuracy Weight\n"
+                 f"(shaded: 10th–90th percentile across {n_runs} runs)", fontsize=11)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.05)
+
+    # Clean legend: 2 lines per provider (median + band)
+    ax.legend(fontsize=8.5, loc="center right", framealpha=0.9)
+    ax.annotate("Shaded region: p10–p90 across runs",
+                xy=(0.02, 0.03), xycoords="axes fraction",
+                fontsize=7.5, color="#6b7280")
+    _style(ax)
+    fig.tight_layout()
+    _save(fig, output_dir, "tradeoff_provider_utilities")
+
+    # ── Figure 1B: QoS metrics of selected provider (3 sub-panels) ───────────
+    acc_sel:  dict = defaultdict(list)
+    lat_sel:  dict = defaultdict(list)
+    rel_sel:  dict = defaultdict(list)
 
     for r in rows:
         alpha = round(float(r["alpha"]), 4)
         sel   = r["selected"]
-        utility_by_a[alpha].append(float(r["selected_utility"]))
-        acc_sel_by_a[alpha].append(float(r[f"prov_{'a' if sel == 'idt2a' else 'b'}_accuracy"]))
-        lat_sel_by_a[alpha].append(float(r[f"prov_{'a' if sel == 'idt2a' else 'b'}_latency_ms"]))
-        rel_sel_by_a[alpha].append(float(r[f"prov_{'a' if sel == 'idt2a' else 'b'}_reliability"]))
+        pref  = "a" if sel == "idt2a" else "b"
+        acc_sel[alpha].append(float(r[f"prov_{pref}_accuracy"]))
+        lat_sel[alpha].append(float(r[f"prov_{pref}_latency_ms"]))
+        rel_sel[alpha].append(float(r[f"prov_{pref}_reliability"]))
 
-    alphas = sorted(utility_by_a.keys())
-
-    # ── Figure 1: utility vs alpha ────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(6, 4))
-    x, med, p10, p90 = _band(utility_by_a, alphas)
-    ax.plot(x, med, color=COLORS["primary"], linewidth=LINE_WIDTH,
-            label="Selected utility (median)")
-    ax.fill_between(x, p10, p90, color=COLORS["primary"], alpha=BAND_ALPHA,
-                    label="10th–90th percentile band")
-    ax.set_xlabel(r"Accuracy weight $w_\mathrm{acc}$", fontsize=11)
-    ax.set_ylabel("Utility of selected provider", fontsize=11)
-    ax.set_title("QoS Trade-off: Utility vs. Accuracy Weight", fontsize=12)
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.legend(fontsize=9)
-    _style(ax)
-    fig.tight_layout()
-    _save(fig, output_dir, "tradeoff_utility_vs_weight")
-
-    # ── Figure 2: QoS metrics vs alpha (3 sub-panels) ────────────────────────
     fig, axes = plt.subplots(1, 3, figsize=(13, 4), sharey=False)
     panels = [
-        (acc_sel_by_a, "Accuracy", COLORS["primary"]),
-        (lat_sel_by_a, "Latency (ms)", COLORS["fallback"]),
-        (rel_sel_by_a, "Reliability", COLORS["local"]),
+        (acc_sel, "Accuracy of selected provider",    "#1d4ed8"),
+        (lat_sel, "Latency of selected provider (ms)", "#b91c1c"),
+        (rel_sel, "Reliability of selected provider", "#15803d"),
     ]
     for ax, (data, ylabel, color) in zip(axes, panels):
         x, med, p10, p90 = _band(data, alphas)
-        ax.plot(x, med, color=color, linewidth=LINE_WIDTH)
-        ax.fill_between(x, p10, p90, color=color, alpha=BAND_ALPHA)
-        ax.set_xlabel(r"Accuracy weight $w_\mathrm{acc}$", fontsize=10)
+        ax.plot(x, med, color=color, linewidth=LW_MAIN, linestyle="-",
+                label="Median")
+        ax.plot(x, p10, color=color, linewidth=LW_BAND, linestyle="--", alpha=0.70,
+                label="p10 / p90")
+        ax.plot(x, p90, color=color, linewidth=LW_BAND, linestyle="--", alpha=0.70)
+        ax.fill_between(x, p10, p90, color=color, alpha=BAND_FILL_ALPHA)
+        ax.set_xlabel(r"$w_\mathrm{acc}$", fontsize=10)
         ax.set_ylabel(ylabel, fontsize=10)
-        ax.set_title(ylabel, fontsize=11)
+        ax.set_title(ylabel, fontsize=10)
         ax.set_xlim(0, 1)
+        ax.legend(fontsize=8)
         _style(ax)
 
     fig.suptitle(
-        "QoS Trade-off: Attributes of Selected Provider vs. Accuracy Weight",
-        fontsize=12, y=1.01,
+        "QoS Trade-off: Attributes of Selected Provider vs. Accuracy Weight\n"
+        "(dashed lines: 10th and 90th percentile across runs)",
+        fontsize=11, y=1.03,
     )
     fig.tight_layout()
     _save(fig, output_dir, "tradeoff_qos_metrics_vs_weight")
@@ -158,7 +246,7 @@ def plot_tradeoff(input_dir: Path, output_dir: Path) -> None:
     print("  [tradeoff] done")
 
 
-# ── Plot 3+4: Controlled Degradation ─────────────────────────────────────────
+# ── Plot 2: Controlled Degradation — 2-panel stacked ─────────────────────────
 
 def plot_degradation(input_dir: Path, output_dir: Path) -> None:
     agg = input_dir / "degradation" / "aggregated.csv"
@@ -167,10 +255,11 @@ def plot_degradation(input_dir: Path, output_dir: Path) -> None:
         return
 
     rows = _read_csv(agg)
+    n_runs = len({r["run"] for r in rows if r["method"] == "qos_aware"})
 
     methods = ["qos_aware", "availability_based"]
-    util_by_mt: dict  = {m: defaultdict(list) for m in methods}
-    fo_count_mt: dict = {m: defaultdict(int)  for m in methods}
+    util_by_mt:    dict = {m: defaultdict(list) for m in methods}
+    fo_count_mt:   dict = {m: defaultdict(int)  for m in methods}
 
     for r in rows:
         m = r["method"]
@@ -183,86 +272,111 @@ def plot_degradation(input_dir: Path, output_dir: Path) -> None:
 
     ts = sorted(util_by_mt["qos_aware"].keys())
 
-    # ── Figure 3: utility over time, both methods ─────────────────────────────
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-
-    labels = {
-        "qos_aware":          "QoS-aware (proposed)",
-        "availability_based": "Availability-based (baseline)",
-    }
-    for m in methods:
-        if not util_by_mt[m]:
-            continue
-        color = COLORS.get(m, COLORS["neutral"])
-        x, med, p10, p90 = _band(util_by_mt[m], ts)
-        ax.plot(x, med, color=color, linewidth=LINE_WIDTH, label=labels.get(m, m))
-        ax.fill_between(x, p10, p90, color=color, alpha=BAND_ALPHA)
-
-    # Shade the typical QoS-aware failover window across all runs
-    fo_ts = sorted(t for t, c in fo_count_mt["qos_aware"].items() if c > 0)
-    if fo_ts:
-        ax.axvspan(min(fo_ts), max(fo_ts) + 1, alpha=0.08, color="orange",
-                   label="QoS-aware failover window (across runs)")
-
-    ax.set_xlabel("Simulation time (s)", fontsize=11)
-    ax.set_ylabel("Utility", fontsize=11)
-    ax.set_title(
-        "Controlled Degradation: QoS-Aware vs. Availability-Based Selection",
-        fontsize=12,
-    )
-    ax.legend(fontsize=9, loc="lower left")
-    ax.set_xlim(0, SIM_DURATION_S)
-    ax.set_ylim(0, 1.05)
-    _style(ax)
-    fig.tight_layout()
-    _save(fig, output_dir, "degradation_utility_over_time")
-
-    # ── Figure 4: utility advantage (QoS-aware − baseline) per timestep ──────
-    # Pair runs by run index: sort each method's values so they align
+    # Compute per-run paired advantage (same run index, same t)
     util_q  = {t: sorted(util_by_mt["qos_aware"][t])          for t in ts}
     util_ab = {t: sorted(util_by_mt["availability_based"].get(t, [0.0])) for t in ts}
-
-    delta_med, delta_p10, delta_p90 = [], [], []
+    adv_by_t: dict = defaultdict(list)
     for t in ts:
         q = np.array(util_q[t])
         a = np.array(util_ab[t])
         n = min(len(q), len(a))
-        if n == 0:
-            delta_med.append(0.0); delta_p10.append(0.0); delta_p90.append(0.0)
+        if n > 0:
+            for delta in (q[:n] - a[:n]):
+                adv_by_t[t].append(float(delta))
+
+    # ── 2-panel figure ────────────────────────────────────────────────────────
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(9, 7),
+        sharex=True,
+        gridspec_kw={"height_ratios": [3, 2], "hspace": 0.06},
+        layout="constrained",
+    )
+
+    # — Degradation windows (shaded gray, both panels) ————————————————————————
+    _shade_degrade_windows(ax_top, rows)
+    _shade_degrade_windows(ax_bot, rows)
+
+    # — Top panel: utility over time ——————————————————————————————————————————
+    styles = {
+        "qos_aware":          ("-",  "o", COLOR_PROPOSED,  "Proposed — QoS-aware"),
+        "availability_based": ("--", "s", COLOR_BASELINE,  "Baseline — availability-based"),
+    }
+
+    for m in methods:
+        if not util_by_mt[m]:
             continue
-        d = q[:n] - a[:n]
-        delta_med.append(float(np.median(d)))
-        delta_p10.append(float(np.percentile(d, 10)))
-        delta_p90.append(float(np.percentile(d, 90)))
+        ls, mk, color, name = styles[m]
+        x, med, p10, p90 = _band(util_by_mt[m], ts)
+        _plot_with_band(ax_top, x, med, p10, p90,
+                        color=color, linestyle=ls, marker=mk,
+                        label_med=f"{name} (median)",
+                        label_band=f"{name} (p10 / p90)")
 
-    ts_arr     = np.array(ts, dtype=float)
-    delta_med  = np.array(delta_med)
-    delta_p10  = np.array(delta_p10)
-    delta_p90  = np.array(delta_p90)
+    # Failover event bars (small rug at top of axis)
+    for m, (ls, mk, color, name) in styles.items():
+        fo_ts = [t for t, c in fo_count_mt[m].items() if c > 0]
+        if fo_ts:
+            ax_top.vlines(fo_ts, 0.95, 1.02, color=color,
+                          linewidth=1.0, alpha=0.35, zorder=4)
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.plot(ts_arr, delta_med, color=COLORS["qos_aware"], linewidth=LINE_WIDTH,
-            label="Median advantage")
-    ax.fill_between(ts_arr, delta_p10, delta_p90,
-                    color=COLORS["qos_aware"], alpha=BAND_ALPHA,
-                    label="10th–90th percentile band")
-    ax.axhline(0, color="black", linewidth=0.8, linestyle="--", label="No advantage")
-    ax.set_xlabel("Simulation time (s)", fontsize=11)
-    ax.set_ylabel("Utility advantage (QoS-aware − baseline)", fontsize=11)
-    ax.set_title("QoS-Aware Utility Advantage Over Availability-Based Selection", fontsize=12)
-    ax.legend(fontsize=9)
-    ax.set_xlim(0, SIM_DURATION_S)
-    _style(ax)
-    fig.tight_layout()
-    _save(fig, output_dir, "degradation_utility_advantage")
+    ax_top.set_ylabel("Utility", fontsize=11)
+    ax_top.set_title(
+        "Controlled Degradation: QoS-Aware vs. Availability-Based Selection\n"
+        f"(dashed lines: 10th/90th percentile across {n_runs} runs; "
+        "gray bands: degradation windows)",
+        fontsize=10.5,
+    )
+    ax_top.set_xlim(0, SIM_DURATION_S)
+    ax_top.set_ylim(-0.02, 1.08)
+
+    # Legend with explicit p10/p90 note
+    # Build compact custom legend
+    handles = []
+    for m in methods:
+        ls, mk, color, name = styles[m]
+        handles.append(mlines.Line2D([], [], color=color, linewidth=LW_MAIN,
+                                     linestyle=ls, marker=mk, markersize=5,
+                                     label=f"{name} (median)"))
+        handles.append(mlines.Line2D([], [], color=color, linewidth=LW_BAND,
+                                     linestyle="--", alpha=0.70,
+                                     label=f"{name} (p10 / p90)"))
+    handles.append(mpatches.Patch(color=COLOR_DEGRADE, alpha=0.6,
+                                   label="Degradation window (median onset–fail)"))
+    ax_top.legend(handles=handles, fontsize=8, loc="lower left",
+                  framealpha=0.92, ncol=1)
+    _style(ax_top, ylim=(-0.02, 1.10))
+
+    # — Bottom panel: utility advantage ———————————————————————————————————————
+    x_adv, med_adv, p10_adv, p90_adv = _band(adv_by_t, ts)
+    ax_bot.fill_between(x_adv, p10_adv, p90_adv,
+                        color=COLOR_PROPOSED, alpha=BAND_FILL_ALPHA * 1.5, zorder=1)
+    ax_bot.plot(x_adv, p10_adv, color=COLOR_PROPOSED, linewidth=LW_BAND,
+                linestyle="--", alpha=0.70, zorder=2)
+    ax_bot.plot(x_adv, p90_adv, color=COLOR_PROPOSED, linewidth=LW_BAND,
+                linestyle="--", alpha=0.70, zorder=2, label="p10 / p90")
+    ax_bot.plot(x_adv, med_adv, color=COLOR_PROPOSED, linewidth=LW_MAIN,
+                linestyle="-", marker="o",
+                markevery=max(1, len(x_adv) // MARKER_EVERY), markersize=4,
+                label="Proposed − Baseline (median)", zorder=3)
+    ax_bot.axhline(0, color="#374151", linewidth=LW_ZERO,
+                   linestyle="--", label="No advantage", zorder=2)
+
+    ax_bot.set_xlabel("Simulation time (s)", fontsize=11)
+    ax_bot.set_ylabel("Utility advantage\n(Proposed − Baseline)", fontsize=10)
+    ax_bot.legend(fontsize=8, loc="upper left", framealpha=0.92)
+    ax_bot.annotate("Shaded region: p10–p90 across runs",
+                    xy=(0.62, 0.04), xycoords="axes fraction",
+                    fontsize=7.5, color="#6b7280")
+    _style(ax_bot)
+
+    _save(fig, output_dir, "degradation_combined")
 
     print("  [degradation] done")
 
 
-# ── Plot 5: Failover delay benchmark (existing Go CSV) ───────────────────────
+# ── Plot 3: Failover delay benchmark (existing Go CSV) ───────────────────────
 
 def plot_failover(input_dir: Path, output_dir: Path) -> None:
-    """Plot local vs. centralised failover decision delay from the Go benchmark."""
     csv_path = input_dir / "failover_delay_vs_network_delay.csv"
     if not csv_path.exists():
         print(f"  [skip] {csv_path} not found")
@@ -286,18 +400,24 @@ def plot_failover(input_dir: Path, output_dir: Path) -> None:
         return
 
     fig, ax = plt.subplots(figsize=(7, 4))
-    ax.plot(delays, l_avg, color=COLORS["local"],   linewidth=LINE_WIDTH,
-            marker="o", markersize=MARKER_SIZE, label="Local failover (avg)")
-    ax.fill_between(delays, l_p10, l_p90,
-                    color=COLORS["local"], alpha=BAND_ALPHA, label="Local p10–p90")
-    ax.plot(delays, c_avg, color=COLORS["central"], linewidth=LINE_WIDTH,
-            marker="s", markersize=MARKER_SIZE, label="Centralised orchestration (avg)")
-    ax.fill_between(delays, c_p10, c_p90,
-                    color=COLORS["central"], alpha=BAND_ALPHA, label="Centralised p10–p90")
+
+    _plot_with_band(ax, delays, l_avg, l_p10, l_p90,
+                    color=COLOR_LOCAL, linestyle="-", marker="o",
+                    label_med="Local failover (median)",
+                    label_band="Local (p10 / p90)")
+    _plot_with_band(ax, delays, c_avg, c_p10, c_p90,
+                    color=COLOR_CENTRAL, linestyle="--", marker="s",
+                    label_med="Centralised orchestration (median)",
+                    label_band="Centralised (p10 / p90)")
+
     ax.set_xlabel("Simulated one-way network latency (ms)", fontsize=11)
     ax.set_ylabel("Failover decision delay (ms)", fontsize=11)
-    ax.set_title("Failover Decision Delay vs. Network Latency", fontsize=12)
+    ax.set_title("Failover Decision Delay vs. Network Latency\n"
+                 "(dashed: 10th/90th percentile)", fontsize=11)
     ax.legend(fontsize=9)
+    ax.annotate("Shaded region: p10–p90 across runs",
+                xy=(0.02, 0.96), xycoords="axes fraction",
+                fontsize=7.5, color="#6b7280", va="top")
     _style(ax)
     fig.tight_layout()
     _save(fig, output_dir, "failover_delay_vs_network_delay")

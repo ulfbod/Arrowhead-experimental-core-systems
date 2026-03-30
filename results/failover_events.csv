@@ -1,0 +1,1 @@
+event_id,cdt_id,capability,prev_provider,next_provider,failure_time_ms,detection_time_ms,switch_time_ms,fail_to_switch_ms,decision_delay_ms,orchestration_mode,network_delay_ms,accuracy_before,latency_before_ms,reliability_before,accuracy_after,latency_after_ms,reliability_after

@@ -90,7 +90,13 @@
       "Bash(.venv/bin/python scripts/experiments.py --runs 50 --seed 1234 --scenario all --output-dir results/)",
       "Bash(.venv/bin/python scripts/plot.py --input-dir results/ --output-dir docs/figures/ --scenario all)",
       "Bash(.venv/bin/python scripts/experiments.py --runs 5 --scenario tradeoff --output-dir /tmp/mineio_smoke)",
-      "Bash(bash run_experiment.sh --help)"
+      "Bash(bash run_experiment.sh --help)",
+      "Bash(bash plot-aggregated.sh)",
+      "Bash(gnuplot --version)",
+      "Bash(gnuplot -e \"set terminal\")",
+      "Bash(gnuplot -e \"set terminal pngcairo help\")",
+      "Bash(gnuplot:*)",
+      "Bash(.venv/bin/python scripts/plot.py --input-dir results/ --output-dir docs/figures/ --scenario degradation 2>&1)"
     ]
   }
 }
