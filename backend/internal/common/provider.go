@@ -446,6 +446,39 @@ func (ps *ProviderSelector) MarkRecovered(providerID string) {
 	}
 }
 
+// BenchmarkDecision measures the time taken by the local vs. central failover
+// decision path at a given simulated one-way network latency.
+//
+//   - Local path:   look up the fallback provider from the pre-configured list — sub-ms.
+//   - Central path: simulate one Arrowhead round-trip (2×networkDelayMs sleep) then
+//                   call Arrowhead Discover so any real orchestration overhead is included.
+//
+// Returns (localMs, centralMs). Both measurements are taken in isolation so they do
+// not interfere with each other or with the normal Do() path.
+func (ps *ProviderSelector) BenchmarkDecision(networkDelayMs int) (localMs, centralMs float64) {
+	ps.mu.Lock()
+	current := ps.activeIdx
+	ps.mu.Unlock()
+
+	// ── Local: pre-configured list lookup ───────────────────────────────────
+	t0 := time.Now()
+	ps.findFallback(current)
+	localMs = float64(time.Since(t0)) / float64(time.Millisecond)
+
+	// ── Central: Arrowhead round-trip ────────────────────────────────────────
+	t1 := time.Now()
+	if networkDelayMs > 0 {
+		// 2× because the request travels to Arrowhead AND the response travels back.
+		time.Sleep(2 * time.Duration(networkDelayMs) * time.Millisecond)
+	}
+	if ps.ah != nil {
+		ps.ah.Discover(ps.capability) // result ignored; we measure the time, not the outcome
+	}
+	centralMs = float64(time.Since(t1)) / float64(time.Millisecond)
+
+	return
+}
+
 // LatestFailoverEvent returns the most recent FailoverEvent, or nil if none recorded.
 func (ps *ProviderSelector) LatestFailoverEvent() *FailoverEvent {
 	ps.mu.Lock()

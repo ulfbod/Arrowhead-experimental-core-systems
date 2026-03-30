@@ -76,7 +76,21 @@
       "Bash(bash -n /home/uffe/projects/MineIO_paper/run_experiment.sh)",
       "Bash(command -v docker)",
       "Bash(snap list:*)",
-      "Bash(apt list:*)"
+      "Bash(apt list:*)",
+      "Bash(for f:*)",
+      "Read(//home/uffe/projects/MineIO_paper/backend/**)",
+      "Bash(ls -la cmd/*/main.go)",
+      "Bash(find /home/uffe/projects/MineIO_paper -not -path */.git/* -not -path */node_modules/* -not -path */vendor/* -type d)",
+      "Bash(find /home/uffe/projects/MineIO_paper -type f \\\\\\(-name *.py -o -name plot* -o -name *analysis* \\\\\\))",
+      "Bash(find /home/uffe/projects/MineIO_paper/frontend/src -type f \\\\\\(-name *.tsx -o -name *.ts -o -name *.json \\\\\\))",
+      "Bash(python3:*)",
+      "Bash(pip3 install:*)",
+      "Bash(/home/uffe/projects/MineIO_paper/.venv/bin/pip install:*)",
+      "Bash(/home/uffe/projects/MineIO_paper/.venv/bin/python -c \"import numpy, matplotlib; print\\('OK numpy', numpy.__version__, 'matplotlib', matplotlib.__version__\\)\")",
+      "Bash(.venv/bin/python scripts/experiments.py --runs 50 --seed 1234 --scenario all --output-dir results/)",
+      "Bash(.venv/bin/python scripts/plot.py --input-dir results/ --output-dir docs/figures/ --scenario all)",
+      "Bash(.venv/bin/python scripts/experiments.py --runs 5 --scenario tradeoff --output-dir /tmp/mineio_smoke)",
+      "Bash(bash run_experiment.sh --help)"
     ]
   }
 }

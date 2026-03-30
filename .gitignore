@@ -14,9 +14,20 @@ backend/idt-teleremote
 *.test
 *.out
 
-# PDF source material
-*.pdf
+# PDF source material (keep docs/figures PDFs — they are publication outputs)
+# *.pdf   ← intentionally NOT ignored so figures in docs/figures/ are tracked
 *.pdf:Zone.Identifier
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Experiment per-run files (large; aggregated CSVs and figures are tracked)
+results/tradeoff/runs/
+results/degradation/runs/
+# Keep: results/*/aggregated.csv, results/manifest.json
+# Keep: docs/figures/*.png and docs/figures/*.pdf
 
 # Frontend
 frontend/node_modules/

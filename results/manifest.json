@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-03-30T18:34:29Z",
+  "base_seed": 1234,
+  "runs": 50,
+  "scenario": "all",
+  "methods": [
+    "qos_aware",
+    "availability_based"
+  ],
+  "seed_schedule": "seed_i = 1234 + i   for i = 0 .. 49",
+  "reproducibility": "python scripts/experiments.py --seed 1234 --runs 50 --scenario all",
+  "utility_weights_degradation": {
+    "accuracy": 0.4,
+    "latency": 0.3,
+    "reliability": 0.3
+  },
+  "utility_threshold": 0.55,
+  "availability_threshold": 0.15,
+  "sim_duration_s": 60,
+  "max_latency_ms_normalization": 100.0
+}

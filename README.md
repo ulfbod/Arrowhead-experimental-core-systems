@@ -4,7 +4,11 @@ A fully runnable local proof-of-concept implementation of the paper:
 
 > *"Composable Digital Twins as Proxies for Part-Autonomous Industrial Mobile Machines"*
 
-The system emulates a heterogeneous fleet of underground mining machines using a three-layer composable Digital Twin architecture, orchestrated through an Eclipse Arrowhead-style service framework.
+The system emulates a heterogeneous fleet of underground mining machines using a three-layer composable Digital Twin architecture, orchestrated through an Eclipse Arrowhead-style service framework. It includes three reproducible experiments that generate publication-quality plots with uncertainty bands:
+
+1. **QoS Trade-off Analysis** — how weighted utility scores drive provider selection across randomised QoS profiles.
+2. **Controlled Degradation** — resilience of QoS-aware selection versus availability-based selection under simulated service degradation.
+3. **Failover Delay Benchmark** — latency advantage of local (pre-configured) failover versus centralised Arrowhead reorchestration under increasing simulated network delay.
 
 ---
 
@@ -17,8 +21,11 @@ The system emulates a heterogeneous fleet of underground mining machines using a
 - [Quick Start (Local)](#quick-start-local)
 - [Quick Start (Docker Compose)](#quick-start-docker-compose)
 - [Demo Scenario](#demo-scenario)
+- [Experiments and Evaluation](#experiments-and-evaluation)
+- [QoS-Aware Failover Evaluation](#qos-aware-failover-evaluation)
 - [API Reference](#api-reference)
 - [Simplifications and Design Choices](#simplifications-and-design-choices)
+- [Repository Structure](#repository-structure)
 
 ---
 
@@ -129,7 +136,7 @@ graph TB
 
     CDT1 -->|composes| IDT1A & IDT1B
     CDT2 -->|composes| IDT2A & IDT2B
-    CDT3 -->|composes| CDT1 & CDT2
+    CDT3 -->|composes| CDT1 & CDT2 & IDT1A & IDT1B
     CDT4 -->|composes| IDT3A & IDT3B
     CDT5 -->|composes| IDT4
 
@@ -151,14 +158,16 @@ The paper defines which services each cDT is authorized to consume:
 | Consumer | Authorized Providers | Purpose |
 |----------|---------------------|---------|
 | **cDT1** | iDT1a, iDT1b | Aggregate robot maps & SLAM progress |
-| **cDT2** | iDT2a, iDT2b | Aggregate gas measurements & alerts |
+| **cDT2** | iDT2a, iDT2b | Aggregate gas measurements & alerts; QoS-aware failover between sensors |
 | **cDT3** | cDT1, cDT2, iDT1a, iDT1b | Fuse mapping + gas + robot hazard signals |
 | **cDT4** | iDT3a, iDT3b | Coordinate LHD debris clearance |
-| **cDT5** | iDT4, iDT1a, iDT1b, iDT3a, iDT3b | Mediate tele-remote intervention |
+| **cDT5** | iDT4 | Mediate tele-remote operator intervention |
 | **cDTa** | cDT1, cDT3, cDT4, cDT5 | Orchestrate inspection & recovery mission |
 | **cDTb** | cDT2, cDT3 | Safe-access / ventilation / gating support |
 
 All cross-service calls are mediated by the Arrowhead Core — services discover endpoints and receive authorization tokens before making calls.
+
+cDT1 and cDT2 each manage two redundant providers through a `ProviderSelector` that supports both **local failover** (instant pre-configured fallback) and **centralised reorchestration** (queries Arrowhead for a replacement), which is the subject of the failover experiment.
 
 ---
 
@@ -281,6 +290,37 @@ sequenceDiagram
     AH->>AH: Log orchestration denial
 ```
 
+### 6. Failover Decision: Local vs. Centralised
+
+```mermaid
+sequenceDiagram
+    participant SC as Scenario Runner
+    participant CDT2 as cDT2 (ProviderSelector)
+    participant IDT2A as iDT2a (primary, failing)
+    participant IDT2B as iDT2b (fallback)
+    participant AH as Arrowhead Core
+
+    Note over CDT2: Active provider: iDT2a
+
+    SC->>CDT2: POST /benchmark-decision {networkDelayMs: N}
+
+    rect rgb(220, 240, 255)
+        Note over CDT2: LOCAL path
+        CDT2->>CDT2: findFallback() — list lookup
+        Note over CDT2: decision ≈ 0 ms (flat)
+    end
+
+    rect rgb(255, 235, 220)
+        Note over CDT2: CENTRAL path
+        CDT2->>CDT2: sleep 2×N ms (simulated Arrowhead RTT)
+        CDT2->>AH: POST /orchestration {service:"gas-measurement"}
+        AH-->>CDT2: {provider: iDT2b, endpoint: ...}
+        Note over CDT2: decision ≈ 2×N ms (grows with N)
+    end
+
+    CDT2-->>SC: {localDecisionMs: ~0, centralDecisionMs: ~2N}
+```
+
 ---
 
 ## Port Reference
@@ -296,13 +336,13 @@ sequenceDiagram
 | LHD Vehicle B | idt3b | **8302** | iDT | Debris clearance, tramming |
 | Tele-Remote Station | idt4 | **8401** | iDT | Operator override, tele-operation |
 | Autonomous Exploration & Mapping | cdt1 | **8501** | lower cDT | Composes iDT1a + iDT1b |
-| Gas Concentration Monitoring | cdt2 | **8502** | lower cDT | Composes iDT2a + iDT2b |
-| Hazard Detection & Classification | cdt3 | **8503** | lower cDT | Composes cDT1 + cDT2 + robots |
+| Gas Concentration Monitoring | cdt2 | **8502** | lower cDT | Composes iDT2a + iDT2b (QoS failover) |
+| Hazard Detection & Classification | cdt3 | **8503** | lower cDT | Composes cDT1 + cDT2 + iDT1a/b |
 | Selective Material Handling | cdt4 | **8504** | lower cDT | Composes iDT3a + iDT3b |
-| Tele-Remote Intervention | cdt5 | **8505** | lower cDT | Composes iDT4 + machines |
+| Tele-Remote Intervention | cdt5 | **8505** | lower cDT | Composes iDT4 |
 | Inspection & Recovery | cdta | **8601** | upper cDT | Composes cDT1 + cDT3 + cDT4 + cDT5 |
 | Hazard Monitoring & Gating | cdtb | **8602** | upper cDT | Composes cDT2 + cDT3 |
-| Scenario Runner | scenario | **8700** | Tool | Post-blast demo orchestration |
+| Scenario Runner | scenario | **8700** | Tool | Post-blast demo + failover experiment |
 | Frontend | — | **3000** | UI | React + TypeScript dashboard |
 
 ---
@@ -315,16 +355,47 @@ sequenceDiagram
 - **Node.js 18+** — `node --version`
 - **npm 9+** — `npm --version`
 
-### Option A: One-script launch
+### Prerequisites for Python experiments
+
+The QoS trade-off and degradation experiments are pure Python simulations and do not require Go or Node.
 
 ```bash
-git clone git@github.com:ulfbod/DT-as-proxies-for-mining-PoC.git
-cd DT-as-proxies-for-mining-PoC
-chmod +x scripts/start-local.sh
-./scripts/start-local.sh
+# Install Python dependencies using the provided requirements file:
+python3 -m venv .venv
+.venv/bin/pip install -r scripts/requirements.txt
+
+# Or let run_experiment.sh do it automatically on first run.
 ```
 
-The script starts all 16 backend services and the frontend, then waits. Press **Ctrl+C** to stop everything.
+### Option A: Automated experiment script (recommended)
+
+```bash
+# Install frontend dependencies (first time only)
+cd frontend && npm install && cd ..
+
+chmod +x run_experiment.sh
+
+# All experiments: QoS trade-off + degradation (Python) + failover benchmark (Go)
+./run_experiment.sh --runs 50 --seed 1234
+
+# Python experiments only (no Go services required):
+./run_experiment.sh --scenario tradeoff   --runs 50 --seed 1234
+./run_experiment.sh --scenario degradation --runs 50 --seed 1234
+
+# Failover benchmark only (starts Go services):
+./run_experiment.sh --scenario failover --runs 10
+
+# Skip service startup if Go services are already running:
+./run_experiment.sh --scenario failover --no-start
+```
+
+When the script finishes you will see:
+- Per-run CSVs in `results/*/runs/`
+- Aggregated CSVs in `results/*/aggregated.csv`
+- Figures (PNG + PDF) in `docs/figures/`
+- The base seed printed and saved to `results/manifest.json`
+
+The frontend stays running at **http://localhost:3000** until you press Ctrl+C (for `--scenario failover|all`).
 
 ### Option B: Manual launch (step by step)
 
@@ -333,37 +404,53 @@ cd backend
 
 # 1. Start Arrowhead Core
 PORT=8000 go run ./cmd/arrowhead &
+sleep 3  # wait for Arrowhead to be ready
 
-# 2. Start iDT layer (wait ~2s for Arrowhead to be ready)
-sleep 2
-IDT_ID=idt1a IDT_NAME="Inspection Robot A" PORT=8101 go run ./cmd/idt-robot &
-IDT_ID=idt1b IDT_NAME="Inspection Robot B" PORT=8102 go run ./cmd/idt-robot &
-IDT_ID=idt2a IDT_NAME="Gas Sensing Unit A"  PORT=8201 go run ./cmd/idt-gas &
-IDT_ID=idt2b IDT_NAME="Gas Sensing Unit B"  PORT=8202 go run ./cmd/idt-gas &
-IDT_ID=idt3a IDT_NAME="LHD Vehicle A"       PORT=8301 go run ./cmd/idt-lhd &
-IDT_ID=idt3b IDT_NAME="LHD Vehicle B"       PORT=8302 go run ./cmd/idt-lhd &
-IDT_ID=idt4  IDT_NAME="Tele-Remote Station" PORT=8401 go run ./cmd/idt-teleremote &
-
-# 3. Start lower cDT layer (wait ~3s for iDTs to register)
+# 2. Start iDT layer
+PORT=8101 IDT_ID=idt1a IDT_NAME="Inspection Robot A"  ARROWHEAD_URL=http://localhost:8000 go run ./cmd/idt-robot &
+PORT=8102 IDT_ID=idt1b IDT_NAME="Inspection Robot B"  ARROWHEAD_URL=http://localhost:8000 go run ./cmd/idt-robot &
+PORT=8201 IDT_ID=idt2a IDT_NAME="Gas Sensing Unit A"  ARROWHEAD_URL=http://localhost:8000 go run ./cmd/idt-gas &
+PORT=8202 IDT_ID=idt2b IDT_NAME="Gas Sensing Unit B"  ARROWHEAD_URL=http://localhost:8000 go run ./cmd/idt-gas &
+PORT=8301 IDT_ID=idt3a IDT_NAME="LHD Vehicle A"       ARROWHEAD_URL=http://localhost:8000 go run ./cmd/idt-lhd &
+PORT=8302 IDT_ID=idt3b IDT_NAME="LHD Vehicle B"       ARROWHEAD_URL=http://localhost:8000 go run ./cmd/idt-lhd &
+PORT=8401 IDT_ID=idt4  IDT_NAME="Tele-Remote"         ARROWHEAD_URL=http://localhost:8000 go run ./cmd/idt-teleremote &
 sleep 3
-PORT=8501 IDT1B_URL=http://localhost:8102 go run ./cmd/cdt1 &
-PORT=8502 IDT2B_URL=http://localhost:8202 go run ./cmd/cdt2 &
-PORT=8503 CDT1_URL=http://localhost:8501 CDT2_URL=http://localhost:8502 \
-          IDT1A_URL=http://localhost:8101 IDT1B_URL=http://localhost:8102 \
-          go run ./cmd/cdt3 &
-PORT=8504 IDT3B_URL=http://localhost:8302 go run ./cmd/cdt4 &
-PORT=8505 IDT4_URL=http://localhost:8401 go run ./cmd/cdt5 &
+
+# 3. Start lower cDT layer
+PORT=8501 ARROWHEAD_URL=http://localhost:8000 \
+    IDT1A_URL=http://localhost:8101 IDT1B_URL=http://localhost:8102 \
+    LOG_DIR=./logs go run ./cmd/cdt1 &
+PORT=8502 ARROWHEAD_URL=http://localhost:8000 \
+    IDT2A_URL=http://localhost:8201 IDT2B_URL=http://localhost:8202 \
+    LOG_DIR=./logs go run ./cmd/cdt2 &
+PORT=8503 ARROWHEAD_URL=http://localhost:8000 \
+    CDT1_URL=http://localhost:8501 CDT2_URL=http://localhost:8502 \
+    IDT1A_URL=http://localhost:8101 IDT1B_URL=http://localhost:8102 go run ./cmd/cdt3 &
+PORT=8504 ARROWHEAD_URL=http://localhost:8000 \
+    IDT3A_URL=http://localhost:8301 IDT3B_URL=http://localhost:8302 go run ./cmd/cdt4 &
+PORT=8505 ARROWHEAD_URL=http://localhost:8000 \
+    IDT4_URL=http://localhost:8401 go run ./cmd/cdt5 &
+sleep 3
 
 # 4. Start upper cDT layer
-sleep 3
-PORT=8601 CDT1_URL=http://localhost:8501 CDT3_URL=http://localhost:8503 \
-          CDT4_URL=http://localhost:8504 CDT5_URL=http://localhost:8505 \
-          go run ./cmd/cdta &
-PORT=8602 CDT2_URL=http://localhost:8502 CDT3_URL=http://localhost:8503 \
-          go run ./cmd/cdtb &
+PORT=8601 ARROWHEAD_URL=http://localhost:8000 \
+    CDT1_URL=http://localhost:8501 CDT3_URL=http://localhost:8503 \
+    CDT4_URL=http://localhost:8504 CDT5_URL=http://localhost:8505 go run ./cmd/cdta &
+PORT=8602 ARROWHEAD_URL=http://localhost:8000 \
+    CDT2_URL=http://localhost:8502 CDT3_URL=http://localhost:8503 go run ./cmd/cdtb &
+sleep 2
 
 # 5. Start scenario runner
-PORT=8700 go run ./cmd/scenario &
+PORT=8700 ARROWHEAD_URL=http://localhost:8000 \
+    IDT1A_URL=http://localhost:8101 IDT1B_URL=http://localhost:8102 \
+    IDT2A_URL=http://localhost:8201 IDT2B_URL=http://localhost:8202 \
+    IDT3A_URL=http://localhost:8301 IDT3B_URL=http://localhost:8302 \
+    IDT4_URL=http://localhost:8401 \
+    CDT1_URL=http://localhost:8501 CDT2_URL=http://localhost:8502 \
+    CDT3_URL=http://localhost:8503 CDT4_URL=http://localhost:8504 \
+    CDT5_URL=http://localhost:8505 \
+    CDTA_URL=http://localhost:8601 CDTB_URL=http://localhost:8602 \
+    LOG_DIR=./logs go run ./cmd/scenario &
 
 # 6. Start frontend
 cd ../frontend
@@ -383,8 +470,6 @@ Open **http://localhost:3000** in your browser.
 - `docker compose version`
 
 ```bash
-git clone git@github.com:ulfbod/DT-as-proxies-for-mining-PoC.git
-cd DT-as-proxies-for-mining-PoC
 docker compose up --build
 ```
 
@@ -422,7 +507,7 @@ This scenario simulates what happens after a controlled blast in an underground 
    - `clearance` → `verifying` (when debris >80%)
    - `verifying` → `complete` (when route clear and hazards resolved)
 
-4. **Safe-access** in the cDTb view shows UNSAFE initially. As hazards clear and gas normalizes, the gate transitions from `closed` → `conditional` → `open`.
+4. **Safe-access** in the cDTb view shows UNSAFE initially. As hazards clear and gas normalises, the gate transitions from `closed` → `conditional` → `open`.
 
 ### Manual Controls
 
@@ -431,11 +516,296 @@ This scenario simulates what happens after a controlled blast in an underground 
 | Force gas spike | "Gas Spike" button | `POST http://localhost:8700/scenario/gas-spike` |
 | Inject hazard | "Inject Hazard" button | `POST http://localhost:8700/scenario/inject-hazard {"robotId":"idt1a","type":"misfire","severity":"critical"}` |
 | Clear all hazards | "Clear All" button | `POST http://localhost:8700/scenario/clear-all` |
-| Toggle robot offline | System View toggle | `PUT http://localhost:8101/online {"online":false}` |
-| Toggle connectivity | System View toggle | `PUT http://localhost:8101/connectivity {"connected":false}` |
-| Force mission phase | cDTa view dropdown | `POST http://localhost:8601/force/phase {"phase":"clearance"}` |
-| Open/close gate | cDTb view buttons | `POST http://localhost:8602/gate/open` |
-| Add auth policy | System View table | `POST http://localhost:8000/authorization/policy {"consumerId":"cdtb","providerId":"cdt4","serviceName":"*","allowed":true}` |
+| Toggle robot offline | System View | `POST http://localhost:8101/online {"online":false}` |
+| Toggle connectivity | System View | `POST http://localhost:8101/connectivity {"connected":false}` |
+| Force mission phase | cDTa view | `POST http://localhost:8601/force/phase {"phase":"clearance"}` |
+| Open/close gate | cDTb view | `POST http://localhost:8602/gate/open` |
+| Add auth policy | System View | `POST http://localhost:8000/authorization/policy {"consumerId":"cdtb","providerId":"cdt4","serviceName":"*","allowed":true}` |
+
+---
+
+## Experiments and Evaluation
+
+This repository provides three reproducible conceptual evaluations. All produce per-run CSV files,
+aggregated statistics (median, 10th, 90th percentile), and publication-ready PNG + PDF plots.
+
+### Seed schedule and reproducibility
+
+Only **one optional base seed** is needed, regardless of the number of runs.
+Run *i* automatically receives seed `base_seed + i`:
+
+```
+runs = 50, base_seed = 1234  →  seeds: 1234, 1235, 1236, …, 1283
+```
+
+If `--seed` is not provided a random base seed is generated, printed to the console,
+and saved to `results/manifest.json` so the experiment can always be reproduced.
+
+### Running experiments
+
+```bash
+# All three experiments (50 runs, reproducible seed):
+./run_experiment.sh --runs 50 --seed 1234
+
+# QoS trade-off analysis only (no Go services needed):
+./run_experiment.sh --scenario tradeoff --runs 50 --seed 1234
+
+# Controlled degradation only (no Go services needed):
+./run_experiment.sh --scenario degradation --runs 50 --seed 1234
+
+# Failover delay benchmark only (starts Go services):
+./run_experiment.sh --scenario failover --runs 10
+
+# Custom output directory:
+./run_experiment.sh --runs 50 --seed 1234 --output-dir /tmp/my_results
+
+# Python scripts can also be called directly:
+python scripts/experiments.py --runs 50 --seed 1234 --scenario all --output-dir results/
+python scripts/plot.py --input-dir results/ --output-dir docs/figures/
+```
+
+### Script parameters
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--runs N` | `30` | Number of randomised runs per experiment |
+| `--seed BASE_SEED` | *(auto)* | Base seed; each run uses `base_seed + i`. Omit for a random seed. |
+| `--output-dir PATH` | `./results` | Root directory for all output files |
+| `--scenario` | `all` | `tradeoff`, `degradation`, `failover`, or `all` |
+| `--baseline` | `both` | Degradation methods: `qos_aware`, `availability_based`, or `both` |
+| `--no-start` | — | Skip Go service startup (for `failover`/`all` when services are already running) |
+
+### Experiment 1 — QoS Trade-off Analysis
+
+**Goal:** Show how the choice of QoS weights determines which provider is selected and what
+utility is achieved, across many randomised QoS profiles.
+
+For each run a unique seed samples two providers' QoS attributes:
+- **Accuracy** ~ U[0.65, 1.00] / U[0.50, 0.90]
+- **Latency** ~ U[5, 55 ms] / U[8, 75 ms]
+- **Reliability** ~ U[0.75, 1.00] / U[0.60, 0.92]
+
+The accuracy weight `α` is swept from 0 to 1 in 21 steps; the remaining weight is split
+evenly between latency and reliability.  The utility function is:
+
+```
+utility = α · accuracy + ((1−α)/2) · (1 − latency/100) + ((1−α)/2) · reliability
+```
+
+**Output files:**
+
+```
+results/tradeoff/aggregated.csv               ← all runs × all α values (1050 rows for 50 runs)
+results/tradeoff/runs/run_NNNN_seed_SSSS.csv  ← per-run detail
+docs/figures/tradeoff_utility_vs_weight.png   ← Figure 1
+docs/figures/tradeoff_qos_metrics_vs_weight.png ← Figure 2
+```
+
+**Figure 1 — Utility vs. accuracy weight:**
+
+![QoS Trade-off: Utility vs. Accuracy Weight](docs/figures/tradeoff_utility_vs_weight.png)
+
+*Median utility of the selected provider (blue line) with 10th–90th percentile band (shaded region),
+across 50 randomised QoS profiles. As* α *increases the system increasingly favours high-accuracy
+providers; the band narrows because accurate providers dominate selection.*
+
+**Figure 2 — QoS metrics of selected provider vs. accuracy weight:**
+
+![QoS Metrics vs. Accuracy Weight](docs/figures/tradeoff_qos_metrics_vs_weight.png)
+
+*Accuracy, latency, and reliability of the actually selected provider at each weight setting.
+Low* α *means latency and reliability dominate — the selected provider tends to have lower latency.
+High* α *means accuracy dominates — the selected provider tends to have higher accuracy.*
+
+### Experiment 2 — Controlled Degradation Behaviour
+
+**Goal:** Demonstrate resilience of QoS-aware selection compared to a simple
+availability-based baseline under controlled service degradation.
+
+For each run a unique seed draws:
+- **Degraded provider** ~ choice({idt2a, idt2b})
+- **Degradation onset** ~ U[5, 25] s
+- **Degradation rate** ~ U[0.02, 0.12] accuracy/s
+- **Hard-failure time** ~ onset + U[10, 25] s
+
+The two strategies are evaluated on the **same** degradation scenario per run (paired comparison):
+
+| Strategy | Failover trigger |
+|----------|-----------------|
+| **QoS-aware** | Switches when utility of active provider drops below 0.55 |
+| **Availability-based** | Switches only when reliability drops below 0.15 (hard failure) |
+
+Fixed utility weights: accuracy 0.40, latency 0.30, reliability 0.30.
+
+**Output files:**
+
+```
+results/degradation/aggregated.csv                   ← all runs × all timesteps × 2 methods
+results/degradation/runs/run_NNNN_seed_SSSS.csv      ← per-run time series
+docs/figures/degradation_utility_over_time.png       ← Figure 3
+docs/figures/degradation_utility_advantage.png       ← Figure 4
+```
+
+**Figure 3 — Utility over time, both strategies:**
+
+![Controlled Degradation: Utility over Time](docs/figures/degradation_utility_over_time.png)
+
+*Median utility (solid line) and 10th–90th percentile band (shaded) for 50 runs.
+QoS-aware selection (blue) detects degradation early and switches before the provider fails;
+availability-based selection (red) waits for a hard failure, sustaining lower utility longer.
+The orange band marks the range of timesteps at which QoS-aware failover occurs across runs.*
+
+**Figure 4 — Utility advantage of QoS-aware over baseline:**
+
+![QoS-Aware Utility Advantage](docs/figures/degradation_utility_advantage.png)
+
+*Per-timestep advantage (QoS-aware − availability-based). Positive values mean QoS-aware delivers
+higher utility. The advantage is largest during the degradation window — before the hard failure
+that would also trigger the baseline to switch.*
+
+### Experiment 3 — Failover Delay Benchmark
+
+See [QoS-Aware Failover Evaluation](#qos-aware-failover-evaluation) below for full details.
+This experiment requires the Go services to be running and is included in `--scenario all`.
+
+### Statistical aggregation
+
+All aggregated CSVs contain per-row data for all runs. The plotting script (`scripts/plot.py`)
+computes **median, 10th percentile, and 90th percentile** across runs at each x-axis point.
+
+For time-series data all runs share the same integer timestep grid, so no interpolation or
+resampling is needed.
+
+### Output directory layout
+
+```
+results/
+├── manifest.json                           ← base seed, run count, reproducibility command
+├── tradeoff/
+│   ├── aggregated.csv                      ← all runs × all α values
+│   └── runs/
+│       ├── run_0000_seed_1234.csv
+│       ├── run_0001_seed_1235.csv
+│       └── …
+├── degradation/
+│   ├── aggregated.csv                      ← all runs × all timesteps × 2 methods
+│   └── runs/
+│       └── …
+└── failover_delay_vs_network_delay.csv     ← Go benchmark output (if scenario=failover|all)
+
+docs/figures/
+├── tradeoff_utility_vs_weight.{png,pdf}
+├── tradeoff_qos_metrics_vs_weight.{png,pdf}
+├── degradation_utility_over_time.{png,pdf}
+├── degradation_utility_advantage.{png,pdf}
+└── failover_delay_vs_network_delay.{png,pdf}
+```
+
+Per-run CSV files under `results/*/runs/` are excluded from git (see `.gitignore`).
+Aggregated CSVs and all figures under `docs/figures/` are tracked.
+
+---
+
+## QoS-Aware Failover Evaluation
+
+### Overview
+
+cDT1 (Mapping) and cDT2 (Gas Monitoring) each manage a **primary** and a **fallback** iDT provider through a `ProviderSelector`. When the primary provider fails, the selector can switch in one of two modes:
+
+| Mode | Mechanism | Expected latency |
+|------|-----------|-----------------|
+| **Local** | Picks the pre-configured fallback immediately (in-memory lookup) | ≈ 0 ms, independent of network delay |
+| **Centralised** | Queries Arrowhead to discover a replacement provider (one round-trip = 2×network delay) | ≈ 2 × network_delay_ms |
+
+The experiment sweeps the simulated one-way network delay from 0 ms to 50 ms in 5 ms steps and measures the **failover decision time** for both modes at each point.
+
+### Running the Experiment
+
+```bash
+# Via the automation script (runs services + experiment + keeps frontend alive):
+./run_experiment.sh --runs 5
+
+# Or trigger manually while services are running:
+curl -X POST http://localhost:8700/scenario/experiment/run \
+     -H "Content-Type: application/json" \
+     -d '{"runsPerPoint": 5}'
+
+# Poll for results:
+curl http://localhost:8700/scenario/experiment/results
+```
+
+The QoS & Failover tab in the frontend also provides a one-click experiment runner with a live results table.
+
+### Output Files
+
+All output is written to `--output-dir` (default `./results`):
+
+| File | Description |
+|------|-------------|
+| `failover_delay_vs_network_delay.csv` | Aggregated results — mean + p10/p90 per delay point |
+| `failover_events.csv` | Every individual failover event with full QoS context |
+| `cdt2_gas_stream.csv` | Per-poll gas sensor QoS stream |
+| `cdt1_mapping_stream.csv` | Per-poll mapping QoS stream |
+
+### CSV Format
+
+`failover_delay_vs_network_delay.csv` has seven columns, gnuplot-ready:
+
+```
+network_delay_ms,local_avg_ms,local_p10_ms,local_p90_ms,central_avg_ms,central_p10_ms,central_p90_ms
+0,0.001,0.001,0.001,1.054,0.997,1.096
+5,0.001,0.001,0.001,11.783,11.606,12.038
+10,0.001,0.001,0.001,21.412,21.102,21.789
+...
+50,0.002,0.001,0.003,101.54,100.92,102.18
+```
+
+### Plotting with gnuplot
+
+```gnuplot
+set xlabel 'Network Delay (ms)'
+set ylabel 'Failover Decision Delay (ms)'
+set title 'Local vs. Centralised Failover — Decision Overhead'
+set key top left
+set grid
+
+plot "results/failover_delay_vs_network_delay.csv" \
+     using 1:2:3:4 with yerrorbars title 'Local (p10–p90)'     lc rgb '#2563eb', \
+     ""             using 1:2       with linespoints notitle    lc rgb '#2563eb' lw 2, \
+     ""             using 1:5:6:7 with yerrorbars title 'Centralised (p10–p90)' lc rgb '#dc2626', \
+     ""             using 1:5       with linespoints notitle    lc rgb '#dc2626' lw 2
+```
+
+### Expected Results
+
+```
+network_delay_ms   local_avg_ms   central_avg_ms
+               0          0.001            1.054
+               5          0.001           11.783
+              10          0.001           21.412
+              20          0.001           41.387
+              50          0.002          101.540
+```
+
+Local failover remains flat at sub-millisecond regardless of network conditions. Centralised reorchestration grows linearly at ~2× the simulated one-way latency, confirming the architectural trade-off between flexibility (centralised discovery) and response time (local pre-configuration).
+
+### Manual Fault Injection (QoS view)
+
+From the **QoS & Failover** tab in the frontend, or directly:
+
+```bash
+# Fail the primary gas sensor
+curl -X POST http://localhost:8700/scenario/sensor-fail   -H "Content-Type: application/json" -d '{"sensor":"idt2a"}'
+
+# Recover it
+curl -X POST http://localhost:8700/scenario/sensor-recover -H "Content-Type: application/json" -d '{"sensor":"idt2a"}'
+
+# Set orchestration mode (affects normal operation, not the benchmark)
+curl -X POST "http://localhost:8700/scenario/config?mode=central"
+
+# Set simulated network delay
+curl -X POST "http://localhost:8700/scenario/network-delay?ms=20"
+```
 
 ---
 
@@ -463,13 +833,6 @@ curl -X POST http://localhost:8000/orchestration \
   -d '{"consumerId":"cdt1","serviceName":"mapping"}'
 ```
 
-**Example — add a policy:**
-```bash
-curl -X POST http://localhost:8000/authorization/policy \
-  -H "Content-Type: application/json" \
-  -d '{"consumerId":"cdtb","providerId":"cdt4","serviceName":"*","allowed":true}'
-```
-
 ### iDT Robots (`:8101`, `:8102`)
 
 | Method | Path | Description |
@@ -480,8 +843,8 @@ curl -X POST http://localhost:8000/authorization/policy \
 | `POST` | `/slam/start` | Activate SLAM |
 | `POST` | `/slam/stop` | Deactivate SLAM |
 | `POST` | `/navigate` | `{"x":50,"y":30}` |
-| `PUT` | `/online` | `{"online":false}` |
-| `PUT` | `/connectivity` | `{"connected":false}` |
+| `POST` | `/online` | `{"online":false}` |
+| `POST` | `/connectivity` | `{"connected":false}` |
 | `POST` | `/hazard/inject` | `{"type":"misfire","severity":"critical"}` |
 | `POST` | `/hazard/clear` | `{"id":"haz-123"}` |
 
@@ -493,6 +856,8 @@ curl -X POST http://localhost:8000/authorization/policy \
 | `GET` | `/measurements` | Current gas readings |
 | `GET` | `/alerts` | Active gas alerts |
 | `POST` | `/simulate/spike` | Trigger dangerous gas spike |
+| `POST` | `/simulate/fail` | Put sensor into permanent 503 failure mode |
+| `POST` | `/simulate/recover` | Recover sensor from failure mode |
 | `POST` | `/simulate/gas` | `{"ch4":1.5,"co":35,"co2":0.5,"o2":20.5,"no2":1.0}` |
 
 ### iDT LHD Vehicles (`:8301`, `:8302`)
@@ -503,8 +868,22 @@ curl -X POST http://localhost:8000/authorization/policy \
 | `GET` | `/clearance/status` | Debris cleared%, ETA, route clear |
 | `POST` | `/clearance/start` | Begin debris clearance |
 | `POST` | `/clearance/stop` | Stop clearance |
-| `PUT` | `/availability` | `{"available":false}` |
+| `POST` | `/availability` | `{"available":false}` |
 | `POST` | `/simulate/reset` | Reset debris to 0% |
+
+### cDT2 Gas Monitoring (`:8502`) — QoS endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/state` | Gas monitor result + active alerts |
+| `GET` | `/providers` | ProviderSelector state: both sensors, QoS metrics, recent failovers |
+| `POST` | `/provider/fail` | Force-mark a provider failed: `{"providerId":"idt2a"}` |
+| `POST` | `/provider/recover` | Recover a provider: `{"providerId":"idt2a"}` |
+| `POST` | `/provider/degrade` | Degrade QoS: `{"providerId":"idt2a","accuracyFactor":0.6,"extraLatencyMs":30}` |
+| `POST` | `/benchmark-decision` | Measure local vs. central decision time: `{"networkDelayMs":20}` → `{localDecisionMs, centralDecisionMs}` |
+| `POST` | `/config` | Push experiment config into this process: `{"networkDelayMs":20,"orchestrationMode":"central"}` |
+| `POST` | `/trigger-poll` | Force an immediate sensor poll cycle; returns latest failover event |
+| `POST` | `/simulate/spike` | Trigger a gas spike on the active sensor |
 
 ### cDTa Mission Controller (`:8601`)
 
@@ -529,6 +908,24 @@ curl -X POST http://localhost:8000/authorization/policy \
 | `POST` | `/ventilation/check` | Trigger ventilation assessment |
 | `GET` | `/recommendations` | Current recommendations |
 
+### Scenario Runner (`:8700`) — experiment endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `GET` | `/state` | Current scenario phase + progress |
+| `POST` | `/scenario/start` | Start post-blast demo scenario |
+| `POST` | `/scenario/reset` | Reset scenario to idle |
+| `POST` | `/scenario/inject-hazard` | `{"robotId":"idt1a","type":"misfire","severity":"high"}` |
+| `POST` | `/scenario/gas-spike` | Trigger gas spike on iDT2a |
+| `POST` | `/scenario/clear-all` | Clear all injected hazards and gas |
+| `POST` | `/scenario/sensor-fail` | Fail a sensor: `{"sensor":"idt2a"}` |
+| `POST` | `/scenario/sensor-recover` | Recover a sensor: `{"sensor":"idt2a"}` |
+| `POST` | `/scenario/config?mode=local` | Set orchestration mode (`local` or `central`) |
+| `POST` | `/scenario/network-delay?ms=20` | Set simulated network delay (0–50 ms) |
+| `POST` | `/scenario/experiment/run` | Start full experiment: `{"runsPerPoint":5}` |
+| `GET` | `/scenario/experiment/results` | Poll experiment status/results |
+
 ---
 
 ## Simplifications and Design Choices
@@ -543,6 +940,8 @@ curl -X POST http://localhost:8000/authorization/policy \
 | Gas sensing | Real gas sensors | Gaussian noise around configurable baseline |
 | Persistence | Varies | In-memory state (resets on restart) |
 | Service mesh | Full SOA | Direct HTTP REST between services |
+| Network latency | Real network | Configurable simulated delay injected into every `DoRequest` call |
+| Failover experiment | N/A | Benchmark endpoint isolates decision path; sweeps 0–50 ms in 5 ms steps; p10/p90 CIs |
 
 The implementation is intentionally simplified to be runnable on a development laptop while preserving all architectural concepts from the paper: the proxy pattern, composability, Arrowhead-style service discovery/authorization, the three-layer hierarchy, and the post-blast scenario decision support.
 
@@ -552,42 +951,70 @@ The implementation is intentionally simplified to be runnable on a development l
 
 ```
 .
+├── run_experiment.sh             # One-command: run all experiments + generate plots
+├── docker-compose.yml            # Full stack deployment (Docker)
+├── scripts/
+│   ├── experiments.py            # QoS trade-off + controlled degradation simulations
+│   ├── plot.py                   # Publication-quality PNG + PDF figure generation
+│   ├── requirements.txt          # Python dependencies (numpy, matplotlib)
+│   └── start-local.sh            # Alternative: start Go services only
+├── results/                      # Experiment output (created at runtime; runs/ excluded from git)
+│   ├── manifest.json             # Base seed, run count, reproducibility command
+│   ├── tradeoff/aggregated.csv   # QoS trade-off results (all runs × all α values)
+│   └── degradation/aggregated.csv # Degradation results (all runs × time × methods)
+├── docs/figures/                 # Publication-ready figures (PNG + PDF, tracked in git)
+│   ├── tradeoff_utility_vs_weight.{png,pdf}
+│   ├── tradeoff_qos_metrics_vs_weight.{png,pdf}
+│   ├── degradation_utility_over_time.{png,pdf}
+│   ├── degradation_utility_advantage.{png,pdf}
+│   └── failover_delay_vs_network_delay.{png,pdf}  ← generated after running failover scenario
 ├── backend/
 │   ├── go.mod                    # Go module: mineio
 │   ├── Dockerfile                # Multi-stage build (ARG SERVICE_DIR)
 │   ├── internal/common/
 │   │   ├── types.go              # Shared data types
-│   │   └── client.go             # Arrowhead HTTP client helpers
+│   │   ├── client.go             # Arrowhead HTTP client + global delay/mode globals
+│   │   ├── provider.go           # ProviderSelector: QoS-aware failover (local & central)
+│   │   ├── qos.go                # QoS metric types and FailoverEvent
+│   │   └── qoslog.go             # CSV logger for failover events and QoS streams
 │   └── cmd/
 │       ├── arrowhead/            # Eclipse Arrowhead Core (:8000)
 │       ├── idt-robot/            # iDT1a, iDT1b (:8101, :8102)
 │       ├── idt-gas/              # iDT2a, iDT2b (:8201, :8202)
 │       ├── idt-lhd/              # iDT3a, iDT3b (:8301, :8302)
 │       ├── idt-teleremote/       # iDT4 (:8401)
-│       ├── cdt1/                 # Exploration & Mapping (:8501)
-│       ├── cdt2/                 # Gas Monitoring (:8502)
+│       ├── cdt1/                 # Exploration & Mapping (:8501) — QoS failover
+│       ├── cdt2/                 # Gas Monitoring (:8502) — QoS failover + benchmark
 │       ├── cdt3/                 # Hazard Detection (:8503)
 │       ├── cdt4/                 # Material Handling (:8504)
 │       ├── cdt5/                 # Tele-Remote Intervention (:8505)
 │       ├── cdta/                 # Inspection & Recovery (:8601)
 │       ├── cdtb/                 # Hazard Monitoring & Gating (:8602)
-│       └── scenario/             # Demo scenario runner (:8700)
+│       └── scenario/             # Demo scenario + failover experiment runner (:8700)
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx               # Main app with tab navigation
-│   │   ├── api/index.ts          # REST API client
+│   │   ├── App.tsx               # Main app: top bar + 4-tab navigation
+│   │   ├── api/index.ts          # REST API client (all services)
 │   │   ├── types/index.ts        # TypeScript types
-│   │   ├── hooks/usePolling.ts   # Generic polling hook
+│   │   ├── hooks/usePolling.ts   # Generic polling hook (3 s)
 │   │   └── components/
-│   │       ├── SystemView/       # System overview dashboard
+│   │       ├── SystemView/       # Service grid, composition graph, auth policies, orch logs
 │   │       ├── CDTaView/         # Inspection & recovery mission UI
-│   │       └── CDTbView/         # Hazard monitoring & gating UI
+│   │       ├── CDTbView/         # Hazard monitoring & safe-access gating UI
+│   │       └── QoSView/          # Failover experiment controls, provider health, results table
 │   └── Dockerfile
-├── scripts/
-│   └── start-local.sh            # One-command local startup
-├── docker-compose.yml            # Full stack deployment
-└── README.md
+└── scripts/
+    └── start-local.sh            # Alternative: start services only (no experiment)
 ```
+
+### Frontend Tabs
+
+| Tab | Component | Description |
+|-----|-----------|-------------|
+| **System View** | `SystemView` | All 16 services, online/offline status, service composition graph, auth policy management, orchestration logs |
+| **cDTa: Inspection & Recovery** | `CDTaView` | Mission phase stepper, mapping progress, hazard report, clearance status |
+| **cDTb: Hazard Monitoring** | `CDTbView` | Gas levels, safe-access decision, gate control |
+| **QoS & Failover** | `QoSView` | Provider health cards, failover event history, experiment controls (mode, delay, run), results table with gnuplot hint |
 
 ---
 

@@ -412,41 +412,32 @@ func (s *ScenarioService) post(url string, body interface{}) error {
 
 // ---- Experiment automation ---------------------------------------------------------
 
-// runFailoverExperiment executes the full failover delay experiment:
-//   For each networkDelay in 0..50 (step 5):
-//     For each mode in {local, central}:
-//       For run in 1..runsPerPoint:
-//         1. Reset providers to primary
-//         2. Set networkDelay + mode
-//         3. Inject failure on primary iDT sensor
-//         4. Pre-mark failure in cDT2 ProviderSelector (bypasses poll wait)
-//         5. Trigger immediate cDT2 poll → failover fires
-//         6. Record DecisionDelayMs from returned FailoverEvent
-//         7. Recover primary iDT sensor + cDT2 provider
+// runFailoverExperiment benchmarks the failover decision delay at each network latency.
+//
+// For each networkDelay in 0..50ms (step 5ms) and each repetition:
+//   - POST cdt2/benchmark-decision: cdt2 measures local (list lookup) and central
+//     (2×networkDelay sleep + Arrowhead call) decision times in isolation, free from
+//     any interference by the background poll loop or stale events.
 //
 // Results are written to failover_delay_vs_network_delay.csv.
 func (s *ScenarioService) runFailoverExperiment(runsPerPoint int) {
 	log.Printf("[%s] === FAILOVER EXPERIMENT STARTED (runsPerPoint=%d) ===", s.id, runsPerPoint)
 
 	delays := []int{0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50}
-	modes := []string{"local", "central"}
 
 	var allRuns []ExperimentRun
 
 	for _, netDelay := range delays {
-		for _, mode := range modes {
-			for run := 1; run <= runsPerPoint; run++ {
-				r := s.runSingleFailoverTest(netDelay, mode, run)
-				allRuns = append(allRuns, r)
-				log.Printf("[%s] exp delay=%dms mode=%s run=%d → decision=%.1fms failToSwitch=%.1fms ok=%v",
-					s.id, netDelay, mode, run, r.FailoverDelayMs, r.FailToSwitchMs, r.Success)
-				// Brief pause between runs to let services stabilise
-				time.Sleep(200 * time.Millisecond)
-			}
+		for run := 1; run <= runsPerPoint; run++ {
+			localRun, centralRun := s.runBenchmark(netDelay, run)
+			allRuns = append(allRuns, localRun, centralRun)
+			log.Printf("[%s] exp delay=%dms run=%d → local=%.2fms central=%.2fms",
+				s.id, netDelay, run, localRun.FailoverDelayMs, centralRun.FailoverDelayMs)
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 
-	// Reset experiment globals
+	// Ensure global state is clean after experiment.
 	common.SetNetworkDelayMs(0)
 	common.SetOrchestrationMode("local")
 
@@ -466,76 +457,34 @@ func (s *ScenarioService) runFailoverExperiment(runsPerPoint int) {
 	log.Printf("[%s] === FAILOVER EXPERIMENT COMPLETE – CSV: %s ===", s.id, csvPath)
 }
 
-// runSingleFailoverTest runs one (delay, mode, run) triple.
-// It returns an ExperimentRun with the measured DecisionDelayMs.
-func (s *ScenarioService) runSingleFailoverTest(netDelay int, mode string, run int) ExperimentRun {
-	result := ExperimentRun{
-		NetworkDelayMs: netDelay,
-		Mode:           mode,
-		Run:            run,
-	}
+// runBenchmark calls cdt2's /benchmark-decision endpoint for one (netDelay, run) pair.
+// The scenario's own HTTP delay is reset to 0 so the HTTP call to cdt2 is not delayed;
+// cdt2 applies the simulated delay internally during the central decision path.
+// Returns one ExperimentRun per mode (local and central).
+func (s *ScenarioService) runBenchmark(netDelay int, run int) (localRun, centralRun ExperimentRun) {
+	localRun = ExperimentRun{NetworkDelayMs: netDelay, Mode: "local", Run: run}
+	centralRun = ExperimentRun{NetworkDelayMs: netDelay, Mode: "central", Run: run}
 
-	// 1. Recover primary sensor (idt2a) on both the iDT and the cDT2 ProviderSelector.
-	//    Do this WITHOUT network delay to ensure clean reset.
+	// Reset scenario-side delay so the HTTP call to cdt2 is not artificially delayed.
 	common.SetNetworkDelayMs(0)
-	_ = s.post(s.urls.IDT2a+"/simulate/recover", nil)
-	_ = s.post(s.urls.CDT2+"/provider/recover", map[string]string{"providerId": "idt2a"})
-	// Also reset config in cdt2's process.
-	_ = s.post(s.urls.CDT2+"/config", map[string]interface{}{
-		"networkDelayMs": 0, "orchestrationMode": "local",
-	})
-	time.Sleep(100 * time.Millisecond) // brief stabilisation
 
-	// 2. Apply experiment configuration — set in THIS process and propagate to cdt2.
-	//    cdt2 runs in a separate OS process with its own globals, so it must be told
-	//    the delay and mode explicitly via HTTP.
-	common.SetNetworkDelayMs(netDelay)
-	common.SetOrchestrationMode(mode)
-	if err := s.post(s.urls.CDT2+"/config", map[string]interface{}{
-		"networkDelayMs": netDelay, "orchestrationMode": mode,
-	}); err != nil {
-		result.Error = fmt.Sprintf("push config to cdt2: %v", err)
-		return result
+	var resp struct {
+		LocalDecisionMs   float64 `json:"localDecisionMs"`
+		CentralDecisionMs float64 `json:"centralDecisionMs"`
+	}
+	err := common.DoRequest("POST", s.urls.CDT2+"/benchmark-decision", "", s.id,
+		map[string]int{"networkDelayMs": netDelay}, &resp)
+	if err != nil {
+		localRun.Error = fmt.Sprintf("benchmark: %v", err)
+		centralRun.Error = localRun.Error
+		return
 	}
 
-	// 3. Inject failure on primary sensor (idt2a → returns HTTP 503).
-	if err := s.post(s.urls.IDT2a+"/simulate/fail", nil); err != nil {
-		result.Error = fmt.Sprintf("inject fail: %v", err)
-		return result
-	}
-
-	// 4. Pre-mark the ProviderSelector so failure threshold is already reached.
-	//    The next Do() call in cDT2 will immediately trigger the failover.
-	if err := s.post(s.urls.CDT2+"/provider/fail", map[string]string{"providerId": "idt2a"}); err != nil {
-		result.Error = fmt.Sprintf("mark failed: %v", err)
-		return result
-	}
-
-	// 5. Trigger an immediate poll cycle on cDT2. This calls Do() which:
-	//    - Tries idt2a → gets 503 (failure already counted + threshold pre-set → shouldSwitch)
-	//    - In local mode: picks fallback from list, retries
-	//    - In central mode: calls Arrowhead (adds ~2×networkDelay), picks fallback, retries
-	//    The endpoint returns the latest FailoverEvent.
-	var pollResp struct {
-		Status         string               `json:"status"`
-		ActiveProvider string               `json:"activeProvider"`
-		LatestFailover *common.FailoverEvent `json:"latestFailover"`
-	}
-	if err := common.DoRequest("POST", s.urls.CDT2+"/trigger-poll", "", s.id, nil, &pollResp); err != nil {
-		result.Error = fmt.Sprintf("trigger-poll: %v", err)
-		return result
-	}
-
-	if pollResp.LatestFailover == nil {
-		result.Error = "no failover event recorded after trigger-poll"
-		return result
-	}
-
-	ev := pollResp.LatestFailover
-	result.FailoverDelayMs = ev.DecisionDelayMs
-	result.FailToSwitchMs = ev.FailToSwitchMs
-	result.Success = true
-	return result
+	localRun.FailoverDelayMs = resp.LocalDecisionMs
+	localRun.Success = true
+	centralRun.FailoverDelayMs = resp.CentralDecisionMs
+	centralRun.Success = true
+	return
 }
 
 // percentile returns the p-th percentile (0–100) of a sorted slice.
