@@ -96,7 +96,12 @@
       "Bash(gnuplot -e \"set terminal\")",
       "Bash(gnuplot -e \"set terminal pngcairo help\")",
       "Bash(gnuplot:*)",
-      "Bash(.venv/bin/python scripts/plot.py --input-dir results/ --output-dir docs/figures/ --scenario degradation 2>&1)"
+      "Bash(.venv/bin/python scripts/plot.py --input-dir results/ --output-dir docs/figures/ --scenario degradation 2>&1)",
+      "Bash(.venv/bin/python scripts/experiments.py --runs 50 --seed 1234 --scenario all --eval-scenario basic --output-dir results/)",
+      "Bash(.venv/bin/python scripts/experiments.py --runs 50 --seed 1234 --scenario all --eval-scenario improved01 --output-dir results/)",
+      "Bash(.venv/bin/python scripts/plot.py --input-dir results/ --output-dir docs/figures/ --scenario all --eval-scenario basic)",
+      "Bash(.venv/bin/python scripts/plot.py --input-dir results/ --output-dir docs/figures/ --scenario all --eval-scenario improved01)",
+      "Bash(git restore:*)"
     ]
   }
 }
