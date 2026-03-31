@@ -526,8 +526,39 @@ This scenario simulates what happens after a controlled blast in an underground 
 
 ## Experiments and Evaluation
 
-This repository provides three reproducible conceptual evaluations. All produce per-run CSV files,
+This repository provides three reproducible conceptual evaluations, each available in two
+**simulation scenarios** (`basic` and `improved01`). All produce per-run CSV files,
 aggregated statistics (median, 10th, 90th percentile), and publication-ready PNG + PDF plots.
+
+### Simulation scenarios
+
+Two eval-scenarios control the simulation parameters and provider configuration:
+
+| Flag | Description |
+|------|-------------|
+| `--eval-scenario basic` | Original evaluation — moderate QoS separation, 2 degradation episodes, 120 s simulation |
+| `--eval-scenario improved01` | Strengthened evaluation — wider separation, 3 episodes, 200 s simulation, accuracy-heavy weights |
+
+`--scenario basic` and `--scenario improved01` are accepted as convenient aliases.
+
+#### How `improved01` differs from `basic`
+
+| Parameter | `basic` | `improved01` |
+|-----------|---------|--------------|
+| Provider A accuracy range | [0.88, 0.99] | [0.90, 0.99] |
+| Provider A latency range | [40, 80 ms] | [55, 95 ms] |
+| Provider B accuracy range | [0.50, 0.74] | [0.38, 0.62] |
+| Provider B latency range | [3, 15 ms] | [2, 9 ms] |
+| Provider B reliability range | [0.68, 0.87] | [0.52, 0.76] |
+| Degradation episodes | 2 | 3 (alternating A→B→A) |
+| Simulation duration | 120 s | 200 s |
+| Utility weights (acc/lat/rel) | 0.40 / 0.30 / 0.30 | **0.50 / 0.25 / 0.25** |
+| Availability failover threshold | 0.15 | **0.12** (baseline reacts later) |
+| QoS switch hysteresis | 0.06 | **0.05** (proposed method more responsive) |
+
+The wider provider separation in `improved01` creates a sharper crossover in the trade-off plot.
+The third degradation episode and stronger accuracy weighting make the proposed method's recovery
+advantage appear twice in distinct, non-overlapping windows.
 
 ### Seed schedule and reproducibility
 
@@ -539,39 +570,44 @@ runs = 50, base_seed = 1234  →  seeds: 1234, 1235, 1236, …, 1283
 ```
 
 If `--seed` is not provided a random base seed is generated, printed to the console,
-and saved to `results/manifest.json` so the experiment can always be reproduced.
+and saved to `results/<eval-scenario>/manifest.json` so the experiment can always be reproduced.
 
 ### Running experiments
 
 ```bash
-# All three experiments (50 runs, reproducible seed):
-./run_experiment.sh --runs 50 --seed 1234
+# Run the basic scenario (50 runs, reproducible seed):
+./run_experiment.sh --eval-scenario basic --runs 50 --seed 1234
 
-# QoS trade-off analysis only (no Go services needed):
-./run_experiment.sh --scenario tradeoff --runs 50 --seed 1234
+# Run the improved scenario:
+./run_experiment.sh --eval-scenario improved01 --runs 50 --seed 1234
 
-# Controlled degradation only (no Go services needed):
-./run_experiment.sh --scenario degradation --runs 50 --seed 1234
+# Shorthand aliases (equivalent to the above):
+./run_experiment.sh --scenario basic   --runs 50 --seed 1234
+./run_experiment.sh --scenario improved01 --runs 50 --seed 1234
 
-# Failover delay benchmark only (starts Go services):
+# Only trade-off analysis (no Go services needed):
+./run_experiment.sh --scenario tradeoff --eval-scenario improved01 --runs 50 --seed 1234
+
+# Only controlled degradation (no Go services needed):
+./run_experiment.sh --scenario degradation --eval-scenario improved01 --runs 50 --seed 1234
+
+# Failover delay benchmark (starts Go services):
 ./run_experiment.sh --scenario failover --runs 10
 
-# Custom output directory:
-./run_experiment.sh --runs 50 --seed 1234 --output-dir /tmp/my_results
-
 # Python scripts can also be called directly:
-python scripts/experiments.py --runs 50 --seed 1234 --scenario all --output-dir results/
-python scripts/plot.py --input-dir results/ --output-dir docs/figures/
+python scripts/experiments.py --runs 50 --seed 1234 --eval-scenario improved01
+python scripts/plot.py --eval-scenario improved01 --input-dir results/ --output-dir docs/figures/
 ```
 
 ### Script parameters
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--eval-scenario` | `basic` | Simulation scenario: `basic` or `improved01` |
 | `--runs N` | `30` | Number of randomised runs per experiment |
 | `--seed BASE_SEED` | *(auto)* | Base seed; each run uses `base_seed + i`. Omit for a random seed. |
-| `--output-dir PATH` | `./results` | Root directory for all output files |
-| `--scenario` | `all` | `tradeoff`, `degradation`, `failover`, or `all` |
+| `--output-dir PATH` | `./results` | Root directory; outputs go to `<PATH>/<eval-scenario>/` |
+| `--scenario` | `all` | Experiment type: `tradeoff`, `degradation`, `failover`, `all`; also accepts `basic`/`improved01` as aliases for `--eval-scenario` |
 | `--baseline` | `both` | Degradation methods: `qos_aware`, `availability_based`, or `both` |
 | `--no-start` | — | Skip Go service startup (for `failover`/`all` when services are already running) |
 
@@ -580,10 +616,9 @@ python scripts/plot.py --input-dir results/ --output-dir docs/figures/
 **Goal:** Show how the choice of QoS weights determines which provider is selected and what
 utility is achieved, across many randomised QoS profiles.
 
-For each run a unique seed samples two providers' QoS attributes:
-- **Accuracy** ~ U[0.65, 1.00] / U[0.50, 0.90]
-- **Latency** ~ U[5, 55 ms] / U[8, 75 ms]
-- **Reliability** ~ U[0.75, 1.00] / U[0.60, 0.92]
+For each run a unique seed samples two structurally opposed providers:
+- **Provider A** ("quality sensor"): high accuracy, high reliability, slow latency
+- **Provider B** ("fast sensor"): lower accuracy, lower reliability, fast latency
 
 The accuracy weight `α` is swept from 0 to 1 in 21 steps; the remaining weight is split
 evenly between latency and reliability.  The utility function is:
@@ -592,113 +627,98 @@ evenly between latency and reliability.  The utility function is:
 utility = α · accuracy + ((1−α)/2) · (1 − latency/100) + ((1−α)/2) · reliability
 ```
 
-**Output files:**
+The non-overlapping latency ranges guarantee a genuine accuracy–latency trade-off with a
+visible crossover. `improved01` widens this gap, making the crossover sharper.
 
-```
-results/tradeoff/aggregated.csv               ← all runs × all α values (1050 rows for 50 runs)
-results/tradeoff/runs/run_NNNN_seed_SSSS.csv  ← per-run detail
-docs/figures/tradeoff_utility_vs_weight.png   ← Figure 1
-docs/figures/tradeoff_qos_metrics_vs_weight.png ← Figure 2
-```
+**Figure — Provider utility vs. accuracy weight (`improved01`):**
 
-**Figure 1 — Utility vs. accuracy weight:**
+![QoS Trade-off: Provider Utility vs. Accuracy Weight](docs/figures/improved01/tradeoff_provider_utilities.png)
 
-![QoS Trade-off: Utility vs. Accuracy Weight](docs/figures/tradeoff_utility_vs_weight.png)
+*Median utility of each provider (solid/dashed line) with 10th–90th percentile dashed bounds and
+light fill. The vertical dotted line marks the crossover α where Provider B stops dominating.*
 
-*Median utility of the selected provider (blue line) with 10th–90th percentile band (shaded region),
-across 50 randomised QoS profiles. As* α *increases the system increasingly favours high-accuracy
-providers; the band narrows because accurate providers dominate selection.*
+**Figure — QoS metrics of selected provider (`improved01`):**
 
-**Figure 2 — QoS metrics of selected provider vs. accuracy weight:**
+![QoS Metrics vs. Accuracy Weight](docs/figures/improved01/tradeoff_qos_metrics_vs_weight.png)
 
-![QoS Metrics vs. Accuracy Weight](docs/figures/tradeoff_qos_metrics_vs_weight.png)
-
-*Accuracy, latency, and reliability of the actually selected provider at each weight setting.
-Low* α *means latency and reliability dominate — the selected provider tends to have lower latency.
-High* α *means accuracy dominates — the selected provider tends to have higher accuracy.*
+*Accuracy, latency, and reliability of the actually selected provider. At low α the fast provider
+dominates; at high α the accurate provider wins. The crossover is abrupt because the provider ranges
+do not overlap.*
 
 ### Experiment 2 — Controlled Degradation Behaviour
 
-**Goal:** Demonstrate resilience of QoS-aware selection compared to a simple
-availability-based baseline under controlled service degradation.
+**Goal:** Demonstrate resilience of QoS-aware selection compared to a pure
+availability-based baseline under controlled service degradation and recovery.
 
-For each run a unique seed draws:
-- **Degraded provider** ~ choice({idt2a, idt2b})
-- **Degradation onset** ~ U[5, 25] s
-- **Degradation rate** ~ U[0.02, 0.12] accuracy/s
-- **Hard-failure time** ~ onset + U[10, 25] s
+Each run draws a per-episode scenario:
+- **Degraded provider** ~ alternating (A→B for 2 episodes; A→B→A for 3 episodes)
+- **Degradation onset** ~ U[10, 18] s / U[12, 20] s after previous recovery
+- **Degradation rate** ~ U[0.04, 0.15] / U[0.05, 0.18] accuracy/s
+- **Hard-failure window** follows gradual degradation; gradual recovery follows the hard failure
 
-The two strategies are evaluated on the **same** degradation scenario per run (paired comparison):
+The two strategies are evaluated on the **same** scenario per run (paired comparison):
 
-| Strategy | Failover trigger |
-|----------|-----------------|
-| **QoS-aware** | Switches when utility of active provider drops below 0.55 |
-| **Availability-based** | Switches only when reliability drops below 0.15 (hard failure) |
+| Strategy | Switch condition | Switch-back |
+|----------|----------------|-------------|
+| **QoS-aware** | Active utility < threshold **or** alternative better by > hysteresis | Yes — proactive switch-back after recovery |
+| **Availability-based** | Active reliability < threshold (hard failure only) | No — stays on fallback provider |
 
-Fixed utility weights: accuracy 0.40, latency 0.30, reliability 0.30.
+The proactive switch-back is the key discriminator: QoS-aware returns to the better provider
+once it recovers; availability-based remains on whichever provider it switched to.
 
-**Output files:**
+**Figure — Utility over time + advantage (`improved01`, 3 episodes):**
 
-```
-results/degradation/aggregated.csv                   ← all runs × all timesteps × 2 methods
-results/degradation/runs/run_NNNN_seed_SSSS.csv      ← per-run time series
-docs/figures/degradation_utility_over_time.png       ← Figure 3
-docs/figures/degradation_utility_advantage.png       ← Figure 4
-```
+![Controlled Degradation](docs/figures/improved01/degradation_combined.png)
 
-**Figure 3 — Utility over time, both strategies:**
+*Top panel: median utility (solid = proposed, dashed = baseline) with 10th/90th percentile dashed
+bounds. Gray bands mark the median gradual-degradation windows (onset → hard-fail) for each episode.
+Bottom panel: per-timestep utility advantage (proposed − baseline); positive = QoS-aware wins.*
 
-![Controlled Degradation: Utility over Time](docs/figures/degradation_utility_over_time.png)
+**`basic` scenario for reference (2 episodes, 120 s):**
 
-*Median utility (solid line) and 10th–90th percentile band (shaded) for 50 runs.
-QoS-aware selection (blue) detects degradation early and switches before the provider fails;
-availability-based selection (red) waits for a hard failure, sustaining lower utility longer.
-The orange band marks the range of timesteps at which QoS-aware failover occurs across runs.*
-
-**Figure 4 — Utility advantage of QoS-aware over baseline:**
-
-![QoS-Aware Utility Advantage](docs/figures/degradation_utility_advantage.png)
-
-*Per-timestep advantage (QoS-aware − availability-based). Positive values mean QoS-aware delivers
-higher utility. The advantage is largest during the degradation window — before the hard failure
-that would also trigger the baseline to switch.*
+![Controlled Degradation Basic](docs/figures/basic/degradation_combined.png)
 
 ### Experiment 3 — Failover Delay Benchmark
 
 See [QoS-Aware Failover Evaluation](#qos-aware-failover-evaluation) below for full details.
 This experiment requires the Go services to be running and is included in `--scenario all`.
+Failover data is not namespaced by eval-scenario (it comes from the live Go services).
 
 ### Statistical aggregation
 
 All aggregated CSVs contain per-row data for all runs. The plotting script (`scripts/plot.py`)
 computes **median, 10th percentile, and 90th percentile** across runs at each x-axis point.
 
-For time-series data all runs share the same integer timestep grid, so no interpolation or
-resampling is needed.
+Both methods are evaluated on the same random draws per run, so the advantage plot reflects a
+**paired** comparison — noise that affects both methods cancels out.
 
 ### Output directory layout
 
 ```
 results/
-├── manifest.json                           ← base seed, run count, reproducibility command
-├── tradeoff/
-│   ├── aggregated.csv                      ← all runs × all α values
-│   └── runs/
-│       ├── run_0000_seed_1234.csv
-│       ├── run_0001_seed_1235.csv
-│       └── …
-├── degradation/
-│   ├── aggregated.csv                      ← all runs × all timesteps × 2 methods
-│   └── runs/
-│       └── …
-└── failover_delay_vs_network_delay.csv     ← Go benchmark output (if scenario=failover|all)
+├── basic/                                  ← outputs for --eval-scenario basic
+│   ├── manifest.json                       ← base seed, run count, reproducibility command
+│   ├── tradeoff/
+│   │   ├── aggregated.csv
+│   │   └── runs/run_NNNN_seed_SSSS.csv     ← per-run detail (gitignored)
+│   └── degradation/
+│       ├── aggregated.csv
+│       └── runs/…
+├── improved01/                             ← outputs for --eval-scenario improved01
+│   ├── manifest.json
+│   ├── tradeoff/aggregated.csv
+│   └── degradation/aggregated.csv
+└── failover_delay_vs_network_delay.csv     ← Go benchmark output (not scenario-namespaced)
 
 docs/figures/
-├── tradeoff_utility_vs_weight.{png,pdf}
-├── tradeoff_qos_metrics_vs_weight.{png,pdf}
-├── degradation_utility_over_time.{png,pdf}
-├── degradation_utility_advantage.{png,pdf}
-└── failover_delay_vs_network_delay.{png,pdf}
+├── basic/
+│   ├── tradeoff_provider_utilities.{png,pdf}
+│   ├── tradeoff_qos_metrics_vs_weight.{png,pdf}
+│   └── degradation_combined.{png,pdf}
+└── improved01/
+    ├── tradeoff_provider_utilities.{png,pdf}
+    ├── tradeoff_qos_metrics_vs_weight.{png,pdf}
+    └── degradation_combined.{png,pdf}
 ```
 
 Per-run CSV files under `results/*/runs/` are excluded from git (see `.gitignore`).

@@ -26,8 +26,12 @@ __pycache__/
 # Experiment per-run files (large; aggregated CSVs and figures are tracked)
 results/tradeoff/runs/
 results/degradation/runs/
-# Keep: results/*/aggregated.csv, results/manifest.json
-# Keep: docs/figures/*.png and docs/figures/*.pdf
+results/basic/tradeoff/runs/
+results/basic/degradation/runs/
+results/improved01/tradeoff/runs/
+results/improved01/degradation/runs/
+# Keep: results/<scenario>/*/aggregated.csv, results/<scenario>/manifest.json
+# Keep: docs/figures/<scenario>/*.png and docs/figures/<scenario>/*.pdf
 
 # Frontend
 frontend/node_modules/

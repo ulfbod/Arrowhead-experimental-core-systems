@@ -5,15 +5,15 @@ Generate publication-quality plots from experiment results.
 Reads CSV files produced by experiments.py (and the Go failover benchmark) and
 writes PNG + PDF figures suitable for embedding in a paper or README.
 
-Output files (in --output-dir):
-  tradeoff_provider_utilities.{png,pdf}        ← both provider utility curves + crossover
-  tradeoff_qos_metrics_vs_weight.{png,pdf}     ← 3-panel: accuracy / latency / reliability
-  degradation_combined.{png,pdf}               ← 2-panel: utility + advantage (stacked)
-  failover_delay_vs_network_delay.{png,pdf}    ← Go benchmark (if CSV present)
+Output files (in --output-dir/<eval-scenario>/):
+  tradeoff_provider_utilities.{png,pdf}     ← both provider utility curves + crossover
+  tradeoff_qos_metrics_vs_weight.{png,pdf}  ← 3-panel: accuracy / latency / reliability
+  degradation_combined.{png,pdf}            ← 2-panel: utility + advantage (stacked)
+  failover_delay_vs_network_delay.{png,pdf} ← Go benchmark (if CSV present)
 
 Usage:
   python scripts/plot.py --input-dir results/ --output-dir docs/figures/
-  python scripts/plot.py --scenario tradeoff --input-dir results/
+  python scripts/plot.py --eval-scenario improved01 --scenario degradation
 """
 import argparse
 import csv
@@ -34,23 +34,38 @@ except ImportError as exc:
 
 # ── Publication style ─────────────────────────────────────────────────────────
 
-# Colors chosen to be distinguishable in both color and grayscale print.
-COLOR_PROPOSED  = "#1d4ed8"   # dark blue
-COLOR_BASELINE  = "#b91c1c"   # dark red
-COLOR_PROVIDER_A = "#1d4ed8"  # blue  (quality / accurate)
-COLOR_PROVIDER_B = "#b91c1c"  # red   (fast / noisy)
-COLOR_DEGRADE   = "#d1d5db"   # light gray for degradation windows
-COLOR_LOCAL     = "#15803d"   # green
-COLOR_CENTRAL   = "#7c3aed"   # purple
+COLOR_PROPOSED   = "#1d4ed8"   # dark blue  — proposed QoS-aware
+COLOR_BASELINE   = "#b91c1c"   # dark red   — availability-based baseline
+COLOR_PROVIDER_A = "#1d4ed8"   # blue       — quality / accurate provider
+COLOR_PROVIDER_B = "#b91c1c"   # red        — fast / noisy provider
+COLOR_DEGRADE    = "#d1d5db"   # light gray — degradation window shading
+COLOR_LOCAL      = "#15803d"   # green
+COLOR_CENTRAL    = "#7c3aed"   # purple
 
-LW_MAIN   = 2.2    # main median curve
-LW_BAND   = 0.9    # p10/p90 marker lines
-LW_ZERO   = 0.9    # zero-reference line
-BAND_FILL_ALPHA = 0.12
-MARKER_EVERY    = 8   # place a marker every N x-values on median curves
-FIG_DPI         = 150
-SIM_DURATION_S  = 120   # must match experiments.py
+LW_MAIN          = 2.2    # main median curve
+LW_BAND          = 0.9    # p10/p90 dashed lines
+LW_ZERO          = 0.9    # zero-reference line
+BAND_FILL_ALPHA  = 0.12
+MARKER_EVERY     = 8      # place a marker every N x-values on median curves
+FIG_DPI          = 150
 
+# Minimal per-eval-scenario plot configuration (mirrors experiments.py SCENARIO_CONFIGS).
+# Only the values needed by the plot layer are stored here.
+EVAL_SCENARIO_PLOT_CFG: dict = {
+    "basic": {
+        "label":          "Basic",
+        "sim_duration_s": 120,
+        "episode_count":  2,
+    },
+    "improved01": {
+        "label":          "Improved (enhanced discriminability)",
+        "sim_duration_s": 200,
+        "episode_count":  3,
+    },
+}
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _style(ax, ylim=None):
     ax.spines["top"].set_visible(False)
@@ -100,26 +115,27 @@ def _plot_with_band(ax, x, med, p10, p90, color, linestyle="-", label_med=None,
         kw.update(marker=marker, markevery=step, markersize=5, markeredgewidth=0.8)
     ax.plot(x, med, label=label_med, **kw)
 
-    # Thin dashed p10/p90 lines
     band_kw = dict(color=color, linewidth=LW_BAND, linestyle="--", alpha=0.70, zorder=2)
     ax.plot(x, p10, **band_kw)
     ax.plot(x, p90, label=label_band, **band_kw)
 
-    # Subtle fill between p10 and p90
     ax.fill_between(x, p10, p90, color=color, alpha=BAND_FILL_ALPHA, zorder=1)
 
 
-# ── Degradation window helper ─────────────────────────────────────────────────
+# ── Degradation window shading ────────────────────────────────────────────────
 
-def _shade_degrade_windows(ax, rows, alpha_fill=0.18):
-    """Shade the typical degradation + hard-fail window across runs on axes ax.
+def _shade_degrade_windows(ax, rows: list, alpha_fill: float = 0.18) -> None:
+    """Shade the median degradation windows for all episodes found in the CSV.
 
-    Uses the median onset and hard-fail times for each episode.
+    Iterates episode columns 1 .. MAX_EPISODES, skipping absent or empty slots.
     """
-    for ep_n in (1, 2):
+    if not rows:
+        return
+    for ep_n in range(1, 4):   # up to 3 episodes
         key_onset = f"onset{ep_n}_s"
         key_fail  = f"fail{ep_n}_s"
-        # collect unique (run) values (one per run × per method, so deduplicate by run)
+        if key_onset not in rows[0]:
+            break  # column absent entirely
         seen = set()
         onsets, fails = [], []
         for r in rows:
@@ -127,8 +143,14 @@ def _shade_degrade_windows(ax, rows, alpha_fill=0.18):
             if rid in seen:
                 continue
             seen.add(rid)
-            onsets.append(float(r[key_onset]))
-            fails.append(float(r[key_fail]))
+            val = r.get(key_onset, "")
+            if val == "":
+                continue   # episode not used in this scenario
+            try:
+                onsets.append(float(val))
+                fails.append(float(r[key_fail]))
+            except (ValueError, KeyError):
+                continue
         if not onsets:
             continue
         med_onset = float(np.median(onsets))
@@ -138,19 +160,19 @@ def _shade_degrade_windows(ax, rows, alpha_fill=0.18):
 
 # ── Plot 1: QoS Trade-off — provider utility crossover ───────────────────────
 
-def plot_tradeoff(input_dir: Path, output_dir: Path) -> None:
+def plot_tradeoff(input_dir: Path, output_dir: Path, eval_scenario: str) -> None:
     agg = input_dir / "tradeoff" / "aggregated.csv"
     if not agg.exists():
         print(f"  [skip] {agg} not found")
         return
 
-    rows = _read_csv(agg)
+    rows   = _read_csv(agg)
     n_runs = len({r["run"] for r in rows})
+    pcfg   = EVAL_SCENARIO_PLOT_CFG.get(eval_scenario, EVAL_SCENARIO_PLOT_CFG["basic"])
+    slabel = pcfg["label"]
 
-    # Collect utility of each provider per alpha (not just selected)
-    util_a_by_alpha: dict = defaultdict(list)
-    util_b_by_alpha: dict = defaultdict(list)
-    # Also track which is selected for the summary panel
+    util_a_by_alpha: dict  = defaultdict(list)
+    util_b_by_alpha: dict  = defaultdict(list)
     sel_util_by_alpha: dict = defaultdict(list)
 
     for r in rows:
@@ -161,7 +183,7 @@ def plot_tradeoff(input_dir: Path, output_dir: Path) -> None:
 
     alphas = sorted(util_a_by_alpha.keys())
 
-    # ── Figure 1A: both provider utilities (with crossover) ───────────────────
+    # ── Figure 1A: both provider utilities with crossover ────────────────────
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
     x, med_a, p10_a, p90_a = _band(util_a_by_alpha, alphas)
@@ -176,7 +198,7 @@ def plot_tradeoff(input_dir: Path, output_dir: Path) -> None:
                     label_med="Provider B — fast sensor (median)",
                     label_band="Provider B (p10 / p90)")
 
-    # Mark the approximate crossover region (where A's median crosses B's)
+    # Mark crossover points
     crossover_alphas = [alphas[i] for i in range(len(alphas) - 1)
                         if (med_a[i] < med_b[i]) != (med_a[i+1] < med_b[i+1])]
     for ca in crossover_alphas:
@@ -184,15 +206,19 @@ def plot_tradeoff(input_dir: Path, output_dir: Path) -> None:
         ax.text(ca + 0.02, 0.08, f"crossover\nα ≈ {ca:.2f}",
                 fontsize=7.5, color="#374151", va="bottom")
 
-    ax.set_xlabel(r"Accuracy weight $w_\mathrm{acc}$  (latency and reliability share $1-w_\mathrm{acc}$ equally)",
-                  fontsize=10)
+    ax.set_xlabel(
+        r"Accuracy weight $w_\mathrm{acc}$  "
+        r"(latency and reliability share $1-w_\mathrm{acc}$ equally)",
+        fontsize=10,
+    )
     ax.set_ylabel("Provider utility", fontsize=11)
-    ax.set_title("QoS Trade-off: Provider Utility vs. Accuracy Weight\n"
-                 f"(shaded: 10th–90th percentile across {n_runs} runs)", fontsize=11)
+    ax.set_title(
+        f"QoS Trade-off: Provider Utility vs. Accuracy Weight  [{slabel}]\n"
+        f"(shaded: 10th–90th percentile across {n_runs} runs)",
+        fontsize=11,
+    )
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1.05)
-
-    # Clean legend: 2 lines per provider (median + band)
     ax.legend(fontsize=8.5, loc="center right", framealpha=0.9)
     ax.annotate("Shaded region: p10–p90 across runs",
                 xy=(0.02, 0.03), xycoords="axes fraction",
@@ -202,9 +228,9 @@ def plot_tradeoff(input_dir: Path, output_dir: Path) -> None:
     _save(fig, output_dir, "tradeoff_provider_utilities")
 
     # ── Figure 1B: QoS metrics of selected provider (3 sub-panels) ───────────
-    acc_sel:  dict = defaultdict(list)
-    lat_sel:  dict = defaultdict(list)
-    rel_sel:  dict = defaultdict(list)
+    acc_sel: dict = defaultdict(list)
+    lat_sel: dict = defaultdict(list)
+    rel_sel: dict = defaultdict(list)
 
     for r in rows:
         alpha = round(float(r["alpha"]), 4)
@@ -216,14 +242,13 @@ def plot_tradeoff(input_dir: Path, output_dir: Path) -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(13, 4), sharey=False)
     panels = [
-        (acc_sel, "Accuracy of selected provider",    "#1d4ed8"),
+        (acc_sel, "Accuracy of selected provider",     "#1d4ed8"),
         (lat_sel, "Latency of selected provider (ms)", "#b91c1c"),
-        (rel_sel, "Reliability of selected provider", "#15803d"),
+        (rel_sel, "Reliability of selected provider",  "#15803d"),
     ]
     for ax, (data, ylabel, color) in zip(axes, panels):
         x, med, p10, p90 = _band(data, alphas)
-        ax.plot(x, med, color=color, linewidth=LW_MAIN, linestyle="-",
-                label="Median")
+        ax.plot(x, med, color=color, linewidth=LW_MAIN, linestyle="-",  label="Median")
         ax.plot(x, p10, color=color, linewidth=LW_BAND, linestyle="--", alpha=0.70,
                 label="p10 / p90")
         ax.plot(x, p90, color=color, linewidth=LW_BAND, linestyle="--", alpha=0.70)
@@ -236,7 +261,7 @@ def plot_tradeoff(input_dir: Path, output_dir: Path) -> None:
         _style(ax)
 
     fig.suptitle(
-        "QoS Trade-off: Attributes of Selected Provider vs. Accuracy Weight\n"
+        f"QoS Trade-off: Attributes of Selected Provider vs. Accuracy Weight  [{slabel}]\n"
         "(dashed lines: 10th and 90th percentile across runs)",
         fontsize=11, y=1.03,
     )
@@ -248,18 +273,21 @@ def plot_tradeoff(input_dir: Path, output_dir: Path) -> None:
 
 # ── Plot 2: Controlled Degradation — 2-panel stacked ─────────────────────────
 
-def plot_degradation(input_dir: Path, output_dir: Path) -> None:
+def plot_degradation(input_dir: Path, output_dir: Path, eval_scenario: str) -> None:
     agg = input_dir / "degradation" / "aggregated.csv"
     if not agg.exists():
         print(f"  [skip] {agg} not found")
         return
 
-    rows = _read_csv(agg)
+    rows   = _read_csv(agg)
     n_runs = len({r["run"] for r in rows if r["method"] == "qos_aware"})
+    pcfg   = EVAL_SCENARIO_PLOT_CFG.get(eval_scenario, EVAL_SCENARIO_PLOT_CFG["basic"])
+    sim_duration_s = pcfg["sim_duration_s"]
+    slabel         = pcfg["label"]
 
     methods = ["qos_aware", "availability_based"]
-    util_by_mt:    dict = {m: defaultdict(list) for m in methods}
-    fo_count_mt:   dict = {m: defaultdict(int)  for m in methods}
+    util_by_mt:  dict = {m: defaultdict(list) for m in methods}
+    fo_count_mt: dict = {m: defaultdict(int)  for m in methods}
 
     for r in rows:
         m = r["method"]
@@ -272,13 +300,11 @@ def plot_degradation(input_dir: Path, output_dir: Path) -> None:
 
     ts = sorted(util_by_mt["qos_aware"].keys())
 
-    # Compute per-run paired advantage (same run index, same t)
-    util_q  = {t: sorted(util_by_mt["qos_aware"][t])          for t in ts}
-    util_ab = {t: sorted(util_by_mt["availability_based"].get(t, [0.0])) for t in ts}
+    # Paired advantage per timestep
     adv_by_t: dict = defaultdict(list)
     for t in ts:
-        q = np.array(util_q[t])
-        a = np.array(util_ab[t])
+        q = np.array(sorted(util_by_mt["qos_aware"][t]))
+        a = np.array(sorted(util_by_mt["availability_based"].get(t, [0.0])))
         n = min(len(q), len(a))
         if n > 0:
             for delta in (q[:n] - a[:n]):
@@ -292,14 +318,14 @@ def plot_degradation(input_dir: Path, output_dir: Path) -> None:
         layout="constrained",
     )
 
-    # — Degradation windows (shaded gray, both panels) ————————————————————————
+    # Degradation windows (both panels)
     _shade_degrade_windows(ax_top, rows)
     _shade_degrade_windows(ax_bot, rows)
 
     # — Top panel: utility over time ——————————————————————————————————————————
     styles = {
-        "qos_aware":          ("-",  "o", COLOR_PROPOSED,  "Proposed — QoS-aware"),
-        "availability_based": ("--", "s", COLOR_BASELINE,  "Baseline — availability-based"),
+        "qos_aware":          ("-",  "o", COLOR_PROPOSED, "Proposed — QoS-aware"),
+        "availability_based": ("--", "s", COLOR_BASELINE, "Baseline — availability-based"),
     }
 
     for m in methods:
@@ -312,7 +338,7 @@ def plot_degradation(input_dir: Path, output_dir: Path) -> None:
                         label_med=f"{name} (median)",
                         label_band=f"{name} (p10 / p90)")
 
-    # Failover event bars (small rug at top of axis)
+    # Failover rugs at the top of the utility axis
     for m, (ls, mk, color, name) in styles.items():
         fo_ts = [t for t, c in fo_count_mt[m].items() if c > 0]
         if fo_ts:
@@ -321,16 +347,14 @@ def plot_degradation(input_dir: Path, output_dir: Path) -> None:
 
     ax_top.set_ylabel("Utility", fontsize=11)
     ax_top.set_title(
-        "Controlled Degradation: QoS-Aware vs. Availability-Based Selection\n"
+        f"Controlled Degradation: QoS-Aware vs. Availability-Based  [{slabel}]\n"
         f"(dashed lines: 10th/90th percentile across {n_runs} runs; "
         "gray bands: degradation windows)",
         fontsize=10.5,
     )
-    ax_top.set_xlim(0, SIM_DURATION_S)
+    ax_top.set_xlim(0, sim_duration_s)
     ax_top.set_ylim(-0.02, 1.08)
 
-    # Legend with explicit p10/p90 note
-    # Build compact custom legend
     handles = []
     for m in methods:
         ls, mk, color, name = styles[m]
@@ -348,6 +372,7 @@ def plot_degradation(input_dir: Path, output_dir: Path) -> None:
 
     # — Bottom panel: utility advantage ———————————————————————————————————————
     x_adv, med_adv, p10_adv, p90_adv = _band(adv_by_t, ts)
+
     ax_bot.fill_between(x_adv, p10_adv, p90_adv,
                         color=COLOR_PROPOSED, alpha=BAND_FILL_ALPHA * 1.5, zorder=1)
     ax_bot.plot(x_adv, p10_adv, color=COLOR_PROPOSED, linewidth=LW_BAND,
@@ -370,13 +395,13 @@ def plot_degradation(input_dir: Path, output_dir: Path) -> None:
     _style(ax_bot)
 
     _save(fig, output_dir, "degradation_combined")
-
     print("  [degradation] done")
 
 
 # ── Plot 3: Failover delay benchmark (existing Go CSV) ───────────────────────
 
 def plot_failover(input_dir: Path, output_dir: Path) -> None:
+    # Failover CSV is NOT namespaced by eval-scenario (it comes from Go services).
     csv_path = input_dir / "failover_delay_vs_network_delay.csv"
     if not csv_path.exists():
         print(f"  [skip] {csv_path} not found")
@@ -433,29 +458,40 @@ def main() -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--input-dir",  type=Path, default=Path("results"),
-                   help="Root directory that contains aggregated CSVs")
+                   help="Root results directory (eval-scenario subdir appended automatically)")
     p.add_argument("--output-dir", type=Path, default=Path("docs/figures"),
-                   help="Directory to write PNG and PDF plots")
+                   help="Root figures directory (eval-scenario subdir appended automatically)")
     p.add_argument("--scenario",
                    choices=["tradeoff", "degradation", "failover", "all"],
                    default="all",
                    help="Which set of plots to generate")
+    p.add_argument("--eval-scenario",
+                   choices=list(EVAL_SCENARIO_PLOT_CFG.keys()),
+                   default="basic",
+                   dest="eval_scenario",
+                   help="Simulation scenario whose results to plot")
     args = p.parse_args()
 
+    # Namespace input and output by eval-scenario
+    effective_input_dir  = args.input_dir  / args.eval_scenario
+    effective_output_dir = args.output_dir / args.eval_scenario
+
     print(f"\n{'='*62}")
-    print(f"  Scenario   : {args.scenario}")
-    print(f"  Input dir  : {args.input_dir.resolve()}")
-    print(f"  Output dir : {args.output_dir.resolve()}")
+    print(f"  Scenario       : {args.scenario}")
+    print(f"  Eval scenario  : {args.eval_scenario}")
+    print(f"  Input dir      : {effective_input_dir.resolve()}")
+    print(f"  Output dir     : {effective_output_dir.resolve()}")
     print(f"{'='*62}\n")
 
     if args.scenario in ("tradeoff", "all"):
-        plot_tradeoff(args.input_dir, args.output_dir)
+        plot_tradeoff(effective_input_dir, effective_output_dir, args.eval_scenario)
     if args.scenario in ("degradation", "all"):
-        plot_degradation(args.input_dir, args.output_dir)
+        plot_degradation(effective_input_dir, effective_output_dir, args.eval_scenario)
     if args.scenario in ("failover", "all"):
-        plot_failover(args.input_dir, args.output_dir)
+        # Failover data is in the root input dir (not scenario-namespaced)
+        plot_failover(args.input_dir, effective_output_dir)
 
-    print(f"\nAll figures written to: {args.output_dir.resolve()}\n")
+    print(f"\nAll figures written to: {effective_output_dir.resolve()}\n")
 
 
 if __name__ == "__main__":

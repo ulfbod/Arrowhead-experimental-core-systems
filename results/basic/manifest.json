@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-03-30T19:55:50Z",
+  "base_seed": 1234,
+  "runs": 50,
+  "scenario": "all",
+  "eval_scenario": "basic",
+  "methods": [
+    "qos_aware",
+    "availability_based"
+  ],
+  "seed_schedule": "seed_i = 1234 + i   for i = 0 .. 49",
+  "reproducibility": "python scripts/experiments.py --seed 1234 --runs 50 --scenario all --eval-scenario basic",
+  "scenario_description": "Current evaluation: moderate QoS separation, two degradation episodes, 120 s simulation.",
+  "tradeoff_provider_A": {
+    "accuracy_range": [
+      0.88,
+      0.99
+    ],
+    "latency_ms_range": [
+      40.0,
+      80.0
+    ],
+    "reliability_range": [
+      0.9,
+      0.99
+    ]
+  },
+  "tradeoff_provider_B": {
+    "accuracy_range": [
+      0.5,
+      0.74
+    ],
+    "latency_ms_range": [
+      3.0,
+      15.0
+    ],
+    "reliability_range": [
+      0.68,
+      0.87
+    ]
+  },
+  "degradation_nominal_idt2a": {
+    "accuracy": 0.97,
+    "latency_ms": 20.0,
+    "reliability": 0.99
+  },
+  "degradation_nominal_idt2b": {
+    "accuracy": 0.75,
+    "latency_ms": 8.0,
+    "reliability": 0.91
+  },
+  "utility_weights_degradation": {
+    "accuracy": 0.4,
+    "latency": 0.3,
+    "reliability": 0.3
+  },
+  "episode_count": 2,
+  "utility_failover_threshold": 0.55,
+  "qos_switch_hysteresis": 0.06,
+  "availability_failover_threshold": 0.15,
+  "sim_duration_s": 120,
+  "recovery_duration_s": 10,
+  "degrade_rate_range": [
+    0.04,
+    0.15
+  ],
+  "max_latency_ms_normalization": 100.0
+}
