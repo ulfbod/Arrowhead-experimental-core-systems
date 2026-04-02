@@ -46,23 +46,24 @@ const SERVICE_DEFS: ServiceDef[] = [
   { id: 'scenario', label: 'Scenario Runner', type: 'core', port: 8700, stateUrl: 'http://localhost:8700/state', category: 'Orchestration' },
 ]
 
-// Service composition edges: consumer → provider
-const GRAPH_EDGES: [string, string, string][] = [
-  ['cdt1', 'idt1a', 'mapping'],
-  ['cdt1', 'idt1b', 'mapping'],
-  ['cdt2', 'idt2a', 'gas'],
-  ['cdt2', 'idt2b', 'gas'],
-  ['cdt3', 'idt2a', 'gas'],
-  ['cdt3', 'idt1a', 'scan'],
-  ['cdt4', 'idt3a', 'clear'],
-  ['cdt4', 'idt3b', 'clear'],
-  ['cdt5', 'idt4',  'intervene'],
-  ['cdta', 'cdt1',  'map'],
-  ['cdta', 'cdt3',  'hazard'],
-  ['cdta', 'cdt4',  'clear'],
-  ['cdta', 'cdt5',  'intervene'],
-  ['cdtb', 'cdt2',  'gas'],
-  ['cdtb', 'cdt3',  'hazard'],
+// Service composition edges: [consumer, provider, label, isFailover]
+// isFailover=true → dashed amber line showing reorchestration path to backup iDT
+const GRAPH_EDGES: [string, string, string, boolean][] = [
+  ['cdt1', 'idt1a', 'mapping',   false],
+  ['cdt1', 'idt1b', 'mapping',   true ],  // failover: cDT1 → Robot B
+  ['cdt2', 'idt2a', 'gas',       false],
+  ['cdt2', 'idt2b', 'gas',       true ],  // failover: cDT2 → Gas B
+  ['cdt3', 'idt2a', 'gas',       false],
+  ['cdt3', 'idt1a', 'scan',      false],
+  ['cdt4', 'idt3a', 'clear',     false],
+  ['cdt4', 'idt3b', 'clear',     true ],  // failover: cDT4 → LHD B
+  ['cdt5', 'idt4',  'intervene', false],
+  ['cdta', 'cdt1',  'map',       false],
+  ['cdta', 'cdt3',  'hazard',    false],
+  ['cdta', 'cdt4',  'clear',     false],
+  ['cdta', 'cdt5',  'intervene', false],
+  ['cdtb', 'cdt2',  'gas',       false],
+  ['cdtb', 'cdt3',  'hazard',    false],
 ]
 
 // ============================================================
@@ -315,9 +316,9 @@ const GRAPH_NODES: GraphNode[] = [
   { id: 'cdt3',  label: 'cDT3\nHazard',      type: 'cDT', cx: 340, cy: 305 },
   { id: 'cdt4',  label: 'cDT4\nClearance',   type: 'cDT', cx: 340, cy: 375 },
   { id: 'cdt5',  label: 'cDT5\nIntervene',   type: 'cDT', cx: 340, cy: 480 },
-  // Mission DTs (right column)
-  { id: 'cdta',  label: 'cDTa\nMission',     type: 'cDT', cx: 560, cy: 280 },
-  { id: 'cdtb',  label: 'cDTb\nSafe Access', type: 'cDT', cx: 560, cy: 390 },
+  // Upper cDTs (right column)
+  { id: 'cdta',  label: 'cDTa\nInsp.&Recov.', type: 'cDT', cx: 560, cy: 280 },
+  { id: 'cdtb',  label: 'cDTb\nHaz.&Access',  type: 'cDT', cx: 560, cy: 390 },
 ]
 
 const NODE_W = 90
@@ -329,63 +330,87 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
   return (
     <div className="graph-container" style={{ overflowX: 'auto' }}>
       <svg
-        viewBox="0 0 700 560"
+        viewBox="0 0 700 610"
         style={{ width: '100%', minWidth: 600, height: 'auto', display: 'block', padding: 16 }}
         xmlns="http://www.w3.org/2000/svg"
       >
+        {/* Explicit white background */}
+        <rect x="0" y="0" width="700" height="610" fill="#ffffff" />
+
         <defs>
           <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
             <path d="M0,0 L0,6 L8,3 z" fill="#94a3b8" />
           </marker>
           <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-            <path d="M0,0 L0,6 L8,3 z" fill="var(--blue)" />
+            <path d="M0,0 L0,6 L8,3 z" fill="#2563eb" />
           </marker>
           <marker id="arrow-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-            <path d="M0,0 L0,6 L8,3 z" fill="var(--purple)" />
+            <path d="M0,0 L0,6 L8,3 z" fill="#7c3aed" />
+          </marker>
+          <marker id="arrow-amber" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#d97706" />
           </marker>
         </defs>
 
         {/* Column labels */}
         {[
           { x: 120, label: 'Individual DTs (iDTs)' },
-          { x: 340, label: 'Composite DTs (cDTs)' },
-          { x: 560, label: 'Mission DTs' },
+          { x: 340, label: 'Lower Composite DTs (cDTs)' },
+          { x: 560, label: 'Upper Composite DTs (cDTs)' },
         ].map(col => (
           <text key={col.x} x={col.x} y={18} textAnchor="middle"
-            style={{ fill: 'var(--text-muted)', fontSize: 9, fontFamily: 'sans-serif', textTransform: 'uppercase', letterSpacing: 1 }}>
-            {col.label}
+            style={{ fill: '#334155', fontSize: 9, fontFamily: 'sans-serif', fontWeight: 700, letterSpacing: 1 }}>
+            {col.label.toUpperCase()}
           </text>
         ))}
 
-        {/* Edges */}
-        {GRAPH_EDGES.map(([fromId, toId, label], i) => {
-          const from = getNode(fromId)
-          const to   = getNode(toId)
-          if (!from || !to) return null
-          const x1 = from.cx + NODE_W / 2
-          const y1 = from.cy
-          const x2 = to.cx - NODE_W / 2
-          const y2 = to.cy
-          const mx = (x1 + x2) / 2
-          const isFromCDT = from.type === 'cDT'
-          const markerColor = isFromCDT ? 'url(#arrow-purple)' : 'url(#arrow-blue)'
-          const strokeColor = isFromCDT ? 'rgba(156,39,176,0.4)' : 'rgba(33,150,243,0.35)'
-          return (
-            <g key={i}>
-              <path
-                d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
-                fill="none"
-                stroke={strokeColor}
-                strokeWidth={1.5}
-                markerEnd={markerColor}
-              />
-              <text x={mx} y={(y1 + y2) / 2 - 3} textAnchor="middle"
-                style={{ fill: 'var(--text-muted)', fontSize: 7, fontFamily: 'sans-serif' }}>
-                {label}
-              </text>
-            </g>
-          )
-        })}
+        {/* Edges — draw failover (dashed) first so primary edges render on top */}
+        {[true, false].map(failoverPass =>
+          GRAPH_EDGES
+            .filter(([,,,isFailover]) => isFailover === failoverPass)
+            .map(([fromId, toId, label, isFailover], i) => {
+              const from = getNode(fromId)
+              const to   = getNode(toId)
+              if (!from || !to) return null
+              const x1 = from.cx + NODE_W / 2
+              const y1 = from.cy
+              const x2 = to.cx - NODE_W / 2
+              const y2 = to.cy
+              const mx = (x1 + x2) / 2
+              const isFromCDT = from.type === 'cDT'
+
+              const strokeColor = isFailover
+                ? '#d97706'
+                : isFromCDT ? 'rgba(124,58,237,0.55)' : 'rgba(37,99,235,0.5)'
+              const markerEnd = isFailover
+                ? 'url(#arrow-amber)'
+                : isFromCDT ? 'url(#arrow-purple)' : 'url(#arrow-blue)'
+              const strokeWidth = isFailover ? 1.3 : 1.6
+              const dashArray = isFailover ? '5,3' : undefined
+
+              return (
+                <g key={`${failoverPass ? 'fo' : 'pr'}-${i}`}>
+                  <path
+                    d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
+                    fill="none"
+                    stroke={strokeColor}
+                    strokeWidth={strokeWidth}
+                    strokeDasharray={dashArray}
+                    markerEnd={markerEnd}
+                  />
+                  <text x={mx} y={(y1 + y2) / 2 - 3} textAnchor="middle"
+                    style={{
+                      fill: isFailover ? '#b45309' : '#475569',
+                      fontSize: 7,
+                      fontFamily: 'sans-serif',
+                      fontStyle: isFailover ? 'italic' : 'normal',
+                    }}>
+                    {isFailover ? `↺ ${label}` : label}
+                  </text>
+                </g>
+              )
+            })
+        )}
 
         {/* Nodes */}
         {GRAPH_NODES.map(node => {
@@ -393,7 +418,7 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
           const status = rec ? (rec.online ? 'online' : 'offline') : 'offline'
           const fill = node.type === 'iDT' ? '#dbeafe' : node.type === 'cDT' ? '#ede9fe' : '#cffafe'
           const stroke = typeColor(node.type)
-          const dotColor = status === 'online' ? 'var(--green)' : status === 'offline' ? 'var(--red)' : 'var(--amber)'
+          const dotColor = status === 'online' ? '#16a34a' : '#dc2626'
           const lines = node.label.split('\n')
           return (
             <g key={node.id} className="graph-node">
@@ -417,10 +442,10 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
                   textAnchor="middle"
                   dominantBaseline="middle"
                   style={{
-                    fill: li === 0 ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    fill: li === 0 ? '#0f172a' : '#334155',
                     fontSize: li === 0 ? 9 : 8,
                     fontFamily: 'sans-serif',
-                    fontWeight: li === 0 ? 600 : 400,
+                    fontWeight: li === 0 ? 700 : 400,
                   }}
                 >
                   {line}
@@ -429,6 +454,37 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
             </g>
           )
         })}
+
+        {/* Legend */}
+        <g transform="translate(20, 566)">
+          <rect x="-8" y="-14" width="672" height="32" rx="5"
+            fill="#f8fafc" stroke="#e2e8f0" strokeWidth="1" />
+
+          {/* Primary edge */}
+          <line x1="4"  y1="2" x2="36" y2="2" stroke="rgba(37,99,235,0.5)"  strokeWidth="1.6" />
+          <polygon points="33,-1 33,5 39,2" fill="#2563eb" />
+          <text x="44" y="6"
+            style={{ fill: '#334155', fontSize: 8, fontFamily: 'sans-serif' }}>
+            Active service dependency
+          </text>
+
+          {/* Failover edge */}
+          <line x1="194" y1="2" x2="226" y2="2"
+            stroke="#d97706" strokeWidth="1.3" strokeDasharray="5,3" />
+          <polygon points="223,-1 223,5 229,2" fill="#d97706" />
+          <text x="234" y="6"
+            style={{ fill: '#334155', fontSize: 8, fontFamily: 'sans-serif' }}>
+            Failover reorchestration path (cDT switches to backup iDT)
+          </text>
+
+          {/* Status dots */}
+          <circle cx="520" cy="2" r="4" fill="#16a34a" />
+          <text x="528" y="6"
+            style={{ fill: '#334155', fontSize: 8, fontFamily: 'sans-serif' }}>Online</text>
+          <circle cx="572" cy="2" r="4" fill="#dc2626" />
+          <text x="580" y="6"
+            style={{ fill: '#334155', fontSize: 8, fontFamily: 'sans-serif' }}>Offline</text>
+        </g>
       </svg>
     </div>
   )
