@@ -101,7 +101,10 @@
       "Bash(.venv/bin/python scripts/experiments.py --runs 50 --seed 1234 --scenario all --eval-scenario improved01 --output-dir results/)",
       "Bash(.venv/bin/python scripts/plot.py --input-dir results/ --output-dir docs/figures/ --scenario all --eval-scenario basic)",
       "Bash(.venv/bin/python scripts/plot.py --input-dir results/ --output-dir docs/figures/ --scenario all --eval-scenario improved01)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(.venv/bin/python scripts/plot.py --eval-scenario stress01)",
+      "Bash(grep -rn \"#[ef][0-9a-fA-F]\\\\{5\\\\}\\\\|rgba.*,\\\\s*0\\\\.[0-3]\\\\s*\\)\" /home/uffe/projects/MineIO_paper/frontend/src/components --include=*.tsx)",
+      "Bash(grep -rn rgba /home/uffe/projects/MineIO_paper/frontend/src/components --include=*.tsx)"
     ]
   }
 }

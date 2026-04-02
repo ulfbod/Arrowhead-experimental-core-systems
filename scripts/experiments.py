@@ -37,7 +37,7 @@ except ImportError:
 # ── Shared constant ───────────────────────────────────────────────────────────
 
 MAX_LATENCY_MS = 100.0   # normalisation ceiling: latency above this contributes 0
-MAX_EPISODES   = 3       # maximum episode columns written to CSV (unused = empty string)
+MAX_EPISODES   = 4       # maximum episode columns written to CSV (unused = empty string)
 
 
 # ── Scenario configurations ───────────────────────────────────────────────────
@@ -88,6 +88,55 @@ SCENARIO_CONFIGS: dict = {
         "degrade_window":         ( 8.0, 14.0),   # onset → hard-fail duration
         "fail_window":            ( 6.0, 10.0),   # hard-fail → recovery-start duration
         "inter_episode_gap":      ( 6.0, 14.0),   # gap between recovery-end and next onset
+    },
+
+    # ── stress01 ──────────────────────────────────────────────────────────────
+    # Adversarial stress test: extreme provider contrast, four degradation
+    # episodes, very fast rates, low availability threshold, 300 s simulation.
+    # Designed to make the QoS-aware advantage unmistakably visible.
+    "stress01": {
+        "label": "stress01",
+        "description": (
+            "Stress test: extreme QoS separation, four alternating degradation "
+            "episodes, 300 s simulation, very aggressive degradation rates, "
+            "and a very strict availability baseline threshold (0.08)."
+        ),
+
+        # — Trade-off experiment ————————————————————————————————————————————
+        "alpha_steps": 21,
+        "prov_a_ranges": {          # Provider A: very accurate, very slow, very reliable
+            "accuracy":    (0.93, 0.99),
+            "latency_ms":  (65.0, 100.0),
+            "reliability": (0.93, 0.995),
+        },
+        "prov_b_ranges": {          # Provider B: very fast, much lower accuracy/reliability
+            "accuracy":    (0.28, 0.55),
+            "latency_ms":  (1.5,   7.0),
+            "reliability": (0.38,  0.65),
+        },
+
+        # — Degradation experiment ——————————————————————————————————————————
+        "sim_duration_s":         300,
+        "recovery_duration_s":     8,
+        "degrade_rate":           (0.08, 0.25),
+        "episode_count":           4,
+        "nominal_qos": {
+            # idt2a healthy utility at (0.55, 0.20, 0.25):
+            #   0.55*0.98 + 0.20*(1-14/100) + 0.25*0.998 = 0.539+0.172+0.250 = 0.961
+            # idt2b healthy utility at (0.55, 0.20, 0.25):
+            #   0.55*0.55 + 0.20*(1-4/100)  + 0.25*0.72  = 0.303+0.192+0.180 = 0.675
+            # Gap = 0.286 >> hysteresis=0.04 → switch-back is always triggered
+            "idt2a": {"accuracy": 0.98, "latency_ms": 14.0, "reliability": 0.998},
+            "idt2b": {"accuracy": 0.55, "latency_ms":  4.0, "reliability": 0.72},
+        },
+        "degrade_weights":         (0.55, 0.20, 0.25),
+        "utility_failover_threshold":       0.45,
+        "qos_switch_hysteresis":            0.04,   # very responsive switch-back
+        "availability_failover_threshold":  0.08,   # baseline almost never reacts in time
+        "onset_range":            (10.0, 20.0),
+        "degrade_window":         ( 6.0, 12.0),
+        "fail_window":            (10.0, 20.0),    # long hard-fail windows
+        "inter_episode_gap":      ( 5.0, 12.0),
     },
 
     # ── improved01 ────────────────────────────────────────────────────────────
@@ -569,7 +618,7 @@ def _parse_args() -> argparse.Namespace:
                    default="all",
                    help="Which experiment type(s) to run")
     p.add_argument("--eval-scenario",
-                   choices=list(SCENARIO_CONFIGS.keys()),
+                   choices=sorted(SCENARIO_CONFIGS.keys()),
                    default="basic",
                    dest="eval_scenario",
                    help="Simulation scenario / parameter set to use")

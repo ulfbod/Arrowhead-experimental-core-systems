@@ -69,11 +69,6 @@ const GRAPH_EDGES: [string, string, string][] = [
 // Utility helpers
 // ============================================================
 
-function statusColor(status: string): string {
-  if (status === 'online' || status === 'nominal' || status === 'idle' || status === 'standby') return 'var(--green)'
-  if (status === 'offline') return 'var(--red)'
-  return 'var(--amber)'
-}
 
 function badgeClass(status: string): string {
   if (status === 'online' || status === 'nominal') return 'badge-online'
@@ -136,10 +131,9 @@ interface ServiceCardProps {
 }
 
 // Per-service telemetry cards need their own poll
-const RobotCard: React.FC<{ url: string; label: string }> = ({ url, label }) => {
+const RobotCard: React.FC<{ url: string; label: string }> = ({ url }) => {
   const { data } = usePolling<RobotState>(url, 3000)
   if (!data) return null
-  const pct = (v: number, max: number) => Math.round((v / max) * 100)
   return (
     <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div className="metric-bar-container" style={{ marginBottom: 0 }}>
@@ -397,7 +391,7 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
         {GRAPH_NODES.map(node => {
           const rec = serviceMap.get(node.id)
           const status = rec ? (rec.online ? 'online' : 'offline') : 'offline'
-          const fill = node.type === 'iDT' ? '#eff6ff' : node.type === 'cDT' ? '#f5f3ff' : '#f0f9ff'
+          const fill = node.type === 'iDT' ? '#dbeafe' : node.type === 'cDT' ? '#ede9fe' : '#cffafe'
           const stroke = typeColor(node.type)
           const dotColor = status === 'online' ? 'var(--green)' : status === 'offline' ? 'var(--red)' : 'var(--amber)'
           const lines = node.label.split('\n')
@@ -652,7 +646,7 @@ const SystemView: React.FC = () => {
                         </span>
                       </td>
                       <td style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-                        {log.reason ?? '—'}
+                        {log.message ?? '—'}
                       </td>
                     </tr>
                   ))

@@ -16,15 +16,15 @@ export class ErrorBoundary extends React.Component<Props, State> {
         <div style={{
           margin: 24,
           padding: 20,
-          background: 'rgba(244,67,54,0.08)',
-          border: '1px solid var(--red)',
+          background: '#fee2e2',
+          border: '1px solid #fca5a5',
           borderRadius: 8,
-          color: 'var(--red-light)',
+          color: '#991b1b',
         }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>
             {this.props.name ?? 'Component'} crashed
           </div>
-          <pre style={{ fontSize: '0.75rem', whiteSpace: 'pre-wrap', color: 'var(--text-muted)' }}>
+          <pre style={{ fontSize: '0.75rem', whiteSpace: 'pre-wrap', color: '#7f1d1d' }}>
             {this.state.error.message}
           </pre>
           <button

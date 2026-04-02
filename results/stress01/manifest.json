@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-04-02T12:29:17Z",
+  "base_seed": 1234,
+  "runs": 50,
+  "scenario": "all",
+  "eval_scenario": "stress01",
+  "methods": [
+    "qos_aware",
+    "availability_based"
+  ],
+  "seed_schedule": "seed_i = 1234 + i   for i = 0 .. 49",
+  "reproducibility": "python scripts/experiments.py --seed 1234 --runs 50 --scenario all --eval-scenario stress01",
+  "scenario_description": "Stress test: extreme QoS separation, four alternating degradation episodes, 300 s simulation, very aggressive degradation rates, and a very strict availability baseline threshold (0.08).",
+  "tradeoff_provider_A": {
+    "accuracy_range": [
+      0.93,
+      0.99
+    ],
+    "latency_ms_range": [
+      65.0,
+      100.0
+    ],
+    "reliability_range": [
+      0.93,
+      0.995
+    ]
+  },
+  "tradeoff_provider_B": {
+    "accuracy_range": [
+      0.28,
+      0.55
+    ],
+    "latency_ms_range": [
+      1.5,
+      7.0
+    ],
+    "reliability_range": [
+      0.38,
+      0.65
+    ]
+  },
+  "degradation_nominal_idt2a": {
+    "accuracy": 0.98,
+    "latency_ms": 14.0,
+    "reliability": 0.998
+  },
+  "degradation_nominal_idt2b": {
+    "accuracy": 0.55,
+    "latency_ms": 4.0,
+    "reliability": 0.72
+  },
+  "utility_weights_degradation": {
+    "accuracy": 0.55,
+    "latency": 0.2,
+    "reliability": 0.25
+  },
+  "episode_count": 4,
+  "utility_failover_threshold": 0.45,
+  "qos_switch_hysteresis": 0.04,
+  "availability_failover_threshold": 0.08,
+  "sim_duration_s": 300,
+  "recovery_duration_s": 8,
+  "degrade_rate_range": [
+    0.08,
+    0.25
+  ],
+  "max_latency_ms_normalization": 100.0
+}

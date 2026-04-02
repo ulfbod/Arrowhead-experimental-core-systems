@@ -3,16 +3,55 @@ import SystemView from './components/SystemView'
 import CDTaView from './components/CDTaView'
 import CDTbView from './components/CDTbView'
 import QoSView from './components/QoSView'
+import SimulationView from './components/SimulationView'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import usePolling from './hooks/usePolling'
-import { urls, startScenario, resetScenario, injectHazard, triggerGasSpike, clearAll } from './api'
+import { urls, startScenario, resetScenario, injectHazard, triggerGasSpike, clearAll, startMission } from './api'
 import type { ScenarioStatus } from './types'
 
-type Tab = 'system' | 'cdta' | 'cdtb' | 'qos'
+type Tab = 'system' | 'cdta' | 'cdtb' | 'qos' | 'simulation'
+type DemoScenario = 'inspection' | 'hazard' | 'emergency'
+
+const DEMO_SCENARIOS: Record<DemoScenario, { label: string; description: string; steps: string[] }> = {
+  inspection: {
+    label: 'Inspection & Recovery',
+    description: 'A robot performs periodic tunnel inspections. The cDTa digital twin tracks robot state and triggers recovery if the robot stalls or loses connectivity.',
+    steps: [
+      'System starts and robot begins patrol route',
+      'Robot encounters obstacle — stall detected by cDTa',
+      'cDTa issues recovery command; robot resumes patrol',
+      'Inspection data logged to system view',
+    ],
+  },
+  hazard: {
+    label: 'Hazard Detection',
+    description: 'A gas sensor spike triggers an alert. The cDTb digital twin monitors environmental conditions and escalates to an alarm when thresholds are exceeded.',
+    steps: [
+      'Environmental sensors stream baseline readings',
+      'Gas concentration rises above warning threshold',
+      'cDTb raises a hazard alert — alarm activates',
+      'Readings return to normal; alert clears automatically',
+    ],
+  },
+  emergency: {
+    label: 'Emergency (Combined)',
+    description: 'Simultaneously injects a robot hazard and a gas spike to demonstrate the system\'s ability to handle concurrent incidents across both digital twins.',
+    steps: [
+      'Robot is on patrol; sensors show nominal readings',
+      'Robot stall and gas spike are triggered at the same time',
+      'cDTa and cDTb both raise independent alerts',
+      'System state shows concurrent failure modes',
+      'Both conditions clear after recovery commands',
+    ],
+  },
+}
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('system')
   const [scenarioLoading, setScenarioLoading] = useState<string | null>(null)
+  const [demoScenario, setDemoScenario] = useState<DemoScenario>('inspection')
+  const [simSpeed, setSimSpeed] = useState<number>(2)
+  const [showScenarioDesc, setShowScenarioDesc] = useState<boolean>(true)
 
   const { data: scenario } = usePolling<ScenarioStatus>(urls.scenario, 3000)
 
@@ -29,6 +68,24 @@ const App: React.FC = () => {
     },
     []
   )
+
+  const startDemoScenario = useCallback(async () => {
+    if (demoScenario === 'emergency') {
+      setScenarioLoading('start')
+      try {
+        await Promise.all([injectHazard(), triggerGasSpike()])
+      } catch (_e) {
+        // swallow
+      } finally {
+        setScenarioLoading(null)
+      }
+    } else if (demoScenario === 'hazard') {
+      runAction('start', triggerGasSpike)
+    } else {
+      // inspection: start the robot mission via cDTa
+      runAction('start', () => Promise.all([startScenario(), startMission()]).then(() => undefined))
+    }
+  }, [demoScenario, runAction])
 
   const scenarioStateColor =
     scenario?.phase === 'running'   ? 'var(--green)' :
@@ -93,15 +150,79 @@ const App: React.FC = () => {
           </span>
         </div>
 
+        {/* Demo scenario selector */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Demo:
+          </span>
+          <select
+            value={demoScenario}
+            onChange={e => setDemoScenario(e.target.value as DemoScenario)}
+            style={{
+              fontSize: '0.78rem',
+              padding: '4px 8px',
+              borderRadius: '6px',
+              border: '1px solid var(--border)',
+              background: 'var(--bg-elevated)',
+              color: 'var(--text-primary)',
+              cursor: 'pointer',
+            }}
+          >
+            {(Object.keys(DEMO_SCENARIOS) as DemoScenario[]).map(k => (
+              <option key={k} value={k}>{DEMO_SCENARIOS[k].label}</option>
+            ))}
+          </select>
+          <button
+            title="Toggle scenario description"
+            onClick={() => setShowScenarioDesc(v => !v)}
+            style={{
+              fontSize: '0.72rem',
+              padding: '3px 7px',
+              borderRadius: '6px',
+              border: '1px solid var(--border)',
+              background: showScenarioDesc ? 'var(--blue)' : 'var(--bg-elevated)',
+              color: showScenarioDesc ? '#fff' : 'var(--text-secondary)',
+              cursor: 'pointer',
+            }}
+          >
+            ?
+          </button>
+        </div>
+
+        {/* Speed controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Speed:
+          </span>
+          {([1, 2, 5, 10] as number[]).map(s => (
+            <button
+              key={s}
+              onClick={() => setSimSpeed(s)}
+              style={{
+                fontSize: '0.72rem',
+                padding: '3px 8px',
+                borderRadius: '5px',
+                border: '1px solid var(--border)',
+                background: simSpeed === s ? 'var(--blue)' : 'var(--bg-elevated)',
+                color: simSpeed === s ? '#fff' : 'var(--text-secondary)',
+                cursor: 'pointer',
+                fontWeight: simSpeed === s ? 600 : 400,
+              }}
+            >
+              {s}×
+            </button>
+          ))}
+        </div>
+
         {/* Scenario action buttons */}
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button
             className="btn btn-success btn-sm"
             disabled={!!scenarioLoading || scenario?.phase === 'running'}
-            onClick={() => runAction('start', startScenario)}
+            onClick={startDemoScenario}
           >
             {scenarioLoading === 'start' ? <span className="loading-spinner" /> : null}
-            Start Scenario
+            {demoScenario === 'emergency' ? 'Trigger Emergency' : 'Start Scenario'}
           </button>
 
           <button
@@ -153,6 +274,39 @@ const App: React.FC = () => {
       </header>
 
       {/* ====================================================
+          DEMO SCENARIO DESCRIPTION BANNER
+          ==================================================== */}
+      {showScenarioDesc && (
+        <div className="scenario-banner">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: '0.82rem', marginBottom: 4, color: 'var(--text-primary)' }}>
+                Demo: {DEMO_SCENARIOS[demoScenario].label}
+              </div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
+                {DEMO_SCENARIOS[demoScenario].description}
+              </div>
+              <ol style={{ margin: 0, paddingLeft: '1.4em', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
+                {DEMO_SCENARIOS[demoScenario].steps.map((s, i) => (
+                  <li key={i} style={{ marginBottom: 2 }}>{s}</li>
+                ))}
+              </ol>
+            </div>
+            <button
+              onClick={() => setShowScenarioDesc(false)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--text-muted)', fontSize: '1rem', padding: '0 4px', lineHeight: 1,
+              }}
+              title="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================
           TAB NAV
           ==================================================== */}
       <div
@@ -165,10 +319,11 @@ const App: React.FC = () => {
         }}
       >
         {([
-          { id: 'system', label: 'System View' },
-          { id: 'cdta',   label: 'cDTa: Inspection & Recovery' },
-          { id: 'cdtb',   label: 'cDTb: Hazard Monitoring' },
-          { id: 'qos',    label: 'QoS & Failover' },
+          { id: 'system',     label: 'System View' },
+          { id: 'cdta',       label: 'cDTa: Inspection & Recovery' },
+          { id: 'cdtb',       label: 'cDTb: Hazard Monitoring' },
+          { id: 'qos',        label: 'QoS & Failover' },
+          { id: 'simulation', label: 'Simulation' },
         ] as { id: Tab; label: string }[]).map(tab => (
           <button
             key={tab.id}
@@ -208,6 +363,9 @@ const App: React.FC = () => {
         </ErrorBoundary>
         <ErrorBoundary name="QoS View">
           {activeTab === 'qos' && <QoSView />}
+        </ErrorBoundary>
+        <ErrorBoundary name="Simulation View">
+          {activeTab === 'simulation' && <SimulationView simSpeed={simSpeed} />}
         </ErrorBoundary>
       </main>
 

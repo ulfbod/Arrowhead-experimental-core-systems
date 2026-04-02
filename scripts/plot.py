@@ -62,6 +62,11 @@ EVAL_SCENARIO_PLOT_CFG: dict = {
         "sim_duration_s": 200,
         "episode_count":  3,
     },
+    "stress01": {
+        "label":          "Stress test (extreme separation, 4 episodes)",
+        "sim_duration_s": 300,
+        "episode_count":  4,
+    },
 }
 
 
@@ -131,7 +136,7 @@ def _shade_degrade_windows(ax, rows: list, alpha_fill: float = 0.18) -> None:
     """
     if not rows:
         return
-    for ep_n in range(1, 4):   # up to 3 episodes
+    for ep_n in range(1, 5):   # up to 4 episodes (MAX_EPISODES in experiments.py)
         key_onset = f"onset{ep_n}_s"
         key_fail  = f"fail{ep_n}_s"
         if key_onset not in rows[0]:
@@ -466,7 +471,7 @@ def main() -> None:
                    default="all",
                    help="Which set of plots to generate")
     p.add_argument("--eval-scenario",
-                   choices=list(EVAL_SCENARIO_PLOT_CFG.keys()),
+                   choices=sorted(EVAL_SCENARIO_PLOT_CFG.keys()),
                    default="basic",
                    dest="eval_scenario",
                    help="Simulation scenario whose results to plot")

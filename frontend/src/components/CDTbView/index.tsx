@@ -29,7 +29,7 @@ const SafeHero: React.FC<{ decision: SafeAccessDecision }> = ({ decision }) => {
   const color = safe ? 'var(--green)' : 'var(--red)'
   return (
     <div className="card" style={{
-      background: safe ? 'rgba(76,175,80,0.07)' : 'rgba(244,67,54,0.07)',
+      background: safe ? '#dcfce7' : '#fee2e2',
       border: `1px solid ${color}`,
       padding: 24,
     }}>
@@ -117,12 +117,12 @@ const GasChart: React.FC<{ decision: SafeAccessDecision }> = ({ decision }) => {
   const gasKeys = ['ch4', 'co', 'co2', 'o2', 'no2'] as const
   const data = gasKeys.map(k => ({
     name: GAS_LABELS[k],
-    value: Number(((levels as Record<string, number>)[k] ?? 0).toFixed(2)),
+    value: Number(((levels as unknown as Record<string, number>)[k] ?? 0).toFixed(2)),
     threshold: GAS_THRESHOLDS[k],
     unit: GAS_UNITS[k],
     over: k !== 'o2'
-      ? (levels as Record<string, number>)[k] > GAS_THRESHOLDS[k]
-      : (levels as Record<string, number>)[k] < GAS_THRESHOLDS[k],
+      ? (levels as unknown as Record<string, number>)[k] > GAS_THRESHOLDS[k]
+      : (levels as unknown as Record<string, number>)[k] < GAS_THRESHOLDS[k],
   }))
 
   return (
@@ -158,9 +158,9 @@ const GasChart: React.FC<{ decision: SafeAccessDecision }> = ({ decision }) => {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
         {data.map(d => (
           <div key={d.name} style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: 4,
-            background: d.over ? 'rgba(244,67,54,0.1)' : 'rgba(33,150,243,0.1)',
-            color: d.over ? 'var(--red)' : 'var(--blue-light)',
-            border: `1px solid ${d.over ? 'var(--red)' : 'transparent'}`,
+            background: d.over ? '#fee2e2' : '#dbeafe',
+            color: d.over ? '#991b1b' : '#1d4ed8',
+            border: `1px solid ${d.over ? '#fca5a5' : '#93c5fd'}`,
           }}>
             {d.name}: <strong>{d.value}</strong> {d.unit}
           </div>
@@ -258,7 +258,7 @@ const GateControls: React.FC<{ decision: SafeAccessDecision; onRefresh: () => vo
         </button>
       </div>
       {!decision.safe && (
-        <div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(244,67,54,0.08)', borderRadius: 6, fontSize: '0.78rem', color: 'var(--red-light)', border: '1px solid rgba(244,67,54,0.25)' }}>
+        <div style={{ marginTop: 10, padding: '8px 12px', background: '#fee2e2', borderRadius: 6, fontSize: '0.78rem', color: '#991b1b', border: '1px solid #fca5a5' }}>
           ⚠ Conditions unsafe — opening gate is not recommended
         </div>
       )}
