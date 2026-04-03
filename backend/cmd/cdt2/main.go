@@ -383,31 +383,33 @@ func (s *CDT2Service) handleProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBenchmarkDecision measures local vs. central failover decision time.
-// Body: {"networkDelayMs": 20}
-// Returns: {"localDecisionMs": 0.05, "centralDecisionMs": 40.2, "networkDelayMs": 20}
+// Body: {"networkDelayMs": 20, "processingDelayMs": 4}
+// Returns: {"localDecisionMs": 0.05, "centralDecisionMs": 40.2, "networkDelayMs": 20, "processingDelayMs": 4}
 func (s *CDT2Service) handleBenchmarkDecision(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		common.WriteError(w, 405, "POST required")
 		return
 	}
 	var body struct {
-		NetworkDelayMs int `json:"networkDelayMs"`
+		NetworkDelayMs    int `json:"networkDelayMs"`
+		ProcessingDelayMs int `json:"processingDelayMs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		common.WriteError(w, 400, "invalid JSON")
 		return
 	}
-	localMs, centralMs := s.ps.BenchmarkDecision(body.NetworkDelayMs)
+	localMs, centralMs := s.ps.BenchmarkDecision(body.NetworkDelayMs, body.ProcessingDelayMs)
 	common.WriteJSON(w, 200, map[string]interface{}{
 		"localDecisionMs":   localMs,
 		"centralDecisionMs": centralMs,
 		"networkDelayMs":    body.NetworkDelayMs,
+		"processingDelayMs": body.ProcessingDelayMs,
 	})
 }
 
-// handleConfig sets the process-local network delay and orchestration mode.
+// handleConfig sets the process-local network delay, orchestration mode, and processing delay.
 // Called by the scenario runner to synchronise experiment config into this process.
-// Body: {"networkDelayMs": 20, "orchestrationMode": "central"}
+// Body: {"networkDelayMs": 20, "orchestrationMode": "central", "processingDelayMs": 4}
 func (s *CDT2Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		common.WriteError(w, 405, "POST required")
@@ -416,6 +418,7 @@ func (s *CDT2Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		NetworkDelayMs    int    `json:"networkDelayMs"`
 		OrchestrationMode string `json:"orchestrationMode"`
+		ProcessingDelayMs int    `json:"processingDelayMs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		common.WriteError(w, 400, "invalid JSON")
@@ -425,8 +428,12 @@ func (s *CDT2Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if body.OrchestrationMode != "" {
 		common.SetOrchestrationMode(body.OrchestrationMode)
 	}
+	if body.ProcessingDelayMs >= 0 {
+		common.SetProcessingDelayMs(body.ProcessingDelayMs)
+	}
 	common.WriteJSON(w, 200, map[string]interface{}{
 		"networkDelayMs":    body.NetworkDelayMs,
+		"processingDelayMs": body.ProcessingDelayMs,
 		"orchestrationMode": common.GetOrchestrationMode(),
 	})
 }

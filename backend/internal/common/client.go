@@ -34,6 +34,24 @@ func GetNetworkDelayMs() int {
 	return int(atomic.LoadInt64(&globalNetworkDelayMs))
 }
 
+// globalProcessingDelayMs is an artificial per-node processing delay (ms).
+// For local failover, 1× is added (cDT only). For central, 2× is added (cDT + Arrowhead).
+var globalProcessingDelayMs int64 // atomic
+
+// SetProcessingDelayMs configures the simulated per-node processing time.
+func SetProcessingDelayMs(ms int) {
+	if ms < 0 {
+		ms = 0
+	}
+	atomic.StoreInt64(&globalProcessingDelayMs, int64(ms))
+	log.Printf("[common] Processing delay set to %dms", ms)
+}
+
+// GetProcessingDelayMs returns the current simulated processing delay in ms.
+func GetProcessingDelayMs() int {
+	return int(atomic.LoadInt64(&globalProcessingDelayMs))
+}
+
 // globalOrchMode controls how cDTs handle failover: "local" or "central".
 // "local"   – fallback provider is pre-configured; switch is immediate.
 // "central" – failing cDT asks the Arrowhead orchestrator for a new provider.

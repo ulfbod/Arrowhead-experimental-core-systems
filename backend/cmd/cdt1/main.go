@@ -183,7 +183,7 @@ func (s *CDT1Service) fetchRobotStates() {
 
 	s.mapping = common.MappingResult{
 		TotalAreaSqm:   5000,
-		CoveredAreaSqm: totalArea,
+		CoveredAreaSqm: avgCoverage / 100.0 * 5000.0, // consistent with displayed percentage
 		CoveragePct:    avgCoverage,
 		ActiveRobots:   active,
 		Map:            generateMap(int(avgCoverage)),

@@ -14,13 +14,14 @@ import (
 )
 
 type RobotService struct {
-	mu          sync.RWMutex
-	state       common.RobotState
-	ah          *common.ArrowheadClient
-	simFail     bool    // returns 503 on /state
-	degraded    bool    // slows SLAM rate, adds latency
-	slamSlowPct float64 // fraction of normal SLAM speed when degraded (default 0.3)
-	latencyMs   int     // extra response delay when degraded
+	mu                sync.RWMutex
+	state             common.RobotState
+	ah                *common.ArrowheadClient
+	simFail           bool    // returns 503 on /state
+	degraded          bool    // slows SLAM rate, adds latency
+	slamSlowPct       float64 // fraction of normal SLAM speed when degraded (default 0.3)
+	latencyMs         int     // extra response delay when degraded
+	slamRatePctPerSec float64 // % per second; default 0.05
 }
 
 func main() {
@@ -33,8 +34,9 @@ func main() {
 	log.Printf("[%s] Starting %s on :%s", id, name, port)
 
 	svc := &RobotService{
-		ah:          common.NewArrowheadClient(ahURL, id),
-		slamSlowPct: 0.3,
+		ah:                common.NewArrowheadClient(ahURL, id),
+		slamSlowPct:       0.3,
+		slamRatePctPerSec: 0.05,
 		state: common.RobotState{
 			ID:               id,
 			Name:             name,
@@ -81,6 +83,7 @@ func main() {
 	mux.HandleFunc("/hazard/inject", svc.handleHazardInject)
 	mux.HandleFunc("/hazard/clear", svc.handleHazardClear)
 	mux.HandleFunc("/simulate/reset", svc.handleSimulateReset)
+	mux.HandleFunc("/simulate/slam-rate", svc.handleSimulateSlamRate)
 	mux.HandleFunc("/simulate/fail", svc.handleSimulateFail)
 	mux.HandleFunc("/simulate/degrade", svc.handleSimulateDegrade)
 	mux.HandleFunc("/simulate/recover", svc.handleSimulateRecover)
@@ -110,9 +113,9 @@ func (s *RobotService) simulate() {
 			}
 			// SLAM / mapping progress (slowed when degraded)
 			if s.state.SlamActive && s.state.MappingProgress < 100 {
-				rate := 0.05
+				rate := s.slamRatePctPerSec
 				if s.degraded {
-					rate = 0.05 * s.slamSlowPct
+					rate = s.slamRatePctPerSec * s.slamSlowPct
 				}
 				s.state.MappingProgress = math.Min(100, s.state.MappingProgress+rate)
 				s.state.AreaCoveredSqm = s.state.MappingProgress * 50
@@ -338,6 +341,29 @@ func (s *RobotService) handleSimulateReset(w http.ResponseWriter, r *http.Reques
 	s.mu.Unlock()
 	log.Printf("[%s] State reset to initial values.", id)
 	common.WriteJSON(w, 200, map[string]string{"status": "reset"})
+}
+
+// handleSimulateSlamRate sets the SLAM rate so that 100% coverage is reached in durationSec seconds.
+// Body: {"durationSec": 30}
+func (s *RobotService) handleSimulateSlamRate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	var body struct {
+		DurationSec float64 `json:"durationSec"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.DurationSec <= 0 {
+		body.DurationSec = 30
+	}
+	rate := 100.0 / body.DurationSec
+	s.mu.Lock()
+	s.slamRatePctPerSec = rate
+	id := s.state.ID
+	s.mu.Unlock()
+	log.Printf("[%s] SLAM rate set to %.4f%%/s (100%% in %.0fs)", id, rate, body.DurationSec)
+	common.WriteJSON(w, 200, map[string]interface{}{"status": "ok", "slamRatePctPerSec": rate, "durationSec": body.DurationSec})
 }
 
 func (s *RobotService) handleSimulateFail(w http.ResponseWriter, r *http.Request) {

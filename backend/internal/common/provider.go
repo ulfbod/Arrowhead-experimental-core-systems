@@ -455,21 +455,29 @@ func (ps *ProviderSelector) MarkRecovered(providerID string) {
 //
 // Returns (localMs, centralMs). Both measurements are taken in isolation so they do
 // not interfere with each other or with the normal Do() path.
-func (ps *ProviderSelector) BenchmarkDecision(networkDelayMs int) (localMs, centralMs float64) {
+func (ps *ProviderSelector) BenchmarkDecision(networkDelayMs, processingDelayMs int) (localMs, centralMs float64) {
 	ps.mu.Lock()
 	current := ps.activeIdx
 	ps.mu.Unlock()
 
-	// ── Local: pre-configured list lookup ───────────────────────────────────
+	// ── Local: pre-configured list lookup + cDT processing ──────────────────
 	t0 := time.Now()
 	ps.findFallback(current)
+	// Processing time: only the affected cDT is involved in local failover.
+	if processingDelayMs > 0 {
+		time.Sleep(time.Duration(processingDelayMs) * time.Millisecond)
+	}
 	localMs = float64(time.Since(t0)) / float64(time.Millisecond)
 
-	// ── Central: Arrowhead round-trip ────────────────────────────────────────
+	// ── Central: Arrowhead round-trip + cDT & Arrowhead processing ──────────
 	t1 := time.Now()
+	// Network: 2× one-way delay (request + response).
 	if networkDelayMs > 0 {
-		// 2× because the request travels to Arrowhead AND the response travels back.
 		time.Sleep(2 * time.Duration(networkDelayMs) * time.Millisecond)
+	}
+	// Processing: cDT processing + Arrowhead processing = 2× processingDelayMs.
+	if processingDelayMs > 0 {
+		time.Sleep(2 * time.Duration(processingDelayMs) * time.Millisecond)
 	}
 	if ps.ah != nil {
 		ps.ah.Discover(ps.capability) // result ignored; we measure the time, not the outcome

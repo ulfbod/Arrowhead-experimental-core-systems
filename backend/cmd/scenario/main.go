@@ -105,15 +105,16 @@ type ExperimentSummary struct {
 // ---- Service ----------------------------------------------------------------------
 
 type ScenarioService struct {
-	mu              sync.RWMutex
-	state           ScenarioState
-	urls            serviceURLs
-	id              string
-	ah              *common.ArrowheadClient
-	logDir          string
-	expMu           sync.Mutex
-	expResults      *ExperimentResults
-	expRunning      bool
+	mu                sync.RWMutex
+	state             ScenarioState
+	urls              serviceURLs
+	id                string
+	ah                *common.ArrowheadClient
+	logDir            string
+	expMu             sync.Mutex
+	expResults        *ExperimentResults
+	expRunning        bool
+	processingDelayMs int // guarded by s.mu
 }
 
 func main() {
@@ -186,6 +187,9 @@ func main() {
 	// QoS experiment control
 	router.Handle("/scenario/config", svc.handleConfig)
 	router.Handle("/scenario/network-delay", svc.handleNetworkDelay)
+	router.Handle("/scenario/processing-delay", svc.handleProcessingDelay)
+	router.Handle("/scenario/mapping-speed", svc.handleMappingSpeed)
+	router.Handle("/scenario/clearance-speed", svc.handleClearanceSpeed)
 	router.Handle("/scenario/experiment/run", svc.handleExperimentRun)
 	router.Handle("/scenario/experiment/results", svc.handleExperimentResults)
 
@@ -472,8 +476,12 @@ func (s *ScenarioService) runBenchmark(netDelay int, run int) (localRun, central
 		LocalDecisionMs   float64 `json:"localDecisionMs"`
 		CentralDecisionMs float64 `json:"centralDecisionMs"`
 	}
+	s.mu.RLock()
+	procDelay := s.processingDelayMs
+	s.mu.RUnlock()
+
 	err := common.DoRequest("POST", s.urls.CDT2+"/benchmark-decision", "", s.id,
-		map[string]int{"networkDelayMs": netDelay}, &resp)
+		map[string]int{"networkDelayMs": netDelay, "processingDelayMs": procDelay}, &resp)
 	if err != nil {
 		localRun.Error = fmt.Sprintf("benchmark: %v", err)
 		centralRun.Error = localRun.Error
@@ -1024,6 +1032,106 @@ func (s *ScenarioService) handleNetworkDelay(w http.ResponseWriter, r *http.Requ
 	common.SetNetworkDelayMs(ms)
 	s.logProgress(fmt.Sprintf("Network delay set to %dms.", ms))
 	common.WriteJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "networkDelayMs": ms})
+}
+
+// handleProcessingDelay sets the simulated per-node processing time.
+// POST /scenario/processing-delay?ms=4
+// Also accepts JSON body: {"ms":4}
+func (s *ScenarioService) handleProcessingDelay(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+
+	msStr := r.URL.Query().Get("ms")
+	ms := 0
+	if msStr != "" {
+		fmt.Sscanf(msStr, "%d", &ms)
+	} else {
+		var body struct {
+			Ms int `json:"ms"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		ms = body.Ms
+	}
+	if ms < 0 {
+		ms = 0
+	}
+	if ms > 10 {
+		ms = 10
+	}
+
+	s.mu.Lock()
+	s.processingDelayMs = ms
+	s.mu.Unlock()
+
+	common.SetProcessingDelayMs(ms)
+	s.logProgress(fmt.Sprintf("Processing delay set to %dms.", ms))
+	common.WriteJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "processingDelayMs": ms})
+}
+
+// handleMappingSpeed broadcasts a SLAM rate to all inspection robots (iDT1a, iDT1b).
+// POST /scenario/mapping-speed
+// Body: {"durationSec": 30}
+func (s *ScenarioService) handleMappingSpeed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var body struct {
+		DurationSec float64 `json:"durationSec"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.DurationSec <= 0 {
+		body.DurationSec = 30
+	}
+	payload := map[string]float64{"durationSec": body.DurationSec}
+	var errs []string
+	for _, url := range []string{s.urls.IDT1a, s.urls.IDT1b} {
+		if err := s.post(url+"/simulate/slam-rate", payload); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		s.logProgress(fmt.Sprintf("mapping-speed: partial errors: %v", errs))
+	}
+	s.logProgress(fmt.Sprintf("Mapping speed set: 100%% in %.0fs (rate=%.4f%%/s).", body.DurationSec, 100.0/body.DurationSec))
+	common.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "ok", "durationSec": body.DurationSec,
+		"targets": []string{"idt1a", "idt1b"},
+	})
+}
+
+// handleClearanceSpeed broadcasts a clearance rate to all LHD vehicles (iDT3a, iDT3b).
+// POST /scenario/clearance-speed
+// Body: {"durationSec": 30}
+func (s *ScenarioService) handleClearanceSpeed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var body struct {
+		DurationSec float64 `json:"durationSec"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.DurationSec <= 0 {
+		body.DurationSec = 30
+	}
+	payload := map[string]float64{"durationSec": body.DurationSec}
+	var errs []string
+	for _, url := range []string{s.urls.IDT3a, s.urls.IDT3b} {
+		if err := s.post(url+"/simulate/clearance-rate", payload); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		s.logProgress(fmt.Sprintf("clearance-speed: partial errors: %v", errs))
+	}
+	s.logProgress(fmt.Sprintf("Clearance speed set: 100%% in %.0fs (rate=%.4f%%/s).", body.DurationSec, 100.0/body.DurationSec))
+	common.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "ok", "durationSec": body.DurationSec,
+		"targets": []string{"idt3a", "idt3b"},
+	})
 }
 
 // handleExperimentRun launches the full failover delay experiment asynchronously.

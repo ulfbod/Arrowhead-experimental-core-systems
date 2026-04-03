@@ -6,42 +6,47 @@ import QoSView from './components/QoSView'
 import SimulationView from './components/SimulationView'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import usePolling from './hooks/usePolling'
-import { urls, startScenario, resetScenario, injectHazard, triggerGasSpike, clearAll, startMission } from './api'
+import { urls, startScenario, resetScenario, injectHazard, triggerGasSpike, clearAll } from './api'
 import type { ScenarioStatus } from './types'
 
 type Tab = 'system' | 'cdta' | 'cdtb' | 'qos' | 'simulation'
 type DemoScenario = 'inspection' | 'hazard' | 'emergency'
 
-const DEMO_SCENARIOS: Record<DemoScenario, { label: string; description: string; steps: string[] }> = {
+const DEMO_SCENARIOS: Record<DemoScenario, { label: string; description: string; steps: string[]; focusTab: Tab }> = {
   inspection: {
     label: 'Inspection & Recovery',
-    description: 'A robot performs periodic tunnel inspections. The cDTa digital twin tracks robot state and triggers recovery if the robot stalls or loses connectivity.',
+    focusTab: 'cdta',
+    description: 'Starts the full post-blast inspection scenario. Robots are deployed, hazards injected, and gas conditions raised. Observe the cDTa mission phase stepper advance automatically.',
     steps: [
-      'System starts and robot begins patrol route',
-      'Robot encounters obstacle — stall detected by cDTa',
-      'cDTa issues recovery command; robot resumes patrol',
-      'Inspection data logged to system view',
+      'Click "Start Scenario" — scenario runner resets all services and injects post-blast conditions',
+      'View auto-switches to cDTa tab — watch MISSION PHASE advance: Exploring → Hazard Scan → Clearance → Verifying → Complete',
+      'cDT1 mapping coverage drives the Exploring → Hazard Scan transition (30% or 90 s timeout)',
+      'Hazards and debris are cleared automatically; mission completes when the blast zone is verified safe',
+      'Use "Reset" in the header to return all services to idle',
     ],
   },
   hazard: {
     label: 'Hazard Detection',
-    description: 'A gas sensor spike triggers an alert. The cDTb digital twin monitors environmental conditions and escalates to an alarm when thresholds are exceeded.',
+    focusTab: 'cdtb',
+    description: 'Starts the full scenario and focuses on gas-hazard response. iDT2a receives a CH₄/CO spike; cDTb detects unsafe conditions and locks the gate CLOSED. Observe on the cDTb tab.',
     steps: [
-      'Environmental sensors stream baseline readings',
-      'Gas concentration rises above warning threshold',
-      'cDTb raises a hazard alert — alarm activates',
-      'Readings return to normal; alert clears automatically',
+      'Click "Start Scenario" — scenario runner injects CH₄=1.5 %, CO=35 ppm into gas sensor iDT2a',
+      'View auto-switches to cDTb tab — watch gate status change to CLOSED and alert activate',
+      'cDTb monitors gas readings every 5 s and escalates when thresholds are exceeded',
+      'Gas levels normalise gradually; cDTb re-opens the gate once readings are safe',
+      'Use "Clear All" to immediately normalise gas and reopen the gate',
     ],
   },
   emergency: {
     label: 'Emergency (Combined)',
-    description: 'Simultaneously injects a robot hazard and a gas spike to demonstrate the system\'s ability to handle concurrent incidents across both digital twins.',
+    focusTab: 'cdtb',
+    description: 'Runs the full scenario where both a robot hazard (misfire) and a gas spike are active simultaneously, demonstrating parallel incident response across cDTa and cDTb.',
     steps: [
-      'Robot is on patrol; sensors show nominal readings',
-      'Robot stall and gas spike are triggered at the same time',
-      'cDTa and cDTb both raise independent alerts',
-      'System state shows concurrent failure modes',
-      'Both conditions clear after recovery commands',
+      'Click "Start Scenario" — robot hazards (loose-rock, misfire) AND gas spike triggered at the same time',
+      'View auto-switches to cDTb — gas gate locks CLOSED; switch to cDTa to see hazard_scan phase',
+      'cDTa and cDTb raise independent alerts; observe both tabs for concurrent failure modes',
+      'Mission phases still advance in cDTa despite the gas emergency in cDTb',
+      'Use "Clear All" to reset gas, then "Reset" to abort the mission and return to idle',
     ],
   },
 }
@@ -52,16 +57,19 @@ const App: React.FC = () => {
   const [demoScenario, setDemoScenario] = useState<DemoScenario>('inspection')
   const [simSpeed, setSimSpeed] = useState<number>(2)
   const [showScenarioDesc, setShowScenarioDesc] = useState<boolean>(true)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const { data: scenario } = usePolling<ScenarioStatus>(urls.scenario, 3000)
 
   const runAction = useCallback(
     async (label: string, fn: () => Promise<void>) => {
       setScenarioLoading(label)
+      setActionError(null)
       try {
         await fn()
-      } catch (_e) {
-        // swallow – backend may not be up during dev
+      } catch (e: any) {
+        const msg = e?.response?.data?.error ?? e?.message ?? 'Unknown error'
+        setActionError(`${label}: ${msg}`)
       } finally {
         setScenarioLoading(null)
       }
@@ -69,23 +77,21 @@ const App: React.FC = () => {
     []
   )
 
+  // All three demos run the full scenario (which injects hazards + gas + starts robots).
+  // The difference is which tab is automatically shown so the user sees the relevant activity.
   const startDemoScenario = useCallback(async () => {
-    if (demoScenario === 'emergency') {
-      setScenarioLoading('start')
-      try {
-        await Promise.all([injectHazard(), triggerGasSpike()])
-      } catch (_e) {
-        // swallow
-      } finally {
-        setScenarioLoading(null)
-      }
-    } else if (demoScenario === 'hazard') {
-      runAction('start', triggerGasSpike)
-    } else {
-      // inspection: start the robot mission via cDTa
-      runAction('start', () => Promise.all([startScenario(), startMission()]).then(() => undefined))
+    setScenarioLoading('start')
+    setActionError(null)
+    try {
+      await startScenario()
+      setActiveTab(DEMO_SCENARIOS[demoScenario].focusTab)
+    } catch (e: any) {
+      const msg = e?.response?.data?.error ?? e?.message ?? 'Unknown error'
+      setActionError(`start: ${msg}`)
+    } finally {
+      setScenarioLoading(null)
     }
-  }, [demoScenario, runAction])
+  }, [demoScenario])
 
   const scenarioStateColor =
     scenario?.phase === 'running'   ? 'var(--green)' :
@@ -220,9 +226,10 @@ const App: React.FC = () => {
             className="btn btn-success btn-sm"
             disabled={!!scenarioLoading || scenario?.phase === 'running'}
             onClick={startDemoScenario}
+            title={scenario?.phase === 'running' ? 'Scenario is already running — click Reset first' : undefined}
           >
             {scenarioLoading === 'start' ? <span className="loading-spinner" /> : null}
-            {demoScenario === 'emergency' ? 'Trigger Emergency' : 'Start Scenario'}
+            Start Scenario
           </button>
 
           <button
@@ -262,6 +269,23 @@ const App: React.FC = () => {
             Clear All
           </button>
         </div>
+
+        {/* Action error */}
+        {actionError && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: '#fee2e2', border: '1px solid #fca5a5',
+            color: '#dc2626', borderRadius: 6, padding: '4px 10px',
+            fontSize: '0.72rem', maxWidth: 320,
+          }}>
+            <span style={{ fontWeight: 700 }}>⚠</span>
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{actionError}</span>
+            <button
+              onClick={() => setActionError(null)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 0, lineHeight: 1, fontSize: '0.9rem' }}
+            >×</button>
+          </div>
+        )}
 
         {/* Spacer */}
         <div style={{ flex: 1 }} />

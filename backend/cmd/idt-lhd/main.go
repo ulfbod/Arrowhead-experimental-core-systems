@@ -14,10 +14,11 @@ import (
 )
 
 type LHDService struct {
-	mu              sync.RWMutex
-	state           common.LHDState
-	clearanceActive bool
-	ah              *common.ArrowheadClient
+	mu                     sync.RWMutex
+	state                  common.LHDState
+	clearanceActive        bool
+	ah                     *common.ArrowheadClient
+	clearanceRatePctPerSec float64 // % per second; default 0.05
 }
 
 func main() {
@@ -30,7 +31,8 @@ func main() {
 	log.Printf("[%s] Starting %s on :%s", id, name, port)
 
 	svc := &LHDService{
-		ah: common.NewArrowheadClient(ahURL, id),
+		ah:                     common.NewArrowheadClient(ahURL, id),
+		clearanceRatePctPerSec: 0.05,
 		state: common.LHDState{
 			ID:               id,
 			Name:             name,
@@ -77,6 +79,7 @@ func main() {
 	mux.HandleFunc("/connectivity", svc.handleConnectivity)
 	mux.HandleFunc("/online", svc.handleOnline)
 	mux.HandleFunc("/simulate/reset", svc.handleSimulateReset)
+	mux.HandleFunc("/simulate/clearance-rate", svc.handleSimulateClearanceRate)
 
 	handler := common.CORSMiddleware(mux)
 	log.Fatal(http.ListenAndServe(":"+port, handler))
@@ -95,7 +98,7 @@ func (s *LHDService) simulate() {
 
 			// Debris clearance progression
 			if s.clearanceActive && s.state.TrammingStatus == "tramming" && s.state.DebrisClearedPct < 100 {
-				s.state.DebrisClearedPct = math.Min(100, s.state.DebrisClearedPct+0.05)
+				s.state.DebrisClearedPct = math.Min(100, s.state.DebrisClearedPct+s.clearanceRatePctPerSec)
 			}
 
 			// Payload simulation: gradually fill during loading, empty during unloading
@@ -281,6 +284,29 @@ func (s *LHDService) handleSimulateReset(w http.ResponseWriter, r *http.Request)
 	s.mu.Unlock()
 	log.Printf("[%s] Simulation reset: debris cleared to 0%%", id)
 	common.WriteJSON(w, 200, map[string]string{"status": "reset", "message": "debris scenario reset to 0%"})
+}
+
+// handleSimulateClearanceRate sets the debris clearance rate so 100% is reached in durationSec seconds.
+// Body: {"durationSec": 30}
+func (s *LHDService) handleSimulateClearanceRate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	var body struct {
+		DurationSec float64 `json:"durationSec"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.DurationSec <= 0 {
+		body.DurationSec = 30
+	}
+	rate := 100.0 / body.DurationSec
+	s.mu.Lock()
+	s.clearanceRatePctPerSec = rate
+	id := s.state.ID
+	s.mu.Unlock()
+	log.Printf("[%s] Clearance rate set to %.4f%%/s (100%% in %.0fs)", id, rate, body.DurationSec)
+	common.WriteJSON(w, 200, map[string]interface{}{"status": "ok", "clearanceRatePctPerSec": rate, "durationSec": body.DurationSec})
 }
 
 func envOrDefault(key, def string) string {

@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react'
 import usePolling from '../../hooks/usePolling'
-import { urls, startMission, abortMission, resetMission, forcePhase } from '../../api'
+import { urls, startMission, abortMission, resetMission, forcePhase, setMappingSpeed, setClearanceSpeed } from '../../api'
 import type { MissionStatus, MissionPhase, Hazard } from '../../types'
 
 const PHASES: MissionPhase[] = ['idle','exploring','hazard_scan','clearance','verifying','complete']
@@ -188,6 +188,77 @@ const EventLog: React.FC<{ logs: string[] }> = ({ logs }) => (
   </div>
 )
 
+// ---- Speed Controls ----
+const SpeedControls: React.FC = () => {
+  const [mappingDur, setMappingDur] = useState(30)
+  const [clearanceDur, setClearanceDur] = useState(30)
+  const [loading, setLoading] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const apply = useCallback(async (kind: 'mapping' | 'clearance', dur: number) => {
+    setLoading(kind)
+    setError(null)
+    try {
+      if (kind === 'mapping') {
+        await setMappingSpeed(dur)
+        setMappingDur(dur)
+      } else {
+        await setClearanceSpeed(dur)
+        setClearanceDur(dur)
+      }
+    } catch (e: any) {
+      setError(e?.message ?? 'Error')
+    } finally {
+      setLoading(null)
+    }
+  }, [])
+
+  const sliderRow = (
+    label: string,
+    kind: 'mapping' | 'clearance',
+    value: number,
+    color: string,
+  ) => (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{label}</span>
+        <span style={{ fontSize: '0.78rem', fontWeight: 700, color }}>
+          {loading === kind ? '…' : `${value} s`}
+        </span>
+      </div>
+      <input
+        type="range" min={10} max={100} step={10} value={value}
+        disabled={loading === kind}
+        onChange={e => apply(kind, Number(e.target.value))}
+        style={{ width: '100%', accentColor: color }}
+      />
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>
+        <span>10 s (fast)</span><span>50 s</span><span>100 s (slow)</span>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <span className="card-title">Demo Speed</span>
+        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+          time for each operation to reach 100 %
+        </span>
+      </div>
+      {sliderRow('Mapping Progress (iDT1a + iDT1b SLAM rate)', 'mapping', mappingDur, 'var(--blue)')}
+      {sliderRow('Clearance Operation (iDT3a + iDT3b debris rate)', 'clearance', clearanceDur, 'var(--green)')}
+      {error && (
+        <div style={{ fontSize: '0.72rem', color: 'var(--red)', marginTop: 4 }}>⚠ {error}</div>
+      )}
+      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5 }}>
+        Changes take effect immediately and survive scenario resets. Phase transitions trigger when
+        mapping coverage &gt; 30 % or clearance &gt; 80 %.
+      </div>
+    </div>
+  )
+}
+
 // ---- Controls ----
 const Controls: React.FC<{ phase: MissionPhase; onRefresh: () => void }> = ({ phase, onRefresh }) => {
   const [loading, setLoading] = useState<string | null>(null)
@@ -350,10 +421,13 @@ const CDTaView: React.FC = () => {
             </div>
           </section>
 
-          {/* Controls */}
+          {/* Speed + Mission controls */}
           <section>
             <div className="section-title">Controls</div>
-            <Controls phase={mission.phase} onRefresh={refetch} />
+            <SpeedControls />
+            <div style={{ marginTop: 16 }}>
+              <Controls phase={mission.phase} onRefresh={refetch} />
+            </div>
           </section>
         </>
       )}

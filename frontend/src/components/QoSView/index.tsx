@@ -4,6 +4,7 @@ import {
   getCDT1Providers,
   setOrchestrationMode,
   setNetworkDelay,
+  setProcessingDelay,
   runExperiment,
   getExperimentResults,
   failSensor,
@@ -94,12 +95,14 @@ function FailoverHistory({ events }: { events: FailoverEvent[] }) {
 }
 
 function ExperimentControl({
-  orchMode, setOrchMode, netDelay, setNetDelay, onRunExperiment, expRunning,
+  orchMode, setOrchMode, netDelay, setNetDelay, procDelay, setProcDelay, onRunExperiment, expRunning,
 }: {
   orchMode: 'local' | 'central'
   setOrchMode: (m: 'local' | 'central') => void
   netDelay: number
   setNetDelay: (ms: number) => void
+  procDelay: number
+  setProcDelay: (ms: number) => void
   onRunExperiment: () => void
   expRunning: boolean
 }) {
@@ -135,6 +138,24 @@ function ExperimentControl({
         />
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748b' }}>
           <span>0ms</span><span>10ms</span><span>20ms</span><span>30ms</span><span>40ms</span><span>50ms</span>
+        </div>
+      </div>
+
+      {/* Processing time */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>
+          Simulated Processing Time: <strong style={{ color: '#0f172a' }}>{procDelay}ms</strong>
+          <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 8 }}>
+            (local: +{procDelay}ms on cDT · central: +{procDelay * 2}ms on cDT + Arrowhead)
+          </span>
+        </div>
+        <input
+          type="range" min={0} max={10} step={2} value={procDelay}
+          onChange={e => setProcDelay(Number(e.target.value))}
+          style={{ width: '100%', accentColor: '#8b5cf6' }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748b' }}>
+          <span>0ms</span><span>2ms</span><span>4ms</span><span>6ms</span><span>8ms</span><span>10ms</span>
         </div>
       </div>
 
@@ -224,6 +245,7 @@ export default function QoSView() {
   const [cdt2QoS, setCdt2QoS] = useState<SourceQoS | null>(null)
   const [orchMode, setOrchModeState] = useState<'local' | 'central'>('local')
   const [netDelay, setNetDelayState] = useState(0)
+  const [procDelay, setProcDelayState] = useState(0)
   const [expRunning, setExpRunning] = useState(false)
   const [expResults, setExpResults] = useState<ExperimentResults | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -242,6 +264,21 @@ export default function QoSView() {
     poll()
     const id = setInterval(poll, 2000)
     return () => clearInterval(id)
+  }, [])
+
+  // On mount: check whether an experiment is already running or has results
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const resp = await getExperimentResults()
+        if (resp.status === 'running') {
+          setExpRunning(true)
+        } else if (resp.status === 'completed' && resp.results) {
+          setExpResults(resp.results)
+        }
+      } catch { /* backend not up yet */ }
+    }
+    check()
   }, [])
 
   // Poll experiment results while running
@@ -280,13 +317,29 @@ export default function QoSView() {
     }
   }
 
+  const handleSetProcDelay = async (ms: number) => {
+    setProcDelayState(ms)
+    try {
+      await setProcessingDelay(ms)
+      setError(null)
+    } catch (e: any) {
+      setError(`Failed to set processing delay: ${e.message}`)
+    }
+  }
+
   const handleRunExperiment = async () => {
     try {
       await runExperiment(5)
       setExpRunning(true)
       setError(null)
     } catch (e: any) {
-      setError(`Failed to start experiment: ${e.message}`)
+      if (e?.response?.status === 409) {
+        // Experiment is already running (e.g. page was reloaded mid-run) — start polling
+        setExpRunning(true)
+        setError(null)
+      } else {
+        setError(`Failed to start experiment: ${e.message}`)
+      }
     }
   }
 
@@ -311,6 +364,8 @@ export default function QoSView() {
             setOrchMode={handleSetOrchMode}
             netDelay={netDelay}
             setNetDelay={handleSetNetDelay}
+            procDelay={procDelay}
+            setProcDelay={handleSetProcDelay}
             onRunExperiment={handleRunExperiment}
             expRunning={expRunning}
           />

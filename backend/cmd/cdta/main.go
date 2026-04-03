@@ -233,6 +233,14 @@ func (s *CDTaService) evaluateMission() {
 		}
 		if canAdvance {
 			s.transitionTo(common.PhaseClearance, reason)
+			// Kick off the LHD clearance operation via cDT4.
+			go func() {
+				if err := common.DoRequest("POST", s.comps.CDT4+"/clearance/start", "", s.id, nil, nil); err != nil {
+					log.Printf("[%s] WARNING: failed to start cDT4 clearance: %v", s.id, err)
+				} else {
+					log.Printf("[%s] Clearance operation started via cDT4.", s.id)
+				}
+			}()
 		}
 
 	case common.PhaseClearance:
@@ -240,15 +248,28 @@ func (s *CDTaService) evaluateMission() {
 		debrisDone := clearance != nil && clearance.TotalDebrisPct > 80
 		hazardsDone := hazardReport != nil && hazardReport.SafeForEntry
 		clearanceTimeout := timeInPhase > 60*time.Second
+		advanced := false
 		if debrisDone {
 			s.transitionTo(common.PhaseVerifying,
 				fmt.Sprintf("Debris clearance at %.1f%% (threshold 80%%) – entering verification phase.", clearance.TotalDebrisPct))
+			advanced = true
 		} else if hazardsDone && clearanceTimeout {
 			s.transitionTo(common.PhaseVerifying,
 				"Clearance timeout (60s) – all hazards resolved and site assessed safe. Entering verification phase.")
+			advanced = true
 		} else if clearanceTimeout {
 			s.transitionTo(common.PhaseVerifying,
 				"Clearance timeout (60s) – proceeding to verification phase.")
+			advanced = true
+		}
+		if advanced {
+			go func() {
+				if err := common.DoRequest("POST", s.comps.CDT3+"/hazards/clear-all", "", s.id, nil, nil); err != nil {
+					log.Printf("[%s] WARNING: could not clear hazards via cDT3: %v", s.id, err)
+				} else {
+					log.Printf("[%s] All hazards cleared via cDT3.", s.id)
+				}
+			}()
 		}
 
 	case common.PhaseVerifying:

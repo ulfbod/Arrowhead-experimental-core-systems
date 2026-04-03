@@ -75,6 +75,7 @@ func main() {
 	mux.HandleFunc("/hazards", svc.handleHazards)
 	mux.HandleFunc("/risk", svc.handleRisk)
 	mux.HandleFunc("/override/clear", svc.handleOverrideClear)
+	mux.HandleFunc("/hazards/clear-all", svc.handleClearAllHazards)
 	mux.HandleFunc("/logs", svc.handleLogs)
 	mux.HandleFunc("/connectivity", svc.handleConnectivity)
 
@@ -321,6 +322,39 @@ func (s *CDT3Service) handleOverrideClear(w http.ResponseWriter, r *http.Request
 	common.WriteJSON(w, 200, map[string]interface{}{
 		"status":    "cleared",
 		"timestamp": time.Now(),
+	})
+}
+
+// handleClearAllHazards calls POST /hazard/clear on all known inspection robots so that
+// their hazards are marked Cleared=true. cDT3's next poll will then report zero active
+// hazards. Called by cDTa when the clearance phase completes.
+func (s *CDT3Service) handleClearAllHazards(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteError(w, 405, "POST required")
+		return
+	}
+	idt1aURL := envOrDefault("IDT1A_URL", "http://localhost:8101")
+	idt1bURL := envOrDefault("IDT1B_URL", "http://localhost:8102")
+	clearBody := map[string]string{"id": ""} // empty id = clear all hazards on that robot
+	var errs []string
+	for _, target := range []struct{ id, url string }{
+		{"idt1a", idt1aURL}, {"idt1b", idt1bURL},
+	} {
+		if err := common.DoRequest("POST", target.url+"/hazard/clear", "", "cdt3", clearBody, nil); err != nil {
+			errs = append(errs, target.id+": "+err.Error())
+			log.Printf("[cdt3] WARNING: could not clear hazards on %s: %v", target.id, err)
+		} else {
+			log.Printf("[cdt3] Hazards cleared on %s.", target.id)
+		}
+	}
+	// Also reset the override flag so future hazards are shown normally.
+	s.mu.Lock()
+	s.overrideCleared = false
+	s.addLogLocked("All robot hazards cleared (clearance phase complete).")
+	s.mu.Unlock()
+	common.WriteJSON(w, 200, map[string]interface{}{
+		"status": "cleared",
+		"errors": errs,
 	})
 }
 

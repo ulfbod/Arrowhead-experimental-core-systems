@@ -225,6 +225,15 @@ export const setOrchestrationMode = (mode: 'local' | 'central'): Promise<void> =
 export const setNetworkDelay = (ms: number): Promise<void> =>
   post<void>(PORTS.SCENARIO, `/scenario/network-delay?ms=${ms}`)
 
+export const setProcessingDelay = (ms: number): Promise<void> =>
+  post<void>(PORTS.SCENARIO, `/scenario/processing-delay?ms=${ms}`)
+
+export const setMappingSpeed = (durationSec: number): Promise<void> =>
+  post<void>(PORTS.SCENARIO, '/scenario/mapping-speed', { durationSec })
+
+export const setClearanceSpeed = (durationSec: number): Promise<void> =>
+  post<void>(PORTS.SCENARIO, '/scenario/clearance-speed', { durationSec })
+
 export const runExperiment = (runsPerPoint = 5): Promise<void> =>
   post<void>(PORTS.SCENARIO, '/scenario/experiment/run', { runsPerPoint })
 

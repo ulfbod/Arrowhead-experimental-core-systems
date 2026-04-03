@@ -109,7 +109,16 @@
       "Bash(.venv/bin/python3 -c \":*)",
       "Bash(.venv/bin/python3 -c \"\nfrom pdfminer.high_level import extract_text\ntext = extract_text\\('paper.pdf'\\)\nprint\\(text[10000:22000]\\)\n\")",
       "Bash(.venv/bin/python3 -c \"\nfrom pdfminer.high_level import extract_text\ntext = extract_text\\('paper.pdf'\\)\nprint\\(text[22000:36000]\\)\n\")",
-      "Bash(.venv/bin/python3 -c \"\nfrom pdfminer.high_level import extract_text\ntext = extract_text\\('paper.pdf'\\)\nprint\\(text[36000:]\\)\n\")"
+      "Bash(.venv/bin/python3 -c \"\nfrom pdfminer.high_level import extract_text\ntext = extract_text\\('paper.pdf'\\)\nprint\\(text[36000:]\\)\n\")",
+      "Bash(pdftotext /home/uffe/projects/MineIO_paper/paper.pdf -)",
+      "Bash(pdftotext /home/uffe/projects/MineIO_paper/paper.pdf /tmp/paper_text.txt)",
+      "Read(//tmp/**)",
+      "Bash(ls -lh /tmp/paper*)",
+      "Bash(pip install:*)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(/dev/null find:*)",
+      "Bash(python scripts/experiments.py --runs 50 --seed 1234 --eval-scenario improved01)",
+      "Bash(python scripts/plot.py --eval-scenario improved01 --input-dir results/ --output-dir docs/figures/)"
     ]
   }
 }

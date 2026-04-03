@@ -1,14 +1,25 @@
-# Composable Digital Twins as Proxies for Part-Autonomous Industrial Mobile Machines
+# QoS-Aware Composable Digital Twins for Resilient Coordination of Industrial Mobile Robots
 
 A fully runnable local proof-of-concept implementation of the paper:
 
-> *"Composable Digital Twins as Proxies for Part-Autonomous Industrial Mobile Machines"*
+> **"QoS-Aware Composable Digital Twins for Resilient Coordination of Industrial Mobile Robots"**
+> Ulf Bodin, Jan Niemi, and Ulf Andersson
+> Department of Computer Science, Electrical and Space Engineering
+> Luleå University of Technology (LTU), Sweden
 
-The system emulates a heterogeneous fleet of underground mining machines using a three-layer composable Digital Twin architecture, orchestrated through an Eclipse Arrowhead-style service framework. It includes three reproducible experiments that generate publication-quality plots with uncertainty bands:
+The system emulates a heterogeneous fleet of underground mining machines using a three-layer composable Digital Twin architecture, orchestrated through an Eclipse Arrowhead-style service framework. Each machine is abstracted into an Individual Digital Twin (iDT) exposing QoS-annotated services; Composite Digital Twins (cDTs) dynamically compose these services to realise mission-level functionality. QoS-aware service selection enables resilient operation through controlled degradation — selecting lower-quality but functionally equivalent services rather than failing abruptly. It includes three reproducible experiments that generate publication-quality plots with uncertainty bands:
 
 1. **QoS Trade-off Analysis** — how weighted utility scores drive provider selection across randomised QoS profiles.
 2. **Controlled Degradation** — resilience of QoS-aware selection versus availability-based selection under simulated service degradation.
 3. **Failover Delay Benchmark** — latency advantage of local (pre-configured) failover versus centralised Arrowhead reorchestration under increasing simulated network delay.
+
+If you use this work, please cite:
+
+```
+U. Bodin, J. Niemi, and U. Andersson, "QoS-Aware Composable Digital Twins for Resilient
+Coordination of Industrial Mobile Robots," Luleå University of Technology (LTU), 2026.
+https://github.com/ulfbod/DT-as-proxies-for-mining-PoC
+```
 
 ---
 
@@ -39,7 +50,7 @@ The system follows the three-layer architecture described in the paper:
 │                                                                 │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │                    UPPER cDT LAYER                      │   │
-│  │   cDTa: Inspection & Recovery  │  cDTb: Hazard Monitor  │   │
+│  │   cDTa: Inspection & Recovery  │  cDTb: Hazard Mon.&Access│   │
 │  └────────────────────┬────────────────────────┬───────────┘   │
 │                       │ composes                │               │
 │  ┌────────────────────▼────────────────────────▼───────────┐   │
@@ -106,7 +117,7 @@ graph TB
 
         subgraph UPPER["Upper cDT Layer"]
             CDTA["cDTa\nInspection &\nRecovery\n:8601"]
-            CDTB["cDTb\nHazard Monitoring\nVentilation & Gating\n:8602"]
+            CDTB["cDTb\nHazard Monitoring\n& Access Control\n:8602"]
         end
     end
 
@@ -136,7 +147,7 @@ graph TB
 
     CDT1 -->|composes| IDT1A & IDT1B
     CDT2 -->|composes| IDT2A & IDT2B
-    CDT3 -->|composes| CDT1 & CDT2 & IDT1A & IDT1B
+    CDT3 -->|composes| IDT1A & IDT2A
     CDT4 -->|composes| IDT3A & IDT3B
     CDT5 -->|composes| IDT4
 
@@ -157,13 +168,13 @@ The paper defines which services each cDT is authorized to consume:
 
 | Consumer | Authorized Providers | Purpose |
 |----------|---------------------|---------|
-| **cDT1** | iDT1a, iDT1b | Aggregate robot maps & SLAM progress |
-| **cDT2** | iDT2a, iDT2b | Aggregate gas measurements & alerts; QoS-aware failover between sensors |
-| **cDT3** | cDT1, cDT2, iDT1a, iDT1b | Fuse mapping + gas + robot hazard signals |
-| **cDT4** | iDT3a, iDT3b | Coordinate LHD debris clearance |
-| **cDT5** | iDT4 | Mediate tele-remote operator intervention |
-| **cDTa** | cDT1, cDT3, cDT4, cDT5 | Orchestrate inspection & recovery mission |
-| **cDTb** | cDT2, cDT3 | Safe-access / ventilation / gating support |
+| **cDT1** | iDT1a, iDT1b | SLAM-based mapping, QoS-aware robot selection |
+| **cDT2** | iDT2a, iDT2b | Gas monitoring, threshold alerting, QoS-aware sensor selection |
+| **cDT3** | iDT1a, iDT2a | Hazard detection/classification, fuses robot scan data and gas readings |
+| **cDT4** | iDT3a, iDT3b | Debris clearance, QoS-aware LHD vehicle selection |
+| **cDT5** | iDT4 | Tele-remote intervention and manual override |
+| **cDTa** | cDT1, cDT3, cDT4, cDT5 | Inspection, task allocation, QoS-aware coordination |
+| **cDTb** | cDT2, cDT3 | Hazard assessment, safe-access decisions, gate control |
 
 All cross-service calls are mediated by the Arrowhead Core — services discover endpoints and receive authorization tokens before making calls.
 
@@ -337,11 +348,11 @@ sequenceDiagram
 | Tele-Remote Station | idt4 | **8401** | iDT | Operator override, tele-operation |
 | Autonomous Exploration & Mapping | cdt1 | **8501** | lower cDT | Composes iDT1a + iDT1b |
 | Gas Concentration Monitoring | cdt2 | **8502** | lower cDT | Composes iDT2a + iDT2b (QoS failover) |
-| Hazard Detection & Classification | cdt3 | **8503** | lower cDT | Composes cDT1 + cDT2 + iDT1a/b |
+| Hazard Detection & Classification | cdt3 | **8503** | lower cDT | Composes iDT1a + iDT2a |
 | Selective Material Handling | cdt4 | **8504** | lower cDT | Composes iDT3a + iDT3b |
 | Tele-Remote Intervention | cdt5 | **8505** | lower cDT | Composes iDT4 |
 | Inspection & Recovery | cdta | **8601** | upper cDT | Composes cDT1 + cDT3 + cDT4 + cDT5 |
-| Hazard Monitoring & Gating | cdtb | **8602** | upper cDT | Composes cDT2 + cDT3 |
+| Hazard Monitoring & Access Control | cdtb | **8602** | upper cDT | Composes cDT2 + cDT3 |
 | Scenario Runner | scenario | **8700** | Tool | Post-blast demo + failover experiment |
 | Frontend | — | **3000** | UI | React + TypeScript dashboard |
 
@@ -963,7 +974,7 @@ curl -X POST http://localhost:8000/orchestration \
 | Network latency | Real network | Configurable simulated delay injected into every `DoRequest` call |
 | Failover experiment | N/A | Benchmark endpoint isolates decision path; sweeps 0–50 ms in 5 ms steps; p10/p90 CIs |
 
-The implementation is intentionally simplified to be runnable on a development laptop while preserving all architectural concepts from the paper: the proxy pattern, composability, Arrowhead-style service discovery/authorization, the three-layer hierarchy, and the post-blast scenario decision support.
+The implementation is intentionally simplified to be runnable on a development laptop while preserving all architectural concepts from the paper: the proxy pattern, iDT/cDT layered composability, Arrowhead-style service discovery/authorization, QoS-aware utility-based service selection, and the post-blast scenario decision support.
 
 ---
 
@@ -1009,7 +1020,7 @@ The implementation is intentionally simplified to be runnable on a development l
 │       ├── cdt4/                 # Material Handling (:8504)
 │       ├── cdt5/                 # Tele-Remote Intervention (:8505)
 │       ├── cdta/                 # Inspection & Recovery (:8601)
-│       ├── cdtb/                 # Hazard Monitoring & Gating (:8602)
+│       ├── cdtb/                 # Hazard Monitoring & Access Control (:8602)
 │       └── scenario/             # Demo scenario + failover experiment runner (:8700)
 ├── frontend/
 │   ├── src/
