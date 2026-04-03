@@ -13,14 +13,6 @@ The system emulates a heterogeneous fleet of underground mining machines using a
 2. **Controlled Degradation** — resilience of QoS-aware selection versus availability-based selection under simulated service degradation.
 3. **Failover Delay Benchmark** — latency advantage of local (pre-configured) failover versus centralised Arrowhead reorchestration under increasing simulated network delay.
 
-If you use this work, please cite:
-
-```
-U. Bodin, J. Niemi, and U. Andersson, "QoS-Aware Composable Digital Twins for Resilient
-Coordination of Industrial Mobile Robots," Luleå University of Technology (LTU), 2026.
-https://github.com/ulfbod/DT-as-proxies-for-mining-PoC
-```
-
 ---
 
 ## Table of Contents
