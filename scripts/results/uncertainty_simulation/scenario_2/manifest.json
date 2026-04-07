@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-04-07T08:59:48Z",
+  "generated_at": "2026-04-07T09:36:14Z",
   "scenario": "scenario_2",
   "label": "Clear Uncertainty",
   "description": "Noticeable uncertainty separation: provider A has clearly higher \u03c3_q and \u03c3_a than provider B. The uncertainty-aware policy begins to diverge from the deterministic QoS-aware policy. At nominal QoS the two policies may still agree, but during degradation P3 switches away from A earlier and more reliably.",
-  "base_seed": 1413811017,
+  "base_seed": 641599372,
   "runs": 30,
   "policies": [
     "baseline",

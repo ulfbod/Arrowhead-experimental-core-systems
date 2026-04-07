@@ -354,13 +354,14 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
 
         {/* Column labels */}
         {[
-          { x: 120, label: 'Individual DTs (iDTs)' },
-          { x: 340, label: 'Lower Composite DTs (cDTs)' },
-          { x: 560, label: 'Upper Composite DTs (cDTs)' },
+          { x: 120, line1: 'Individual DTs', line2: '(iDTs)' },
+          { x: 340, line1: 'Lower Composite DTs', line2: '(cDTs)' },
+          { x: 560, line1: 'Upper Composite DTs', line2: '(cDTs)' },
         ].map(col => (
-          <text key={col.x} x={col.x} y={18} textAnchor="middle"
-            style={{ fill: '#334155', fontSize: 9, fontFamily: 'sans-serif', fontWeight: 700, letterSpacing: 1 }}>
-            {col.label.toUpperCase()}
+          <text key={col.x} x={col.x} y={13} textAnchor="middle"
+            style={{ fill: '#334155', fontSize: 13, fontFamily: 'sans-serif', fontWeight: 700, letterSpacing: 1 }}>
+            <tspan x={col.x} dy="0">{col.line1.toUpperCase()}</tspan>
+            <tspan x={col.x} dy="15">{col.line2.toUpperCase()}</tspan>
           </text>
         ))}
 
@@ -401,7 +402,7 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
                   <text x={mx} y={(y1 + y2) / 2 - 3} textAnchor="middle"
                     style={{
                       fill: isFailover ? '#b45309' : '#475569',
-                      fontSize: 7,
+                      fontSize: 10,
                       fontFamily: 'sans-serif',
                       fontStyle: isFailover ? 'italic' : 'normal',
                     }}>
@@ -438,12 +439,12 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
               {lines.map((line, li) => (
                 <text key={li}
                   x={node.cx}
-                  y={node.cy + (li - (lines.length - 1) / 2) * 13}
+                  y={node.cy + (li - (lines.length - 1) / 2) * 15}
                   textAnchor="middle"
                   dominantBaseline="middle"
                   style={{
                     fill: li === 0 ? '#0f172a' : '#334155',
-                    fontSize: li === 0 ? 9 : 8,
+                    fontSize: li === 0 ? 13 : 11,
                     fontFamily: 'sans-serif',
                     fontWeight: li === 0 ? 700 : 400,
                   }}
@@ -464,26 +465,26 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
           <line x1="4"  y1="2" x2="36" y2="2" stroke="rgba(37,99,235,0.5)"  strokeWidth="1.6" />
           <polygon points="33,-1 33,5 39,2" fill="#2563eb" />
           <text x="44" y="6"
-            style={{ fill: '#334155', fontSize: 8, fontFamily: 'sans-serif' }}>
+            style={{ fill: '#334155', fontSize: 10, fontFamily: 'sans-serif' }}>
             Active service dependency
           </text>
 
           {/* Failover edge */}
-          <line x1="194" y1="2" x2="226" y2="2"
+          <line x1="210" y1="2" x2="242" y2="2"
             stroke="#d97706" strokeWidth="1.3" strokeDasharray="5,3" />
-          <polygon points="223,-1 223,5 229,2" fill="#d97706" />
-          <text x="234" y="6"
-            style={{ fill: '#334155', fontSize: 8, fontFamily: 'sans-serif' }}>
-            Failover reorchestration path (cDT switches to backup iDT)
+          <polygon points="239,-1 239,5 245,2" fill="#d97706" />
+          <text x="250" y="6"
+            style={{ fill: '#334155', fontSize: 10, fontFamily: 'sans-serif' }}>
+            Failover reorchestration path
           </text>
 
           {/* Status dots */}
-          <circle cx="520" cy="2" r="4" fill="#16a34a" />
-          <text x="528" y="6"
-            style={{ fill: '#334155', fontSize: 8, fontFamily: 'sans-serif' }}>Online</text>
-          <circle cx="572" cy="2" r="4" fill="#dc2626" />
-          <text x="580" y="6"
-            style={{ fill: '#334155', fontSize: 8, fontFamily: 'sans-serif' }}>Offline</text>
+          <circle cx="430" cy="2" r="4" fill="#16a34a" />
+          <text x="439" y="6"
+            style={{ fill: '#334155', fontSize: 10, fontFamily: 'sans-serif' }}>Online</text>
+          <circle cx="492" cy="2" r="4" fill="#dc2626" />
+          <text x="501" y="6"
+            style={{ fill: '#334155', fontSize: 10, fontFamily: 'sans-serif' }}>Offline</text>
         </g>
       </svg>
     </div>
