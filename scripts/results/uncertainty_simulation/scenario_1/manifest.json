@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-04-06T21:30:55Z",
+  "generated_at": "2026-04-07T08:59:45Z",
   "scenario": "scenario_1",
   "label": "Limited Uncertainty",
   "description": "Small measurement uncertainty for both providers. The QoS-aware and uncertainty-aware policies behave similarly because \u03c3 is small enough that risk adjustment barely changes rankings. The baseline is still visibly weaker during degradation episodes.",
-  "base_seed": 2037073918,
+  "base_seed": 1413811017,
   "runs": 30,
   "policies": [
     "baseline",

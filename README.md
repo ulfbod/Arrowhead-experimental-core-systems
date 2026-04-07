@@ -7,11 +7,12 @@ A fully runnable local proof-of-concept implementation of the paper:
 > Department of Computer Science, Electrical and Space Engineering
 > Luleå University of Technology (LTU), Sweden
 
-The system emulates a heterogeneous fleet of underground mining machines using a three-layer composable Digital Twin architecture, orchestrated through an Eclipse Arrowhead-style service framework. Each machine is abstracted into an Individual Digital Twin (iDT) exposing QoS-annotated services; Composite Digital Twins (cDTs) dynamically compose these services to realise mission-level functionality. QoS-aware service selection enables resilient operation through controlled degradation — selecting lower-quality but functionally equivalent services rather than failing abruptly. It includes three reproducible experiments that generate publication-quality plots with uncertainty bands:
+The system emulates a heterogeneous fleet of underground mining machines using a three-layer composable Digital Twin architecture, orchestrated through an Eclipse Arrowhead-style service framework. Each machine is abstracted into an Individual Digital Twin (iDT) exposing QoS-annotated services; Composite Digital Twins (cDTs) dynamically compose these services to realise mission-level functionality. QoS-aware service selection enables resilient operation through controlled degradation — selecting lower-quality but functionally equivalent services rather than failing abruptly. It includes four reproducible experiments that generate publication-quality plots with uncertainty bands:
 
 1. **QoS Trade-off Analysis** — how weighted utility scores drive provider selection across randomised QoS profiles.
 2. **Controlled Degradation** — resilience of QoS-aware selection versus availability-based selection under simulated service degradation.
 3. **Failover Delay Benchmark** — latency advantage of local (pre-configured) failover versus centralised Arrowhead reorchestration under increasing simulated network delay.
+4. **Uncertainty-Aware Selection** — risk-adjusted utility selection under provider quality and availability uncertainty; runs both as a Python script (publication figures) and interactively in the browser.
 
 ---
 
@@ -26,6 +27,7 @@ The system emulates a heterogeneous fleet of underground mining machines using a
 - [Demo Scenario](#demo-scenario)
 - [Experiments and Evaluation](#experiments-and-evaluation)
 - [QoS-Aware Failover Evaluation](#qos-aware-failover-evaluation)
+- [Uncertainty-Aware Selection Simulation](#uncertainty-aware-selection-simulation)
 - [API Reference](#api-reference)
 - [Simplifications and Design Choices](#simplifications-and-design-choices)
 - [Repository Structure](#repository-structure)
@@ -370,6 +372,23 @@ python3 -m venv .venv
 # Or let run_experiment.sh do it automatically on first run.
 ```
 
+### Recommended: Start the full system with one command
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+This starts all 14 Go backend services in the correct layered order, installs npm dependencies on the first run, starts the Vite frontend on **http://localhost:3000**, and attempts to open the browser automatically.
+
+```bash
+./start.sh --frontend-only  # skip Go services (Uncertainty-Aware Simulation tab works without them)
+./start.sh --port 3001       # custom frontend port
+./start.sh --no-open         # don't try to open the browser
+```
+
+Service logs are written to `logs/`. Press **Ctrl+C** to stop everything cleanly.
+
 ### Option A: Automated experiment script (recommended)
 
 ```bash
@@ -711,17 +730,32 @@ results/
 │   ├── manifest.json
 │   ├── tradeoff/aggregated.csv
 │   └── degradation/aggregated.csv
-└── failover_delay_vs_network_delay.csv     ← Go benchmark output (not scenario-namespaced)
+├── failover_delay_vs_network_delay.csv     ← Go benchmark output (not scenario-namespaced)
+└── uncertainty_simulation/                 ← uncertainty-aware simulation outputs
+    ├── scenario_1/aggregated.csv
+    ├── scenario_2/aggregated.csv
+    └── scenario_3/aggregated.csv
 
 docs/figures/
 ├── basic/
 │   ├── tradeoff_provider_utilities.{png,pdf}
 │   ├── tradeoff_qos_metrics_vs_weight.{png,pdf}
+│   ├── degradation_combined.{png,pdf}
+│   └── failover_delay_vs_network_delay.{png,pdf}
+├── improved01/
+│   ├── tradeoff_provider_utilities.{png,pdf}
+│   ├── tradeoff_qos_metrics_vs_weight.{png,pdf}
 │   └── degradation_combined.{png,pdf}
-└── improved01/
-    ├── tradeoff_provider_utilities.{png,pdf}
-    ├── tradeoff_qos_metrics_vs_weight.{png,pdf}
-    └── degradation_combined.{png,pdf}
+└── uncertainty_simulation/                 ← uncertainty-aware simulation figures
+    ├── scenario_1/
+    │   ├── utility_over_time.{png,pdf}
+    │   ├── selection_over_time.{png,pdf}
+    │   ├── difference_plots.{png,pdf}
+    │   ├── uncertainty_evolution.{png,pdf}
+    │   ├── provider_scores.{png,pdf}
+    │   └── summary.{png,pdf}
+    ├── scenario_2/  (same layout)
+    └── scenario_3/  (same layout)
 ```
 
 Per-run CSV files under `results/*/runs/` are excluded from git (see `.gitignore`).
@@ -829,6 +863,96 @@ curl -X POST "http://localhost:8700/scenario/config?mode=central"
 # Set simulated network delay
 curl -X POST "http://localhost:8700/scenario/network-delay?ms=20"
 ```
+
+---
+
+## Uncertainty-Aware Selection Simulation
+
+### Overview
+
+Experiment 4 evaluates a **risk-adjusted utility** selection policy that separates quality uncertainty (σ_q) from availability uncertainty (σ_a) — an extension of the deterministic QoS utility used in Experiments 1–2.
+
+Three selection policies are compared:
+
+| Policy | Selection rule |
+|--------|---------------|
+| **Baseline** | Pick the provider with higher current availability |
+| **QoS-aware** | Pick the provider with higher deterministic utility `w_acc·acc + w_lat·(1−lat/max_lat) + w_rel·rel` |
+| **Uncertainty-aware** | Pick the provider with higher *risk-adjusted* utility (see formula below) |
+
+**Risk-adjusted utility:**
+
+```
+adj_acc = max(0, acc − risk_q · σ_q(t))
+adj_rel = max(0, rel − risk_a · σ_a(t))
+utility = w_acc · adj_acc + w_lat · (1 − lat/max_lat) + w_rel · adj_rel
+```
+
+The sigma terms grow dynamically during degradation:
+
+```
+σ_q(t) = σ_q_base × (1 + 3.0 × deg_factor(t))   ← quality uncertainty
+σ_a(t) = σ_a_base × (1 + 2.0 × deg_factor(t))   ← availability uncertainty
+```
+
+where `deg_factor(t) ∈ [0, 1]` follows the three-phase degradation model (gradual → hard fail → recovery).
+
+### Three Scenario Presets
+
+| Scenario | Description | Key result |
+|----------|-------------|------------|
+| **scenario_1** (Limited) | Small QoS gap between A and B; low baseline uncertainty | Policies converge; uncertainty-aware barely differs from QoS-aware |
+| **scenario_2** (Clear) | Wider QoS gap; medium uncertainty | QoS-aware and uncertainty-aware diverge noticeably from baseline during degradation |
+| **scenario_3** (Extreme) | High uncertainty on A; P2 prefers A but P3 switches to B | Demonstrates preference reversal: QoS-aware (P2) prefers A (utility 0.895 vs 0.818); uncertainty-aware (P3) prefers B (risk-adj. utility 0.786 vs 0.649) |
+
+### Running the Python Script
+
+```bash
+# Run all three scenarios (30 runs, seed 1234):
+python scripts/uncertainty_sim.py --scenario all --runs 30 --seed 1234
+
+# Single scenario:
+python scripts/uncertainty_sim.py --scenario 3 --runs 30 --seed 1234
+
+# Plot only (reuse existing CSVs):
+python scripts/uncertainty_sim.py --scenario all --plot-only
+
+# Large-text variant for IEEE single-column figures:
+python scripts/uncertainty_sim_large_text_v01.py --scenario all --runs 30 --seed 1234
+```
+
+Output goes to:
+- CSVs: `results/uncertainty_simulation/scenario_{1,2,3}/aggregated.csv`
+- Figures: `docs/figures/uncertainty_simulation/scenario_{1,2,3}/` (6 plots × PNG+PDF per scenario)
+- Large-text figures: `docs/figures/uncertainty_simulation_large_text/scenario_{1,2,3}/`
+
+### Running In-Browser
+
+The **Uncertainty-Aware Simulation** tab in the frontend runs the same simulation entirely in-browser (no backend required — use `./start.sh --frontend-only`). It provides:
+
+- Scenario preset selector (scenario_1, scenario_2, scenario_3)
+- Editable parameters (runs, seed, weights, risk factors, sigma values)
+- Five interactive charts: utility over time, provider selection, utility difference, uncertainty evolution, summary bar chart
+
+### Sample Figures (Scenario 3 — Extreme Uncertainty)
+
+**Utility over time (all three policies):**
+
+![Utility over time — scenario 3](docs/figures/uncertainty_simulation/scenario_3/utility_over_time.png)
+
+*Median utility with 10th–90th percentile bands. Gray bands mark degradation windows. Uncertainty-aware (P3) diverges from QoS-aware (P2) when σ grows during degradation.*
+
+**Provider selection over time:**
+
+![Provider selection — scenario 3](docs/figures/uncertainty_simulation/scenario_3/selection_over_time.png)
+
+*Which provider each policy selects (0 = Provider A, 1 = Provider B). P3 switches to B sooner and for longer than P2.*
+
+**Uncertainty evolution (σ_q and σ_a):**
+
+![Uncertainty evolution — scenario 3](docs/figures/uncertainty_simulation/scenario_3/uncertainty_evolution.png)
+
+*Dynamic sigma for quality (σ_q) and availability (σ_a) uncertainty for each provider. Sigma spikes during degradation and recovers afterwards.*
 
 ---
 
@@ -974,23 +1098,44 @@ The implementation is intentionally simplified to be runnable on a development l
 
 ```
 .
+├── start.sh                      # One-command: start all Go services + frontend (Ctrl+C to stop)
 ├── run_experiment.sh             # One-command: run all experiments + generate plots
 ├── docker-compose.yml            # Full stack deployment (Docker)
 ├── scripts/
 │   ├── experiments.py            # QoS trade-off + controlled degradation simulations
-│   ├── plot.py                   # Publication-quality PNG + PDF figure generation
-│   ├── requirements.txt          # Python dependencies (numpy, matplotlib)
-│   └── start-local.sh            # Alternative: start Go services only
+│   ├── plot.py                   # Publication-quality PNG + PDF figure generation (Exp 1–3)
+│   ├── uncertainty_sim.py        # Uncertainty-aware selection simulation + figures (Exp 4)
+│   ├── uncertainty_sim_large_text_v01.py  # Same simulation, larger text for IEEE single-column
+│   └── requirements.txt          # Python dependencies (numpy, matplotlib)
 ├── results/                      # Experiment output (created at runtime; runs/ excluded from git)
-│   ├── manifest.json             # Base seed, run count, reproducibility command
-│   ├── tradeoff/aggregated.csv   # QoS trade-off results (all runs × all α values)
-│   └── degradation/aggregated.csv # Degradation results (all runs × time × methods)
+│   ├── basic/
+│   │   ├── manifest.json         # Base seed, run count, reproducibility command
+│   │   ├── tradeoff/aggregated.csv
+│   │   └── degradation/aggregated.csv
+│   ├── improved01/
+│   │   ├── manifest.json
+│   │   ├── tradeoff/aggregated.csv
+│   │   └── degradation/aggregated.csv
+│   ├── failover_delay_vs_network_delay.csv
+│   └── uncertainty_simulation/
+│       ├── scenario_1/aggregated.csv
+│       ├── scenario_2/aggregated.csv
+│       └── scenario_3/aggregated.csv
 ├── docs/figures/                 # Publication-ready figures (PNG + PDF, tracked in git)
-│   ├── tradeoff_utility_vs_weight.{png,pdf}
-│   ├── tradeoff_qos_metrics_vs_weight.{png,pdf}
-│   ├── degradation_utility_over_time.{png,pdf}
-│   ├── degradation_utility_advantage.{png,pdf}
-│   └── failover_delay_vs_network_delay.{png,pdf}  ← generated after running failover scenario
+│   ├── basic/
+│   │   ├── tradeoff_provider_utilities.{png,pdf}
+│   │   ├── tradeoff_qos_metrics_vs_weight.{png,pdf}
+│   │   ├── degradation_combined.{png,pdf}
+│   │   └── failover_delay_vs_network_delay.{png,pdf}
+│   ├── improved01/
+│   │   ├── tradeoff_provider_utilities.{png,pdf}
+│   │   ├── tradeoff_qos_metrics_vs_weight.{png,pdf}
+│   │   └── degradation_combined.{png,pdf}
+│   └── uncertainty_simulation/
+│       ├── scenario_1/  {utility_over_time, selection_over_time, difference_plot,
+│       │                  uncertainty_evolution, provider_scores, summary}.{png,pdf}
+│       ├── scenario_2/  (same layout)
+│       └── scenario_3/  (same layout)
 ├── backend/
 │   ├── go.mod                    # Go module: mineio
 │   ├── Dockerfile                # Multi-stage build (ARG SERVICE_DIR)
@@ -1016,7 +1161,7 @@ The implementation is intentionally simplified to be runnable on a development l
 │       └── scenario/             # Demo scenario + failover experiment runner (:8700)
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx               # Main app: top bar + 4-tab navigation
+│   │   ├── App.tsx               # Main app: top bar + 6-tab navigation
 │   │   ├── api/index.ts          # REST API client (all services)
 │   │   ├── types/index.ts        # TypeScript types
 │   │   ├── hooks/usePolling.ts   # Generic polling hook (3 s)
@@ -1024,10 +1169,11 @@ The implementation is intentionally simplified to be runnable on a development l
 │   │       ├── SystemView/       # Service grid, composition graph, auth policies, orch logs
 │   │       ├── CDTaView/         # Inspection & recovery mission UI
 │   │       ├── CDTbView/         # Hazard monitoring & safe-access gating UI
-│   │       └── QoSView/          # Failover experiment controls, provider health, results table
+│   │       ├── QoSView/          # Failover experiment controls, provider health, results table
+│   │       ├── SimulationView/   # QoS degradation simulation (in-browser, Recharts)
+│   │       └── UncertaintySimView/ # Uncertainty-aware selection simulation (in-browser, no backend)
 │   └── Dockerfile
-└── scripts/
-    └── start-local.sh            # Alternative: start services only (no experiment)
+└── logs/                         # Service logs written by start.sh (gitignored)
 ```
 
 ### Frontend Tabs
@@ -1038,6 +1184,8 @@ The implementation is intentionally simplified to be runnable on a development l
 | **cDTa: Inspection & Recovery** | `CDTaView` | Mission phase stepper, mapping progress, hazard report, clearance status |
 | **cDTb: Hazard Monitoring** | `CDTbView` | Gas levels, safe-access decision, gate control |
 | **QoS & Failover** | `QoSView` | Provider health cards, failover event history, experiment controls (mode, delay, run), results table with gnuplot hint |
+| **Simulation** | `SimulationView` | In-browser QoS degradation simulation (Experiments 1–2); configurable runs, seed, weights, degradation parameters |
+| **Uncertainty-Aware Simulation** | `UncertaintySimView` | In-browser uncertainty-aware selection simulation (Experiment 4); scenario presets, risk factors, σ parameters; **no backend required** |
 
 ---
 
