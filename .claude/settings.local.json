@@ -119,7 +119,8 @@
       "Bash(/dev/null find:*)",
       "Bash(python scripts/experiments.py --runs 50 --seed 1234 --eval-scenario improved01)",
       "Bash(python scripts/plot.py --eval-scenario improved01 --input-dir results/ --output-dir docs/figures/)",
-      "Bash(grep -r paper.pdf /home/uffe/projects/MineIO_paper --include=*.md --include=*.sh --include=*.yml --include=*.yaml --include=*.json)"
+      "Bash(grep -r paper.pdf /home/uffe/projects/MineIO_paper --include=*.md --include=*.sh --include=*.yml --include=*.yaml --include=*.json)",
+      "Bash(ls /home/uffe/projects/MineIO_paper/*.sh /home/uffe/projects/MineIO_paper/Makefile)"
     ]
   }
 }

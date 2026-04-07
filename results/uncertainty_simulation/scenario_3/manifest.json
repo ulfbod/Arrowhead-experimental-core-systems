@@ -1,0 +1,40 @@
+{
+  "generated_at": "2026-04-06T17:24:11Z",
+  "scenario": "scenario_3",
+  "label": "Extreme Uncertainty",
+  "description": "Very high uncertainty for provider A (\u03c3_q=0.18, \u03c3_a=0.12) with strong risk aversion (\u03c1=2.0). Provider A has better nominal QoS, but its risk-adjusted utility is substantially lower. The uncertainty-aware policy clearly prefers provider B throughout the simulation, while the QoS-aware policy prefers A. Three degradation episodes make the relative advantage unmistakable.",
+  "base_seed": 124771445,
+  "runs": 30,
+  "policies": [
+    "baseline",
+    "qos_aware",
+    "uncertainty_aware"
+  ],
+  "provider_a": {
+    "acc_mean": 0.93,
+    "lat_mean": 30.0,
+    "rel_mean": 0.96,
+    "sigma_q": 0.18,
+    "sigma_a": 0.12
+  },
+  "provider_b": {
+    "acc_mean": 0.74,
+    "lat_mean": 8.0,
+    "rel_mean": 0.86,
+    "sigma_q": 0.02,
+    "sigma_a": 0.02
+  },
+  "weights": {
+    "w_acc": 0.45,
+    "w_lat": 0.2,
+    "w_rel": 0.35
+  },
+  "risk_q": 2.0,
+  "risk_a": 2.0,
+  "avail_threshold": 0.15,
+  "util_threshold": 0.5,
+  "hysteresis": 0.04,
+  "sim_duration_s": 150,
+  "recovery_s": 10,
+  "episode_count": 3
+}

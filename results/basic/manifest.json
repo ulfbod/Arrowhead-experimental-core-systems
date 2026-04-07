@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-04-03T08:59:00Z",
-  "base_seed": 1323069963,
+  "generated_at": "2026-04-03T09:13:56Z",
+  "base_seed": 999193815,
   "runs": 30,
   "scenario": "all",
   "eval_scenario": "basic",
@@ -8,8 +8,8 @@
     "qos_aware",
     "availability_based"
   ],
-  "seed_schedule": "seed_i = 1323069963 + i   for i = 0 .. 29",
-  "reproducibility": "python scripts/experiments.py --seed 1323069963 --runs 30 --scenario all --eval-scenario basic",
+  "seed_schedule": "seed_i = 999193815 + i   for i = 0 .. 29",
+  "reproducibility": "python scripts/experiments.py --seed 999193815 --runs 30 --scenario all --eval-scenario basic",
   "scenario_description": "Current evaluation: moderate QoS separation, two degradation episodes, 120 s simulation.",
   "tradeoff_provider_A": {
     "accuracy_range": [

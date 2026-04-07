@@ -4,12 +4,13 @@ import CDTaView from './components/CDTaView'
 import CDTbView from './components/CDTbView'
 import QoSView from './components/QoSView'
 import SimulationView from './components/SimulationView'
+import UncertaintySimView from './components/UncertaintySimView'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import usePolling from './hooks/usePolling'
 import { urls, startScenario, resetScenario, injectHazard, triggerGasSpike, clearAll } from './api'
 import type { ScenarioStatus } from './types'
 
-type Tab = 'system' | 'cdta' | 'cdtb' | 'qos' | 'simulation'
+type Tab = 'system' | 'cdta' | 'cdtb' | 'qos' | 'simulation' | 'uncertainty'
 type DemoScenario = 'inspection' | 'hazard' | 'emergency'
 
 const DEMO_SCENARIOS: Record<DemoScenario, { label: string; description: string; steps: string[]; focusTab: Tab }> = {
@@ -348,6 +349,7 @@ const App: React.FC = () => {
           { id: 'cdtb',       label: 'cDTb: Hazard Monitoring' },
           { id: 'qos',        label: 'QoS & Failover' },
           { id: 'simulation', label: 'Simulation' },
+          { id: 'uncertainty', label: 'Uncertainty-Aware Simulation' },
         ] as { id: Tab; label: string }[]).map(tab => (
           <button
             key={tab.id}
@@ -390,6 +392,9 @@ const App: React.FC = () => {
         </ErrorBoundary>
         <ErrorBoundary name="Simulation View">
           {activeTab === 'simulation' && <SimulationView simSpeed={simSpeed} />}
+        </ErrorBoundary>
+        <ErrorBoundary name="Uncertainty Simulation View">
+          {activeTab === 'uncertainty' && <UncertaintySimView />}
         </ErrorBoundary>
       </main>
 
