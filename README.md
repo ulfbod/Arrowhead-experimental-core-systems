@@ -74,31 +74,13 @@ The system follows the three-layer architecture described in the paper:
 
 ```mermaid
 graph TB
-    subgraph PS["Physical Space"]
-        M1["🤖 Robot A"]
-        M2["🤖 Robot B"]
-        M3["🔬 Gas Sensor A"]
-        M4["🔬 Gas Sensor B"]
-        M5["🚛 LHD A"]
-        M6["🚛 LHD B"]
-        M7["🖥️ Operator Station"]
-    end
+    FE["🌐 Frontend\nReact+TypeScript\n:3000"]
+    SC["⚙️ Scenario Runner\n:8700"]
 
     subgraph VS["Virtual Space"]
-        subgraph IDT["Physical/iDT Layer"]
-            IDT1A["iDT1a\nInspection Robot A\n:8101"]
-            IDT1B["iDT1b\nInspection Robot B\n:8102"]
-            IDT2A["iDT2a\nGas Sensing A\n:8201"]
-            IDT2B["iDT2b\nGas Sensing B\n:8202"]
-            IDT3A["iDT3a\nLHD Vehicle A\n:8301"]
-            IDT3B["iDT3b\nLHD Vehicle B\n:8302"]
-            IDT4["iDT4\nTele-Remote\n:8401"]
-        end
-
-        subgraph AH["Eclipse Arrowhead Core :8000"]
-            REG["Service Registry"]
-            ORCH["Orchestration"]
-            AUTH["Authorization"]
+        subgraph UPPER["Upper cDT Layer"]
+            CDTA["cDTa\nInspection &\nRecovery\n:8601"]
+            CDTB["cDTb\nHazard Monitoring\n& Access Control\n:8602"]
         end
 
         subgraph LOWER["Lower cDT Layer"]
@@ -109,22 +91,40 @@ graph TB
             CDT5["cDT5\nTele-Remote\nIntervention\n:8505"]
         end
 
-        subgraph UPPER["Upper cDT Layer"]
-            CDTA["cDTa\nInspection &\nRecovery\n:8601"]
-            CDTB["cDTb\nHazard Monitoring\n& Access Control\n:8602"]
+        subgraph AH["Eclipse Arrowhead Core :8000"]
+            REG["Service Registry"]
+            ORCH["Orchestration"]
+            AUTH["Authorization"]
+        end
+
+        subgraph IDT["Physical/iDT Layer"]
+            IDT1A["iDT1a\nInspection Robot A\n:8101"]
+            IDT1B["iDT1b\nInspection Robot B\n:8102"]
+            IDT2A["iDT2a\nGas Sensing A\n:8201"]
+            IDT2B["iDT2b\nGas Sensing B\n:8202"]
+            IDT3A["iDT3a\nLHD Vehicle A\n:8301"]
+            IDT3B["iDT3b\nLHD Vehicle B\n:8302"]
+            IDT4["iDT4\nTele-Remote\n:8401"]
         end
     end
 
-    FE["🌐 Frontend\nReact+TypeScript\n:3000"]
-    SC["⚙️ Scenario Runner\n:8700"]
+    subgraph PS["Physical Space"]
+        M1["🤖 Robot A"]
+        M2["🤖 Robot B"]
+        M3["🔬 Gas Sensor A"]
+        M4["🔬 Gas Sensor B"]
+        M5["🚛 LHD A"]
+        M6["🚛 LHD B"]
+        M7["🖥️ Operator Station"]
+    end
 
-    M1 -.->|proxied by| IDT1A
-    M2 -.->|proxied by| IDT1B
-    M3 -.->|proxied by| IDT2A
-    M4 -.->|proxied by| IDT2B
-    M5 -.->|proxied by| IDT3A
-    M6 -.->|proxied by| IDT3B
-    M7 -.->|proxied by| IDT4
+    IDT1A -.->|represents| M1
+    IDT1B -.->|represents| M2
+    IDT2A -.->|represents| M3
+    IDT2B -.->|represents| M4
+    IDT3A -.->|represents| M5
+    IDT3B -.->|represents| M6
+    IDT4 -.->|represents| M7
 
     IDT1A & IDT1B -->|register| REG
     IDT2A & IDT2B -->|register| REG
@@ -141,7 +141,7 @@ graph TB
 
     CDT1 -->|composes| IDT1A & IDT1B
     CDT2 -->|composes| IDT2A & IDT2B
-    CDT3 -->|composes| IDT1A & IDT2A
+    CDT3 -->|composes| CDT1 & CDT2 & IDT1A & IDT1B
     CDT4 -->|composes| IDT3A & IDT3B
     CDT5 -->|composes| IDT4
 
@@ -149,9 +149,12 @@ graph TB
     CDTB -->|composes| CDT2 & CDT3
 
     FE -->|REST| AH
-    FE -->|REST| CDTA & CDTB
+    FE -->|REST| IDT1A & IDT1B & IDT2A & IDT2B & IDT3A & IDT3B & IDT4
+    FE -->|REST| CDT1 & CDT2 & CDT3 & CDT4 & CDT5 & CDTA & CDTB
     FE -->|REST| SC
-    SC -->|control| IDT1A & IDT1B & IDT2A & IDT2B
+
+    SC -->|control| IDT1A & IDT1B & IDT2A & IDT2B & IDT3A & IDT3B & IDT4
+    SC -->|control| CDT1 & CDT2 & CDT3 & CDT4 & CDT5 & CDTA & CDTB
 ```
 
 ---
@@ -164,7 +167,7 @@ The paper defines which services each cDT is authorized to consume:
 |----------|---------------------|---------|
 | **cDT1** | iDT1a, iDT1b | SLAM-based mapping, QoS-aware robot selection |
 | **cDT2** | iDT2a, iDT2b | Gas monitoring, threshold alerting, QoS-aware sensor selection |
-| **cDT3** | iDT1a, iDT2a | Hazard detection/classification, fuses robot scan data and gas readings |
+| **cDT3** | cDT1, cDT2, iDT1a, iDT1b | Hazard detection/classification, fuses mapping composite, gas composite, and direct robot hazard readings |
 | **cDT4** | iDT3a, iDT3b | Debris clearance, QoS-aware LHD vehicle selection |
 | **cDT5** | iDT4 | Tele-remote intervention and manual override |
 | **cDTa** | cDT1, cDT3, cDT4, cDT5 | Inspection, task allocation, QoS-aware coordination |
