@@ -118,6 +118,8 @@ graph TB
         M7["🖥️ Operator Station"]
     end
 
+    VS ~~~ PS
+
     IDT1A -.->|represents| M1
     IDT1B -.->|represents| M2
     IDT2A -.->|represents| M3
