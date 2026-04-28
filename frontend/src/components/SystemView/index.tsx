@@ -46,23 +46,26 @@ const SERVICE_DEFS: ServiceDef[] = [
   { id: 'scenario', label: 'Scenario Runner', type: 'core', port: 8700, stateUrl: 'http://localhost:8700/state', category: 'Orchestration' },
 ]
 
-// Service composition edges: [consumer, provider, label, isFailover]
+// Service composition edges: [consumer, provider, label, isFailover, labelDy?]
 // isFailover=true → dashed amber line showing reorchestration path to backup iDT
-const GRAPH_EDGES: [string, string, string, boolean][] = [
+// labelDy offsets the label vertically to avoid overlaps (optional, default 0)
+const GRAPH_EDGES: [string, string, string, boolean, number?][] = [
   ['cdt1', 'idt1a', 'mapping',   false],
   ['cdt1', 'idt1b', 'mapping',   true ],  // failover: cDT1 → Robot B
   ['cdt2', 'idt2a', 'gas',       false],
   ['cdt2', 'idt2b', 'gas',       true ],  // failover: cDT2 → Gas B
-  ['cdt3', 'idt2a', 'gas',       false],
+  ['cdt3', 'cdt1',  'map',       false],
+  ['cdt3', 'cdt2',  'gas',       false],
   ['cdt3', 'idt1a', 'scan',      false],
+  ['cdt3', 'idt1b', 'scan',      false],
   ['cdt4', 'idt3a', 'clear',     false],
   ['cdt4', 'idt3b', 'clear',     true ],  // failover: cDT4 → LHD B
   ['cdt5', 'idt4',  'intervene', false],
   ['cdta', 'cdt1',  'map',       false],
-  ['cdta', 'cdt3',  'hazard',    false],
+  ['cdta', 'cdt3',  'hazard',    false,  -10],  // label shifted up to avoid overlap with cDTb→cDT2
   ['cdta', 'cdt4',  'clear',     false],
   ['cdta', 'cdt5',  'intervene', false],
-  ['cdtb', 'cdt2',  'gas',       false],
+  ['cdtb', 'cdt2',  'gas',       false,  +10],  // label shifted down to avoid overlap with cDTa→cDT3
   ['cdtb', 'cdt3',  'hazard',    false],
 ]
 
@@ -369,7 +372,7 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
         {[true, false].map(failoverPass =>
           GRAPH_EDGES
             .filter(([,,,isFailover]) => isFailover === failoverPass)
-            .map(([fromId, toId, label, isFailover], i) => {
+            .map(([fromId, toId, label, isFailover, labelDy = 0], i) => {
               const from = getNode(fromId)
               const to   = getNode(toId)
               if (!from || !to) return null
@@ -399,7 +402,7 @@ const ServiceGraph: React.FC<{ serviceMap: Map<string, ServiceRecord> }> = ({ se
                     strokeDasharray={dashArray}
                     markerEnd={markerEnd}
                   />
-                  <text x={mx} y={(y1 + y2) / 2 - 3} textAnchor="middle"
+                  <text x={mx} y={(y1 + y2) / 2 - 3 + labelDy} textAnchor="middle"
                     style={{
                       fill: isFailover ? '#b45309' : '#475569',
                       fontSize: 10,
