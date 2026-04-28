@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arrowhead Service Registry – Dashboard</title>
+  <style>
+    body { font-family: monospace; max-width: 900px; margin: 40px auto; padding: 0 20px; background: #fafafa; color: #222; }
+    h1 { font-size: 1.2rem; border-bottom: 2px solid #222; padding-bottom: 6px; }
+    h2 { font-size: 1rem; margin-top: 2rem; }
+    label { display: block; margin: 6px 0 2px; font-size: 0.85rem; }
+    input, select { font-family: monospace; font-size: 0.85rem; padding: 4px 6px; width: 100%; box-sizing: border-box; border: 1px solid #aaa; }
+    button { margin-top: 10px; padding: 6px 16px; font-family: monospace; cursor: pointer; background: #222; color: #fff; border: none; }
+    button:hover { background: #444; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.82rem; }
+    th { text-align: left; border-bottom: 2px solid #222; padding: 4px 8px; }
+    td { padding: 4px 8px; border-bottom: 1px solid #ddd; vertical-align: top; }
+    .empty { color: #888; font-size: 0.85rem; margin-top: 8px; }
+    .error { color: #c00; font-size: 0.85rem; margin-top: 6px; }
+    .status { font-size: 0.82rem; margin-top: 6px; color: #080; }
+    #core-url-row { display: flex; gap: 8px; align-items: center; margin-bottom: 1.5rem; }
+    #core-url-row input { max-width: 300px; }
+  </style>
+</head>
+<body>
+
+<h1>Arrowhead Service Registry – Dashboard</h1>
+
+<div id="core-url-row">
+  <label style="margin:0">Core URL:</label>
+  <input id="coreUrl" value="http://localhost:8080">
+  <button onclick="loadAll()">Refresh</button>
+</div>
+
+<!-- ── Register ─────────────────────────────────────────── -->
+<h2>Register Service</h2>
+<label>serviceDefinition</label>
+<input id="reg-def" placeholder="temperature-service">
+<label>systemName</label>
+<input id="reg-sysname" placeholder="sensor-1">
+<label>address</label>
+<input id="reg-addr" placeholder="192.168.0.10">
+<label>port</label>
+<input id="reg-port" placeholder="9001" type="number">
+<label>serviceUri</label>
+<input id="reg-uri" placeholder="/temperature">
+<label>interfaces (comma-separated)</label>
+<input id="reg-ifaces" placeholder="HTTP-SECURE-JSON, HTTP-INSECURE-JSON">
+<label>version</label>
+<input id="reg-version" placeholder="1" type="number">
+<label>metadata (JSON object, optional)</label>
+<input id="reg-meta" placeholder='{"region":"eu","unit":"celsius"}'>
+<label>secure (optional)</label>
+<input id="reg-secure" placeholder="NOT_SECURE">
+<button onclick="registerService()">Register</button>
+<div id="reg-status"></div>
+
+<!-- ── Query ────────────────────────────────────────────── -->
+<h2>Query Services</h2>
+<label>serviceDefinition (leave blank for all)</label>
+<input id="q-def" placeholder="">
+<label>interfaces (comma-separated, leave blank to skip)</label>
+<input id="q-ifaces" placeholder="">
+<label>metadata filter (JSON object, leave blank to skip)</label>
+<input id="q-meta" placeholder='{"region":"eu"}'>
+<label>versionRequirement (0 = any)</label>
+<input id="q-ver" placeholder="0" type="number">
+<button onclick="queryServices()">Query</button>
+<div id="query-status"></div>
+<div id="results"></div>
+
+<script>
+  function coreURL() {
+    return document.getElementById('coreUrl').value.replace(/\/$/, '');
+  }
+
+  async function post(path, body) {
+    const resp = await fetch(coreURL() + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    return data;
+  }
+
+  async function registerService() {
+    const statusEl = document.getElementById('reg-status');
+    statusEl.textContent = '';
+    statusEl.className = '';
+
+    const ifaces = document.getElementById('reg-ifaces').value
+      .split(',').map(s => s.trim()).filter(Boolean);
+
+    let metadata;
+    const rawMeta = document.getElementById('reg-meta').value.trim();
+    if (rawMeta) {
+      try { metadata = JSON.parse(rawMeta); }
+      catch { statusEl.textContent = 'Invalid metadata JSON'; statusEl.className = 'error'; return; }
+    }
+
+    const version = parseInt(document.getElementById('reg-version').value) || 1;
+
+    const body = {
+      serviceDefinition: document.getElementById('reg-def').value.trim(),
+      providerSystem: {
+        systemName: document.getElementById('reg-sysname').value.trim(),
+        address:    document.getElementById('reg-addr').value.trim(),
+        port:       parseInt(document.getElementById('reg-port').value),
+      },
+      serviceUri:  document.getElementById('reg-uri').value.trim(),
+      interfaces:  ifaces,
+      version,
+      ...(metadata ? { metadata } : {}),
+      ...(document.getElementById('reg-secure').value.trim()
+            ? { secure: document.getElementById('reg-secure').value.trim() } : {}),
+    };
+
+    try {
+      const result = await post('/serviceregistry/register', body);
+      statusEl.textContent = `Registered — id=${result.id}`;
+      statusEl.className = 'status';
+      loadAll();
+    } catch (e) {
+      statusEl.textContent = `Error: ${e.message}`;
+      statusEl.className = 'error';
+    }
+  }
+
+  async function queryServices() {
+    const statusEl = document.getElementById('query-status');
+    statusEl.textContent = '';
+    const resultsEl = document.getElementById('results');
+    resultsEl.innerHTML = '';
+
+    const ifaces = document.getElementById('q-ifaces').value
+      .split(',').map(s => s.trim()).filter(Boolean);
+
+    let metadata;
+    const rawMeta = document.getElementById('q-meta').value.trim();
+    if (rawMeta) {
+      try { metadata = JSON.parse(rawMeta); }
+      catch { statusEl.textContent = 'Invalid metadata JSON'; statusEl.className = 'error'; return; }
+    }
+
+    const ver = parseInt(document.getElementById('q-ver').value) || 0;
+
+    const body = {
+      ...(document.getElementById('q-def').value.trim()
+            ? { serviceDefinition: document.getElementById('q-def').value.trim() } : {}),
+      ...(ifaces.length ? { interfaces: ifaces } : {}),
+      ...(metadata ? { metadata } : {}),
+      ...(ver > 0 ? { versionRequirement: ver } : {}),
+    };
+
+    try {
+      const resp = await post('/serviceregistry/query', body);
+      renderResults(resp);
+    } catch (e) {
+      statusEl.textContent = `Error: ${e.message}`;
+      statusEl.className = 'error';
+    }
+  }
+
+  function renderResults(resp) {
+    const el = document.getElementById('results');
+    if (!resp.serviceQueryData.length) {
+      el.innerHTML = `<p class="empty">No results (unfilteredHits=${resp.unfilteredHits})</p>`;
+      return;
+    }
+    let rows = resp.serviceQueryData.map(s => `
+      <tr>
+        <td>${s.id}</td>
+        <td>${s.serviceDefinition}</td>
+        <td>${s.providerSystem.systemName}<br><small>${s.providerSystem.address}:${s.providerSystem.port}</small></td>
+        <td>${s.serviceUri}</td>
+        <td>${s.interfaces.join(', ')}</td>
+        <td>${s.version}</td>
+        <td>${s.metadata ? Object.entries(s.metadata).map(([k,v])=>`${k}=${v}`).join('<br>') : ''}</td>
+        <td>${s.secure || ''}</td>
+      </tr>`).join('');
+    el.innerHTML = `
+      <p class="status">matches=${resp.serviceQueryData.length}  unfilteredHits=${resp.unfilteredHits}</p>
+      <table>
+        <thead><tr>
+          <th>id</th><th>serviceDefinition</th><th>provider</th><th>uri</th>
+          <th>interfaces</th><th>ver</th><th>metadata</th><th>secure</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  async function loadAll() {
+    // Pre-populate query with empty filter to show all services.
+    document.getElementById('q-def').value = '';
+    document.getElementById('q-ifaces').value = '';
+    document.getElementById('q-meta').value = '';
+    document.getElementById('q-ver').value = '0';
+    await queryServices();
+  }
+
+  // Load on startup.
+  window.addEventListener('load', loadAll);
+</script>
+</body>
+</html>

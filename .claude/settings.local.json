@@ -134,7 +134,13 @@
       "Bash(./arrowhead)",
       "Bash(curl -s -X POST http://localhost:8000/authorization/policy -H 'Content-Type: application/json' -d '{\"id\":\"test-persist\",\"consumerId\":\"svc-a\",\"providerId\":\"svc-b\",\"serviceName\":\"data-read\",\"allowed\":true}')",
       "Bash(curl -s http://localhost:8000/authorization/policies)",
-      "Bash(go test:*)"
+      "Bash(go test:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(xargs sed:*)",
+      "Bash(sed -i 's|^module mineio|module arrowhead/serviceregistry|' /home/uffe/projects/ArrowheadCore/core/go.mod)",
+      "Bash(go mod:*)",
+      "Bash(npm install:*)"
     ]
   }
 }

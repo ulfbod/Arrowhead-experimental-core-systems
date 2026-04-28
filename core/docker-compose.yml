@@ -1,0 +1,22 @@
+version: "3.9"
+
+networks:
+  arrowhead-net:
+    driver: bridge
+
+services:
+
+  arrowhead:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: serviceregistry
+    container_name: serviceregistry
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+    networks:
+      - arrowhead-net
+    restart: unless-stopped
