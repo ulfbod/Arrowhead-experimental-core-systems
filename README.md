@@ -1,57 +1,102 @@
 # Arrowhead Core – Service Registry
 
-Minimal Arrowhead Core System – Service Registry implementation in Go.
+A Go implementation of the Arrowhead Core **Service Registry** system.
 
-## What Is Implemented
+## Overview
 
-This repository contains a self-contained implementation of the **Arrowhead Core Service Registry** system, along with the Authorization and Orchestration core systems that the Service Registry depends on for a complete service-of-services pattern.
+The Service Registry enables service providers to register themselves and allows consumers to discover services via structured queries. It is the central lookup component in an Arrowhead Core deployment.
 
-### Core systems
+Implemented according to the official specification:
+https://aitia-iiot.github.io/ah5-docs-java-spring/core_systems/service_registry/
 
-| System | Endpoints | Description |
-|--------|-----------|-------------|
-| **Service Registry** | `POST /registry/register`<br>`DELETE /registry/register?id=<id>`<br>`GET /registry`<br>`GET /registry/query` | Register, unregister, list, and query services by type or capability |
-| **Authorization** | `POST /authorization/check`<br>`POST /authorization/policy`<br>`DELETE /authorization/policy?id=<id>`<br>`GET /authorization/policies` | Policy-based consumer/provider access control |
-| **Orchestration** | `POST /orchestration`<br>`GET /orchestration/logs` | Discover an authorized provider for a requested service capability |
-| **Health** | `GET /health` | Liveness probe |
+---
 
-### Key features
+## API
 
-- Register services with ID, address, port, type, capabilities, and metadata
-- Query the registry by service type or capability
-- Authorization policies with wildcard support (`*`) for consumer, provider, and service name
-- Orchestration finds the first authorized provider for a requested capability and returns an auth token and endpoint URL
-- In-memory log of the last 200 orchestration decisions
-- CORS headers on all responses (suitable for browser clients)
-- Configurable port via `PORT` environment variable (default `8000`)
+### POST `/serviceregistry/register`
 
-## What Was Removed
+Register a service instance. Registering the same `(serviceDefinition, systemName, address, port, version)` tuple again overwrites the existing entry.
 
-The following components were part of the original research prototype and have been removed:
+**Request**
+```json
+{
+  "serviceDefinition": "temperature-service",
+  "providerSystem": {
+    "systemName": "sensor-1",
+    "address": "192.168.0.10",
+    "port": 8080,
+    "authenticationInfo": "optional"
+  },
+  "serviceUri": "/temperature",
+  "interfaces": ["HTTP-SECURE-JSON"],
+  "version": 1,
+  "metadata": {
+    "region": "eu",
+    "unit": "celsius"
+  },
+  "secure": "NOT_SECURE"
+}
+```
 
-- **Individual Digital Twins (iDT)**: robot, gas sensor, LHD vehicle, tele-remote operator services
-- **Composite Digital Twins (cDT)**: mapping, gas monitoring, hazard detection, material handling, tele-remote intervention, and two upper-layer mission cDTs
-- **Scenario orchestrator**: experiment runner that exercised the full digital-twin stack
-- **React frontend**: web UI for monitoring the digital-twin system
-- **Python experiment scripts**: QoS trade-off, degradation, failover, and uncertainty-simulation experiments
-- **Experiment results and figures**: CSV data, aggregated plots, and publication PDFs
-- **Runtime logs**: generated log files from experiment runs
-- Unused common library code: HTTP client, provider-selection logic, QoS metrics, QoS logging, and all domain types unrelated to the core systems (machine states, gas levels, hazard reports, mission phases, etc.)
+**Response** — `201 Created` with the stored service instance including its assigned `id`.
+
+Required fields: `serviceDefinition`, `providerSystem` (with `systemName`, `address`, `port` > 0), `serviceUri`, `interfaces` (non-empty).
+Optional fields: `authenticationInfo`, `version` (defaults to 1), `metadata`, `secure`.
+
+---
+
+### POST `/serviceregistry/query`
+
+Query registered services. All provided fields are applied as AND filters.
+
+**Request**
+```json
+{
+  "serviceDefinition": "temperature-service",
+  "interfaces": ["HTTP-SECURE-JSON"],
+  "metadata": { "region": "eu" },
+  "versionRequirement": 1
+}
+```
+
+All fields are optional. An empty request returns all registered services.
+
+**Matching rules:**
+- `serviceDefinition` — exact match
+- `interfaces` — service must provide **all** requested interfaces (case-insensitive)
+- `metadata` — service must contain **all** requested key-value pairs
+- `versionRequirement` — service version must equal the requested value
+
+**Response** — `200 OK`
+```json
+{
+  "serviceQueryData": [ ... ],
+  "unfilteredHits": 4
+}
+```
+
+---
+
+### GET `/health`
+
+Returns `200 OK` with `{"status": "ok"}`.
+
+---
 
 ## Build and Run
 
 ### Prerequisites
 
-- Go 1.21+ (for local build)
-- Docker and Docker Compose (for containerised run)
+- Go 1.25+
+- Docker and Docker Compose (optional)
 
 ### Local
 
 ```bash
 cd backend
-go build ./cmd/arrowhead
-./arrowhead            # listens on :8000 by default
-PORT=9000 ./arrowhead  # custom port
+go build ./cmd/serviceregistry
+./serviceregistry            # listens on :8080
+PORT=9000 ./serviceregistry  # custom port
 ```
 
 ### Docker Compose
@@ -60,41 +105,33 @@ PORT=9000 ./arrowhead  # custom port
 docker compose up --build
 ```
 
-The service will be available at `http://localhost:8000`.
+The service will be available at `http://localhost:8080`.
 
-## API Quick Reference
+---
 
-### Register a service
+## Project Structure
 
-```bash
-curl -X POST http://localhost:8000/registry/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "my-sensor-1",
-    "name": "Temperature Sensor 1",
-    "address": "192.168.1.10",
-    "port": 9001,
-    "serviceType": "sensor",
-    "capabilities": ["temperature-reading"],
-    "metadata": {"unit": "celsius"}
-  }'
+```
+backend/
+├── cmd/serviceregistry/   # entry point
+└── internal/
+    ├── api/               # HTTP handlers
+    ├── service/           # business logic and validation
+    ├── repository/        # in-memory storage
+    └── model/             # data types
 ```
 
-### Query by capability
+---
+
+## Tests
 
 ```bash
-curl "http://localhost:8000/registry/query?capability=temperature-reading"
+cd backend
+go test ./...
 ```
 
-### Orchestrate (discover an authorized provider)
-
-```bash
-curl -X POST http://localhost:8000/orchestration \
-  -H "Content-Type: application/json" \
-  -d '{"consumerId": "my-consumer", "serviceName": "temperature-reading"}'
-```
+---
 
 ## Reference
 
-Official Arrowhead Core documentation:
-https://aitia-iiot.github.io/ah5-docs-java-spring/core_systems/service_registry/
+- [Arrowhead Service Registry – Official Documentation](https://aitia-iiot.github.io/ah5-docs-java-spring/core_systems/service_registry/)
