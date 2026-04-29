@@ -19,6 +19,7 @@ func NewHandler(orch *service.DynamicOrchestrator) http.Handler {
 	h := &Handler{orch: orch}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/orchestration/dynamic", h.handleOrchestrate)
+	mux.HandleFunc("/orchestration/dynamic/health", h.handleHealth)
 	mux.HandleFunc("/health", h.handleHealth)
 	return mux
 }

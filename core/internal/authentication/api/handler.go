@@ -21,6 +21,7 @@ func NewHandler(svc *service.AuthService) http.Handler {
 	mux.HandleFunc("/authentication/identity/login", h.handleLogin)
 	mux.HandleFunc("/authentication/identity/logout", h.handleLogout)
 	mux.HandleFunc("/authentication/identity/verify", h.handleVerify)
+	mux.HandleFunc("/authentication/health", h.handleHealth)
 	mux.HandleFunc("/health", h.handleHealth)
 	return mux
 }

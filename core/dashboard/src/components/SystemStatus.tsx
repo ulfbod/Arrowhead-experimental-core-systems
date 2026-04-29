@@ -2,17 +2,21 @@ import { useEffect, useState } from 'react'
 import type { SystemStatus } from '../types'
 import { checkHealth } from '../api'
 
-const SYSTEMS: SystemStatus[] = [
-  { name: 'ServiceRegistry',               url: '',                          healthy: null },
-  { name: 'Authentication',                url: 'http://localhost:8081',     healthy: null },
-  { name: 'ConsumerAuthorization',         url: 'http://localhost:8082',     healthy: null },
-  { name: 'DynamicOrchestration',          url: 'http://localhost:8083',     healthy: null },
-  { name: 'SimpleStoreOrchestration',      url: 'http://localhost:8084',     healthy: null },
-  { name: 'FlexibleStoreOrchestration',    url: 'http://localhost:8085',     healthy: null },
+interface SystemEntry extends SystemStatus {
+  port: string
+}
+
+const SYSTEMS: SystemEntry[] = [
+  { name: 'ServiceRegistry',            url: '',                             port: '8080', healthy: null },
+  { name: 'Authentication',             url: '/authentication',              port: '8081', healthy: null },
+  { name: 'ConsumerAuthorization',      url: '/authorization',               port: '8082', healthy: null },
+  { name: 'DynamicOrchestration',       url: '/orchestration/dynamic',       port: '8083', healthy: null },
+  { name: 'SimpleStoreOrchestration',   url: '/orchestration/simplestore',   port: '8084', healthy: null },
+  { name: 'FlexibleStoreOrchestration', url: '/orchestration/flexiblestore', port: '8085', healthy: null },
 ]
 
 export default function SystemStatus() {
-  const [statuses, setStatuses] = useState<SystemStatus[]>(SYSTEMS)
+  const [statuses, setStatuses] = useState<SystemEntry[]>(SYSTEMS)
 
   useEffect(() => {
     SYSTEMS.forEach((sys, i) => {
@@ -32,7 +36,7 @@ export default function SystemStatus() {
         <div key={sys.name} style={{ ...s.card, borderColor: dotColor(sys.healthy) }}>
           <span style={{ ...s.dot, background: dotColor(sys.healthy) }} />
           <span style={s.name}>{sys.name}</span>
-          {sys.url && <span style={s.port}>{sys.url.split(':').pop()}</span>}
+          <span style={s.port}>{sys.port}</span>
         </div>
       ))}
     </div>

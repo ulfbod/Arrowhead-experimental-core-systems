@@ -22,6 +22,7 @@ func NewHandler(orch *service.FlexibleStoreOrchestrator) http.Handler {
 	mux.HandleFunc("/orchestration/flexiblestore", h.handleOrchestrate)
 	mux.HandleFunc("/orchestration/flexiblestore/rules", h.handleRules)
 	mux.HandleFunc("/orchestration/flexiblestore/rules/", h.handleRuleByID)
+	mux.HandleFunc("/orchestration/flexiblestore/health", h.handleHealth)
 	mux.HandleFunc("/health", h.handleHealth)
 	return mux
 }

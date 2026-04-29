@@ -23,6 +23,7 @@ func NewHandler(orch *service.SimpleStoreOrchestrator) http.Handler {
 	mux.HandleFunc("/orchestration/simplestore", h.handleOrchestrate)
 	mux.HandleFunc("/orchestration/simplestore/rules", h.handleRules)
 	mux.HandleFunc("/orchestration/simplestore/rules/", h.handleRuleByID)
+	mux.HandleFunc("/orchestration/simplestore/health", h.handleHealth)
 	mux.HandleFunc("/health", h.handleHealth)
 	return mux
 }

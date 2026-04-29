@@ -1,5 +1,7 @@
 # Architecture
 
+See [DIAGRAMS.md](DIAGRAMS.md) for Mermaid architecture and sequence diagrams.
+
 This repository is divided into two clearly separated areas.
 
 ---

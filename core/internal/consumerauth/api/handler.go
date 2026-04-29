@@ -24,6 +24,7 @@ func NewHandler(svc *service.AuthService) http.Handler {
 	mux.HandleFunc("/authorization/lookup", h.handleLookup)
 	mux.HandleFunc("/authorization/verify", h.handleVerify)
 	mux.HandleFunc("/authorization/token/generate", h.handleGenerateToken)
+	mux.HandleFunc("/authorization/health", h.handleHealth)
 	mux.HandleFunc("/health", h.handleHealth)
 	return mux
 }

@@ -134,6 +134,7 @@ Each binary reads configuration from environment variables:
 ## Reference
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — structural overview and inter-system communication
+- [DIAGRAMS.md](DIAGRAMS.md) — Mermaid architecture and sequence diagrams
 - [core/SPEC.md](core/SPEC.md) — complete API specification for all six systems
 - [core/GAP_ANALYSIS.md](core/GAP_ANALYSIS.md) — AH5 compliance notes and design decisions
 - [Arrowhead 5 Documentation](https://aitia-iiot.github.io/ah5-docs-java-spring/core_systems/)
