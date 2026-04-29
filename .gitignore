@@ -38,6 +38,10 @@ frontend/node_modules/
 frontend/dist/
 frontend/.env.local
 
+# Core dashboard
+core/dashboard/node_modules/
+core/dashboard/dist/
+
 # IDE
 .idea/
 .vscode/

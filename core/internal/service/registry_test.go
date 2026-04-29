@@ -1,10 +1,11 @@
 package service_test
 
 import (
-	"arrowhead/serviceregistry/internal/model"
-	"arrowhead/serviceregistry/internal/repository"
-	"arrowhead/serviceregistry/internal/service"
 	"testing"
+
+	"arrowhead/core/internal/model"
+	"arrowhead/core/internal/repository"
+	"arrowhead/core/internal/service"
 )
 
 func newService() *service.RegistryService {
@@ -82,7 +83,7 @@ func TestRegisterOptionalFields(t *testing.T) {
 
 func TestRegisterValidation(t *testing.T) {
 	tests := []struct {
-		name  string
+		name   string
 		mutate func(*model.RegisterRequest)
 	}{
 		{"missing serviceDefinition", func(r *model.RegisterRequest) { r.ServiceDefinition = "" }},
@@ -131,7 +132,6 @@ func TestRegisterDuplicateOverwrites(t *testing.T) {
 	if second.Metadata["region"] != "us" {
 		t.Errorf("Metadata not updated: %q", second.Metadata["region"])
 	}
-	// Only one entry in the registry.
 	resp := svc.Query(model.QueryRequest{ServiceDefinition: "temperature-service"})
 	if len(resp.ServiceQueryData) != 1 {
 		t.Errorf("expected 1 stored entry, got %d", len(resp.ServiceQueryData))
@@ -156,6 +156,38 @@ func TestRegisterVersionsCoexist(t *testing.T) {
 	resp := svc.Query(model.QueryRequest{ServiceDefinition: "temperature-service"})
 	if len(resp.ServiceQueryData) != 2 {
 		t.Errorf("expected 2 entries (v1+v2), got %d", len(resp.ServiceQueryData))
+	}
+}
+
+// ---- Unregister ----
+
+func TestUnregisterValid(t *testing.T) {
+	svc := newService()
+	svc.Register(validRequest())
+
+	err := svc.Unregister(model.UnregisterRequest{
+		ServiceDefinition: "temperature-service",
+		ProviderSystem:    &model.System{SystemName: "sensor-1", Address: "192.168.0.10", Port: 8080},
+		Version:           1,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resp := svc.Query(model.QueryRequest{ServiceDefinition: "temperature-service"})
+	if len(resp.ServiceQueryData) != 0 {
+		t.Errorf("expected 0 after unregister, got %d", len(resp.ServiceQueryData))
+	}
+}
+
+func TestUnregisterNotFound(t *testing.T) {
+	svc := newService()
+	err := svc.Unregister(model.UnregisterRequest{
+		ServiceDefinition: "nonexistent",
+		ProviderSystem:    &model.System{SystemName: "s", Address: "10.0.0.1", Port: 9000},
+		Version:           1,
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent service")
 	}
 }
 
@@ -315,26 +347,22 @@ func TestQueryVersionRequirementMatchesCorrectVersion(t *testing.T) {
 func TestQueryCombinedFilters(t *testing.T) {
 	svc := newService()
 
-	// Register eu v1
 	req := validRequest()
 	req.Version = 1
 	req.Metadata = map[string]string{"region": "eu"}
 	svc.Register(req)
 
-	// Register us v1
 	req2 := validRequest()
 	req2.ProviderSystem.SystemName = "sensor-2"
 	req2.Version = 1
 	req2.Metadata = map[string]string{"region": "us"}
 	svc.Register(req2)
 
-	// Register eu v2
 	req3 := validRequest()
 	req3.Version = 2
 	req3.Metadata = map[string]string{"region": "eu"}
 	svc.Register(req3)
 
-	// Filter: eu + v1 → only the first
 	resp := svc.Query(model.QueryRequest{
 		Metadata:           map[string]string{"region": "eu"},
 		VersionRequirement: 1,

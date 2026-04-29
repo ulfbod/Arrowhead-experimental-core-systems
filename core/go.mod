@@ -1,3 +1,3 @@
-module arrowhead/serviceregistry
+module arrowhead/core
 
 go 1.25.0

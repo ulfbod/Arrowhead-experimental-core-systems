@@ -7,9 +7,10 @@ package service
 
 import (
 	"errors"
-	"arrowhead/serviceregistry/internal/model"
-	"arrowhead/serviceregistry/internal/repository"
 	"strings"
+
+	"arrowhead/core/internal/model"
+	"arrowhead/core/internal/repository"
 )
 
 var (
@@ -20,6 +21,7 @@ var (
 	ErrInvalidPort              = errors.New("providerSystem.port must be > 0")
 	ErrMissingServiceUri        = errors.New("serviceUri is required")
 	ErrMissingInterfaces        = errors.New("interfaces must contain at least one entry")
+	ErrServiceNotFound          = errors.New("service not found")
 )
 
 // RegistryService implements the Service Registry business logic.
@@ -73,14 +75,34 @@ func (s *RegistryService) Register(req model.RegisterRequest) (*model.ServiceIns
 	return s.repo.Save(svc), nil
 }
 
+// Unregister removes a service instance identified by the natural key.
+func (s *RegistryService) Unregister(req model.UnregisterRequest) error {
+	if strings.TrimSpace(req.ServiceDefinition) == "" {
+		return ErrMissingServiceDefinition
+	}
+	if req.ProviderSystem == nil {
+		return ErrMissingProviderSystem
+	}
+	if strings.TrimSpace(req.ProviderSystem.SystemName) == "" {
+		return ErrMissingSystemName
+	}
+	if strings.TrimSpace(req.ProviderSystem.Address) == "" {
+		return ErrMissingAddress
+	}
+	if req.ProviderSystem.Port <= 0 {
+		return ErrInvalidPort
+	}
+	version := req.Version
+	if version <= 0 {
+		version = 1
+	}
+	if !s.repo.Delete(req.ServiceDefinition, req.ProviderSystem.SystemName, req.ProviderSystem.Address, req.ProviderSystem.Port, version) {
+		return ErrServiceNotFound
+	}
+	return nil
+}
+
 // Query returns all service instances matching the filter criteria.
-// All non-zero fields in the request are applied as AND filters:
-//   - ServiceDefinition: exact match
-//   - Interfaces:        service must provide ALL requested interfaces (case-insensitive)
-//   - Metadata:          service must contain ALL requested key-value pairs
-//   - VersionRequirement: service version must equal the requested value
-//
-// An empty request returns all registered services.
 func (s *RegistryService) Query(req model.QueryRequest) model.QueryResponse {
 	all := s.repo.All()
 	unfilteredHits := len(all)
@@ -110,7 +132,6 @@ func (s *RegistryService) Query(req model.QueryRequest) model.QueryResponse {
 	}
 }
 
-// hasAllInterfaces returns true if svcIfaces contains every interface in required (case-insensitive).
 func hasAllInterfaces(svcIfaces, required []string) bool {
 	set := make(map[string]struct{}, len(svcIfaces))
 	for _, i := range svcIfaces {
@@ -124,7 +145,6 @@ func hasAllInterfaces(svcIfaces, required []string) bool {
 	return true
 }
 
-// hasAllMetadata returns true if svcMeta contains every key-value pair in required.
 func hasAllMetadata(svcMeta, required map[string]string) bool {
 	for k, v := range required {
 		if svcMeta[k] != v {

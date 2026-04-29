@@ -37,6 +37,14 @@ type RegisterRequest struct {
 	Secure            string            `json:"secure,omitempty"`
 }
 
+// UnregisterRequest is the body for DELETE /serviceregistry/unregister.
+// Identifies a service instance by its natural key.
+type UnregisterRequest struct {
+	ServiceDefinition string  `json:"serviceDefinition"`
+	ProviderSystem    *System `json:"providerSystem"`
+	Version           int     `json:"version"`
+}
+
 // QueryRequest is the body for POST /serviceregistry/query.
 // All non-zero fields are ANDed together as filters.
 type QueryRequest struct {
@@ -46,7 +54,7 @@ type QueryRequest struct {
 	VersionRequirement int               `json:"versionRequirement,omitempty"`
 }
 
-// QueryResponse is returned by POST /serviceregistry/query.
+// QueryResponse is returned by POST /serviceregistry/query and GET /serviceregistry/lookup.
 type QueryResponse struct {
 	ServiceQueryData []*ServiceInstance `json:"serviceQueryData"`
 	UnfilteredHits   int                `json:"unfilteredHits"`

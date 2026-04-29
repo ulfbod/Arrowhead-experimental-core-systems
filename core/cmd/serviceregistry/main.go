@@ -1,17 +1,17 @@
 // Arrowhead Core – Service Registry entry point.
 //
 // DO NOT MODIFY FOR EXPERIMENTS.
-// This binary is the stable core service. Experimental extensions belong in
-// experiments/ and must communicate with this process via HTTP only.
 package main
 
 import (
 	"log"
-	"arrowhead/serviceregistry/internal/api"
-	"arrowhead/serviceregistry/internal/config"
-	"arrowhead/serviceregistry/internal/repository"
-	"arrowhead/serviceregistry/internal/service"
 	"net/http"
+	"os"
+
+	"arrowhead/core/internal/api"
+	"arrowhead/core/internal/config"
+	"arrowhead/core/internal/repository"
+	"arrowhead/core/internal/service"
 )
 
 func main() {
@@ -19,8 +19,18 @@ func main() {
 
 	repo := repository.NewMemoryRepository()
 	svc := service.NewRegistryService(repo)
-	handler := api.NewHandler(svc)
+	apiHandler := api.NewHandler(svc)
+
+	mux := http.NewServeMux()
+	mux.Handle("/serviceregistry/", apiHandler)
+	mux.Handle("/health", apiHandler)
+
+	const distDir = "dashboard/dist"
+	if info, err := os.Stat(distDir); err == nil && info.IsDir() {
+		mux.Handle("/", http.FileServer(http.Dir(distDir)))
+		log.Printf("[ServiceRegistry] Dashboard available at http://localhost:%s/", cfg.Port)
+	}
 
 	log.Printf("[ServiceRegistry] Listening on :%s", cfg.Port)
-	log.Fatal(http.ListenAndServe(":"+cfg.Port, handler))
+	log.Fatal(http.ListenAndServe(":"+cfg.Port, mux))
 }

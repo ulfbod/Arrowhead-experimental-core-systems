@@ -3,13 +3,14 @@ package api_test
 import (
 	"bytes"
 	"encoding/json"
-	"arrowhead/serviceregistry/internal/api"
-	"arrowhead/serviceregistry/internal/model"
-	"arrowhead/serviceregistry/internal/repository"
-	"arrowhead/serviceregistry/internal/service"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"arrowhead/core/internal/api"
+	"arrowhead/core/internal/model"
+	"arrowhead/core/internal/repository"
+	"arrowhead/core/internal/service"
 )
 
 func newTestHandler() http.Handler {
@@ -47,7 +48,6 @@ func decodeQuery(t *testing.T, w *httptest.ResponseRecorder) model.QueryResponse
 	return v
 }
 
-// shared valid register payload used across tests
 var fullRegisterBody = map[string]any{
 	"serviceDefinition": "temperature-service",
 	"providerSystem": map[string]any{
@@ -185,14 +185,8 @@ func TestHandlerQueryWrongTypes(t *testing.T) {
 		name string
 		body string
 	}{
-		{
-			"versionRequirement as string",
-			`{"versionRequirement":"two"}`,
-		},
-		{
-			"interfaces as string instead of array",
-			`{"interfaces":"HTTP"}`,
-		},
+		{"versionRequirement as string", `{"versionRequirement":"two"}`},
+		{"interfaces as string instead of array", `{"interfaces":"HTTP"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -214,6 +208,45 @@ func TestHandlerRegisterWrongMethod(t *testing.T) {
 	newTestHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ---- Unregister ----
+
+func TestHandlerUnregister(t *testing.T) {
+	h := newTestHandler()
+	postJSON(t, h, "/serviceregistry/register", fullRegisterBody)
+
+	req := httptest.NewRequest(http.MethodDelete, "/serviceregistry/unregister",
+		bytes.NewBufferString(`{"serviceDefinition":"temperature-service","providerSystem":{"systemName":"sensor-1","address":"192.168.0.10","port":8080},"version":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Should be gone
+	qw := postJSON(t, h, "/serviceregistry/query", map[string]any{"serviceDefinition": "temperature-service"})
+	resp := decodeQuery(t, qw)
+	if len(resp.ServiceQueryData) != 0 {
+		t.Errorf("expected 0 after unregister, got %d", len(resp.ServiceQueryData))
+	}
+}
+
+func TestHandlerLookup(t *testing.T) {
+	h := newTestHandler()
+	postJSON(t, h, "/serviceregistry/register", fullRegisterBody)
+
+	req := httptest.NewRequest(http.MethodGet, "/serviceregistry/lookup", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	resp := decodeQuery(t, w)
+	if len(resp.ServiceQueryData) != 1 {
+		t.Errorf("expected 1 result, got %d", len(resp.ServiceQueryData))
 	}
 }
 
@@ -248,8 +281,6 @@ func TestHandlerQueryNoMatch(t *testing.T) {
 	}
 }
 
-// ---- Query: interfaces ----
-
 func TestHandlerQueryInterfaceMatch(t *testing.T) {
 	h := newTestHandler()
 	postJSON(t, h, "/serviceregistry/register", map[string]any{
@@ -276,11 +307,9 @@ func TestHandlerQueryInterfaceMatch(t *testing.T) {
 	}
 }
 
-// ---- Query: metadata ----
-
 func TestHandlerQueryMetadataMatch(t *testing.T) {
 	h := newTestHandler()
-	postJSON(t, h, "/serviceregistry/register", fullRegisterBody) // has region=eu
+	postJSON(t, h, "/serviceregistry/register", fullRegisterBody)
 
 	tests := []struct {
 		name      string
@@ -303,24 +332,16 @@ func TestHandlerQueryMetadataMatch(t *testing.T) {
 	}
 }
 
-// ---- Query: version ----
-
 func TestHandlerQueryVersionRequirement(t *testing.T) {
 	h := newTestHandler()
-	// Register version 1
 	postJSON(t, h, "/serviceregistry/register", fullRegisterBody)
-	// Register version 2 (same service, different version → separate entry)
 	body2 := map[string]any{
 		"serviceDefinition": "temperature-service",
-		"providerSystem": map[string]any{
-			"systemName": "sensor-1",
-			"address":    "192.168.0.10",
-			"port":       8080,
-		},
-		"serviceUri": "/temperature",
-		"interfaces": []string{"HTTP-SECURE-JSON"},
-		"version":    2,
-		"metadata":   map[string]string{"region": "eu", "unit": "celsius"},
+		"providerSystem":    map[string]any{"systemName": "sensor-1", "address": "192.168.0.10", "port": 8080},
+		"serviceUri":        "/temperature",
+		"interfaces":        []string{"HTTP-SECURE-JSON"},
+		"version":           2,
+		"metadata":          map[string]string{"region": "eu", "unit": "celsius"},
 	}
 	postJSON(t, h, "/serviceregistry/register", body2)
 
@@ -328,28 +349,22 @@ func TestHandlerQueryVersionRequirement(t *testing.T) {
 		requirement int
 		wantCount   int
 	}{
-		{0, 2}, // no filter → both
+		{0, 2},
 		{1, 1},
 		{2, 1},
 		{3, 0},
 	}
 	for _, tc := range tests {
-		w := postJSON(t, h, "/serviceregistry/query", map[string]any{
-			"versionRequirement": tc.requirement,
-		})
+		w := postJSON(t, h, "/serviceregistry/query", map[string]any{"versionRequirement": tc.requirement})
 		resp := decodeQuery(t, w)
 		if len(resp.ServiceQueryData) != tc.wantCount {
-			t.Errorf("versionRequirement=%d: expected %d, got %d",
-				tc.requirement, tc.wantCount, len(resp.ServiceQueryData))
+			t.Errorf("versionRequirement=%d: expected %d, got %d", tc.requirement, tc.wantCount, len(resp.ServiceQueryData))
 		}
 	}
 }
 
-// ---- Query: error handling ----
-
 func TestHandlerQueryInvalidJSON(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/query",
-		bytes.NewBufferString("{bad"))
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/query", bytes.NewBufferString("{bad"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	newTestHandler().ServeHTTP(w, req)
@@ -357,8 +372,6 @@ func TestHandlerQueryInvalidJSON(t *testing.T) {
 		t.Errorf("expected 400, got %d", w.Code)
 	}
 }
-
-// ---- Integration: full flow ----
 
 func TestIntegrationRegisterAndQuery(t *testing.T) {
 	h := newTestHandler()

@@ -1,29 +1,20 @@
 // Package repository provides storage for the Arrowhead Core Service Registry.
-//
-// DO NOT MODIFY FOR EXPERIMENTS.
-// The Repository interface and its implementations are internal to core.
-// Experiments must not import this package.
 package repository
 
 import (
-	"arrowhead/serviceregistry/internal/model"
 	"sync"
 	"sync/atomic"
+
+	"arrowhead/core/internal/model"
 )
 
 // Repository defines storage operations for service instances.
 type Repository interface {
-	// Save inserts or replaces the service instance identified by
-	// (ServiceDefinition, SystemName, Address, Port, Version). Returns the saved entry.
 	Save(svc *model.ServiceInstance) *model.ServiceInstance
-	// All returns every registered service instance.
 	All() []*model.ServiceInstance
+	Delete(serviceDefinition, systemName, address string, port, version int) bool
 }
 
-// key uniquely identifies a service instance.
-// Version is included so that different versions of the same service
-// are stored as independent entries; re-registering the exact same tuple
-// (including version) overwrites the existing entry.
 type key struct {
 	serviceDefinition string
 	systemName        string
@@ -34,9 +25,9 @@ type key struct {
 
 // MemoryRepository is a thread-safe, in-memory Repository implementation.
 type MemoryRepository struct {
-	mu       sync.RWMutex
-	byKey    map[key]*model.ServiceInstance
-	counter  int64
+	mu      sync.RWMutex
+	byKey   map[key]*model.ServiceInstance
+	counter int64
 }
 
 func NewMemoryRepository() *MemoryRepository {
@@ -54,7 +45,6 @@ func (r *MemoryRepository) Save(svc *model.ServiceInstance) *model.ServiceInstan
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing, ok := r.byKey[k]; ok {
-		// Overwrite in place, keep same ID.
 		existing.ServiceUri = svc.ServiceUri
 		existing.Interfaces = svc.Interfaces
 		existing.Version = svc.Version
@@ -76,4 +66,21 @@ func (r *MemoryRepository) All() []*model.ServiceInstance {
 		out = append(out, svc)
 	}
 	return out
+}
+
+func (r *MemoryRepository) Delete(serviceDefinition, systemName, address string, port, version int) bool {
+	k := key{
+		serviceDefinition: serviceDefinition,
+		systemName:        systemName,
+		address:           address,
+		port:              port,
+		version:           version,
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.byKey[k]; !ok {
+		return false
+	}
+	delete(r.byKey, k)
+	return true
 }

@@ -140,7 +140,8 @@
       "Bash(xargs sed:*)",
       "Bash(sed -i 's|^module mineio|module arrowhead/serviceregistry|' /home/uffe/projects/ArrowheadCore/core/go.mod)",
       "Bash(go mod:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "WebFetch(domain:aitia-iiot.github.io)"
     ]
   }
 }
