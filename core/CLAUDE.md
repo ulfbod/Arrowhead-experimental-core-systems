@@ -13,6 +13,7 @@ All Go code here is held to the highest standard of correctness. It is stable, m
 1. `SPEC.md` — complete behavioral contract for all six systems
 2. `TEST_PLAN.md` — defines correctness
 3. `EXAMPLES.md` — clarifies expected behavior
+4. `GAP_ANALYSIS.md` — documents deviations, design decisions, and ambiguities
 
 Claude MUST NOT deviate from these files.
 
