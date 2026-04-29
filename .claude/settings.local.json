@@ -141,7 +141,10 @@
       "Bash(sed -i 's|^module mineio|module arrowhead/serviceregistry|' /home/uffe/projects/ArrowheadCore/core/go.mod)",
       "Bash(go mod:*)",
       "Bash(npm install:*)",
-      "WebFetch(domain:aitia-iiot.github.io)"
+      "WebFetch(domain:aitia-iiot.github.io)",
+      "Bash(mkdir experiment-1:*)",
+      "Bash(mv dashboard:*)",
+      "Bash(echo \"exit: $?\")"
     ]
   }
 }
