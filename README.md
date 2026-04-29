@@ -65,6 +65,8 @@ go build ./...
 go test ./...
 ```
 
+All tests are self-contained — no database, no running servers, no environment variables needed. See [core/TESTING.md](core/TESTING.md) for the full test guide.
+
 ---
 
 ## Example Workflow
@@ -136,5 +138,7 @@ Each binary reads configuration from environment variables:
 - [ARCHITECTURE.md](ARCHITECTURE.md) — structural overview and inter-system communication
 - [DIAGRAMS.md](DIAGRAMS.md) — Mermaid architecture and sequence diagrams
 - [core/SPEC.md](core/SPEC.md) — complete API specification for all six systems
+- [core/TEST_PLAN.md](core/TEST_PLAN.md) — test scenarios and coverage per system
+- [core/TESTING.md](core/TESTING.md) — how to run tests, key techniques, known limitations
 - [core/GAP_ANALYSIS.md](core/GAP_ANALYSIS.md) — AH5 compliance notes and design decisions
 - [Arrowhead 5 Documentation](https://aitia-iiot.github.io/ah5-docs-java-spring/core_systems/)

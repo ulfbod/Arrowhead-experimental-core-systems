@@ -17,6 +17,7 @@ var (
 	ErrMissingProvider  = errors.New("providerSystemName is required")
 	ErrMissingService   = errors.New("serviceDefinition is required")
 	ErrRuleNotFound     = errors.New("authorization rule not found")
+	ErrDuplicateRule    = errors.New("authorization rule already exists")
 )
 
 type AuthService struct {
@@ -27,7 +28,8 @@ func NewAuthService(repo repository.Repository) *AuthService {
 	return &AuthService{repo: repo}
 }
 
-// Grant adds an authorization rule.
+// Grant adds an authorization rule. Returns ErrDuplicateRule if an identical
+// (consumer, provider, serviceDefinition) triple already exists.
 func (s *AuthService) Grant(req model.GrantRequest) (model.AuthRule, error) {
 	if strings.TrimSpace(req.ConsumerSystemName) == "" {
 		return model.AuthRule{}, ErrMissingConsumer
@@ -37,6 +39,13 @@ func (s *AuthService) Grant(req model.GrantRequest) (model.AuthRule, error) {
 	}
 	if strings.TrimSpace(req.ServiceDefinition) == "" {
 		return model.AuthRule{}, ErrMissingService
+	}
+	for _, r := range s.repo.All() {
+		if r.ConsumerSystemName == req.ConsumerSystemName &&
+			r.ProviderSystemName == req.ProviderSystemName &&
+			r.ServiceDefinition == req.ServiceDefinition {
+			return model.AuthRule{}, ErrDuplicateRule
+		}
 	}
 	rule := model.AuthRule{
 		ConsumerSystemName: req.ConsumerSystemName,

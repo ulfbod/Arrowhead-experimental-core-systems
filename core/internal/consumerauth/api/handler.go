@@ -42,6 +42,10 @@ func (h *Handler) handleGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	rule, err := h.svc.Grant(req)
 	if err != nil {
+		if err == service.ErrDuplicateRule {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
