@@ -69,6 +69,14 @@ The Authentication repository has a `DeleteExpired()` method but no background g
 
 ---
 
+### G9 — Certificate Authority is not part of AH5
+
+The `cmd/ca` binary and `internal/ca/` packages implement a Certificate Authority that issues and verifies X.509 ECDSA leaf certificates. This system has no counterpart in the AH5 specification; it was added for experiment-2 to support certificate-based system identity. All crypto uses Go stdlib only (`crypto/ecdsa`, `crypto/x509`, `encoding/pem`). All state is in-memory (G5 applies here too).
+
+The CA intentionally does not enforce mutual TLS — it provides certificates that *could* be used for mTLS, but the current HTTP transport remains plain (see G4). Connecting the CA to the Authentication system's credential verification is a possible future extension.
+
+---
+
 ## Design Decisions
 
 ### D1 — Six independent binaries, one Go module
@@ -143,6 +151,16 @@ AH5 does not specify that `POST /orchestration/dynamic` requires authentication.
 - Credential verification in login remains a stub (see G2). Until G2 is resolved, `ENABLE_IDENTITY_CHECK` prevents name spoofing but not token theft (since any system can log in as any name).
 - The verification protocol is the existing `GET /authentication/identity/verify` with `Authorization: Bearer <token>`, which is within the AH5 spec for the Authentication system.
 - `ENABLE_IDENTITY_CHECK` is independent of `ENABLE_AUTH`: identity verification and authorization grant checking can be combined or used separately.
+
+---
+
+### D9 — CA uses stdlib-only X.509, no external PKI library
+
+The CA uses only Go standard library packages (`crypto/ecdsa`, `crypto/elliptic`, `crypto/rand`, `crypto/x509`, `encoding/pem`) to generate and sign certificates.  No external PKI libraries are used, consistent with CLAUDE.md's minimal-dependency rule.
+
+The CA root certificate is self-signed ECDSA P-256, valid for 10 years from startup.  Leaf certificates use ECDSA P-256 as well, with both client and server extended key usages so they can represent any Arrowhead system in a future mTLS deployment.
+
+Serial numbers are allocated with an `atomic.Int64`, starting at 2 (1 is reserved for the CA root), ensuring uniqueness within a process lifetime without a database.
 
 ---
 

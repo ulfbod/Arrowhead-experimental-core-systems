@@ -1,6 +1,6 @@
 # Arrowhead Core
 
-A Go implementation of the six [Arrowhead 5](https://aitia-iiot.github.io/ah5-docs-java-spring/) core systems, with a built-in browser dashboard.
+A Go implementation of the six [Arrowhead 5](https://aitia-iiot.github.io/ah5-docs-java-spring/) core systems plus a Certificate Authority extension, with a built-in browser dashboard.  Experiments demonstrate the core systems in realistic scenarios.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full structural overview.
 

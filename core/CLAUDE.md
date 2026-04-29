@@ -30,6 +30,7 @@ Claude MUST NOT deviate from these files.
 | DynamicOrchestration | `cmd/dynamicorch` | 8083 | `internal/orchestration/dynamic/` |
 | SimpleStoreOrchestration | `cmd/simplestoreorch` | 8084 | `internal/orchestration/simplestore/` |
 | FlexibleStoreOrchestration | `cmd/flexiblestoreorch` | 8085 | `internal/orchestration/flexiblestore/` |
+| CertificateAuthority | `cmd/ca` | 8086 | `internal/ca/` |
 
 Shared orchestration types: `internal/orchestration/model/`
 

@@ -193,6 +193,38 @@ All six systems wired in-process using `httptest.NewServer`. No mocking of busin
 
 ---
 
+## 7. CertificateAuthority — `internal/ca/`
+
+### Service tests (`internal/ca/service/`)
+
+| Test | Scenario |
+|---|---|
+| `TestCAInfoReturnsValidPEM` | CAInfo returns parsable X.509 PEM with non-empty CommonName |
+| `TestIssueValid` | Issue with valid systemName → cert + key, ExpiresAt after IssuedAt |
+| `TestIssueMissingSystemName` | Issue with empty systemName → `ErrMissingSystemName` |
+| `TestIssueCustomValidDays` | `ValidDays=7` → ExpiresAt ~7 days from now (±1 minute) |
+| `TestIssueReturnsParsableCertAndKey` | Issued cert and key are parsable X.509 / EC PEM |
+| `TestIssueUniqueSerials` | Two Issue calls → different serial numbers |
+| `TestVerifyCertValid` | Issue then verify → valid=true, systemName matches |
+| `TestVerifyCertInvalidPEM` | Garbage string → valid=false |
+| `TestVerifyCertWrongCA` | Cert from CA-A verified by CA-B → valid=false |
+| `TestVerifyCertExpired` | `NewCAService(-time.Second)` → issued cert already expired → valid=false |
+
+### Handler tests (`internal/ca/api/`)
+
+| Test | Scenario |
+|---|---|
+| `TestHandlerIssueValid` | POST /ca/certificate/issue → 201, body contains cert+key+systemName |
+| `TestHandlerIssueMissingSystemName` | Empty systemName → 400 |
+| `TestHandlerIssueInvalidJSON` | Malformed JSON → 400 |
+| `TestHandlerIssueWrongMethod` | GET /ca/certificate/issue → 405 |
+| `TestHandlerVerifyValid` | Issue then verify → 200, valid=true, systemName |
+| `TestHandlerVerifyInvalidCert` | Garbage cert → 200, valid=false |
+| `TestHandlerInfo` | GET /ca/info → 200, non-empty CommonName and Certificate |
+| `TestHandlerHealth` | GET /health and /ca/health → 200 |
+
+---
+
 ## Test Principles
 
 - **Deterministic**: no sleeps, no random ports, no wall-clock dependencies

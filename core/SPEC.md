@@ -2,7 +2,8 @@
 
 ## Overview
 
-This specification covers the six Arrowhead 5 (AH5) core systems implemented in this repository:
+This specification covers the seven Arrowhead core systems implemented in this repository.
+The first six follow Arrowhead 5 (AH5); the seventh (CA) is an extension added for experiment-2.
 
 | System | Port | Path prefix |
 |---|---|---|
@@ -12,6 +13,7 @@ This specification covers the six Arrowhead 5 (AH5) core systems implemented in 
 | DynamicOrchestration | 8083 | `/orchestration/dynamic` |
 | SimpleStoreOrchestration | 8084 | `/orchestration/simplestore` |
 | FlexibleStoreOrchestration | 8085 | `/orchestration/flexiblestore` |
+| CertificateAuthority | 8086 | `/ca` |
 
 All systems expose a `GET /health` endpoint returning `{"status":"ok","system":"<name>"}`.
 
@@ -425,3 +427,72 @@ Standard HTTP status codes:
 - `405` Method Not Allowed
 - `409` Conflict — duplicate resource
 - `500` Internal Server Error
+
+---
+
+## 7. CertificateAuthority — Port 8086
+
+Issues and verifies X.509 leaf certificates for Arrowhead systems.  The CA
+generates a self-signed ECDSA P-256 root at startup; all state is in-memory.
+
+### POST /ca/certificate/issue
+
+Issues a new leaf certificate.
+
+**Request body:**
+```json
+{
+  "systemName": "string (required, non-empty)",
+  "validDays":  0
+}
+```
+
+`validDays` overrides the default certificate lifetime when > 0.
+
+**Response: 201 Created**
+```json
+{
+  "systemName":  "string",
+  "certificate": "PEM string",
+  "privateKey":  "PEM string",
+  "issuedAt":    "RFC3339",
+  "expiresAt":   "RFC3339"
+}
+```
+
+**Errors:** `400` for missing systemName or bad JSON; `405` for non-POST.
+
+### POST /ca/certificate/verify
+
+Verifies a PEM-encoded certificate against this CA.
+
+**Request body:**
+```json
+{ "certificate": "PEM string" }
+```
+
+**Response: 200 OK** (always 200; `valid` field carries the verdict)
+```json
+{
+  "valid":      true,
+  "systemName": "string",
+  "reason":     "string (non-empty when valid=false)"
+}
+```
+
+### GET /ca/info
+
+Returns the CA's own certificate.
+
+**Response: 200 OK**
+```json
+{
+  "commonName":  "string",
+  "certificate": "PEM string"
+}
+```
+
+### GET /ca/health  ·  GET /health
+
+Returns `{"status":"ok","system":"ca"}`.
+

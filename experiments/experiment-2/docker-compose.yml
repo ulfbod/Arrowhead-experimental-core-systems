@@ -1,0 +1,172 @@
+version: "3.9"
+
+# Experiment 2 — Virtual Arrowhead Local Cloud with AMQP data plane.
+#
+# Starts:
+#   - RabbitMQ message broker
+#   - Arrowhead core systems (ServiceRegistry, Authentication, ConsumerAuthorization,
+#     DynamicOrchestration, CA)
+#   - Experiment services (robot-simulator, edge-adapter, consumer)
+#
+# Usage:
+#   docker compose up --build
+#
+# The consumer logs orchestrated telemetry readings to stdout.
+
+services:
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Arrowhead Core Systems ───────────────────────────────────────────────────
+
+  serviceregistry:
+    build:
+      context: ../../core
+      dockerfile: ../experiments/experiment-2/dockerfiles/core.Dockerfile
+      args:
+        CMD: serviceregistry
+    environment:
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  authentication:
+    build:
+      context: ../../core
+      dockerfile: ../experiments/experiment-2/dockerfiles/core.Dockerfile
+      args:
+        CMD: authentication
+    environment:
+      PORT: "8081"
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  consumerauth:
+    build:
+      context: ../../core
+      dockerfile: ../experiments/experiment-2/dockerfiles/core.Dockerfile
+      args:
+        CMD: consumerauth
+    environment:
+      PORT: "8082"
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  dynamicorch:
+    build:
+      context: ../../core
+      dockerfile: ../experiments/experiment-2/dockerfiles/core.Dockerfile
+      args:
+        CMD: dynamicorch
+    environment:
+      PORT: "8083"
+      SR_URL: "http://serviceregistry:8080"
+      CA_URL: "http://ca:8086"
+      AUTH_SYSTEM_URL: "http://authentication:8081"
+      ENABLE_IDENTITY_CHECK: "false"
+      ENABLE_AUTH_CHECK: "true"
+    ports:
+      - "8083:8083"
+    depends_on:
+      serviceregistry:
+        condition: service_healthy
+      consumerauth:
+        condition: service_healthy
+      ca:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8083/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  ca:
+    build:
+      context: ../../core
+      dockerfile: ../experiments/experiment-2/dockerfiles/core.Dockerfile
+      args:
+        CMD: ca
+    environment:
+      PORT: "8086"
+    ports:
+      - "8086:8086"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8086/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Experiment Services ──────────────────────────────────────────────────────
+
+  robot-simulator:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-2/dockerfiles/robot-simulator.Dockerfile
+    environment:
+      AMQP_URL: "amqp://guest:guest@rabbitmq:5672/"
+      ROBOT_ID: "robot-1"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  edge-adapter:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-2/dockerfiles/edge-adapter.Dockerfile
+    environment:
+      AMQP_URL: "amqp://guest:guest@rabbitmq:5672/"
+      CA_URL: "http://ca:8086"
+      SR_URL: "http://serviceregistry:8080"
+      PORT: "9001"
+    ports:
+      - "9001:9001"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      serviceregistry:
+        condition: service_healthy
+      ca:
+        condition: service_healthy
+
+  consumer:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-2/dockerfiles/consumer.Dockerfile
+    environment:
+      ORCH_URL: "http://dynamicorch:8083"
+      CONSUMER_NAME: "demo-consumer"
+      POLL_INTERVAL: "5s"
+    depends_on:
+      dynamicorch:
+        condition: service_healthy
+      edge-adapter:
+        condition: service_started
