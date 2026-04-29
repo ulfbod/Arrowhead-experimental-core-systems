@@ -168,13 +168,13 @@ sequenceDiagram
     participant C as EnvironmentController<br/>(consumer)
     participant P as TemperatureSensor<br/>(provider)
 
-    rect rgb(40, 60, 40)
+    rect rgb(220, 240, 220)
         note over A,SS: Setup (one-time)
         A->>SS: POST /orchestration/simplestore/rules<br/>{consumerSystemName, serviceDefinition, provider, serviceUri, interfaces}
         SS-->>A: 201 Created — StoreRule {id: 3, ...}
     end
 
-    rect rgb(20, 40, 70)
+    rect rgb(210, 225, 245)
         note over C,P: Runtime
         C->>SS: POST /orchestration/simplestore<br/>{requesterSystem, requestedService}
         SS-->>C: 200 OK — {response: [{provider, service}]}
@@ -194,7 +194,7 @@ sequenceDiagram
     participant FS as FlexibleStoreOrchestration<br/>:8085
     participant C as EnvironmentController<br/>(consumer)
 
-    rect rgb(40, 60, 40)
+    rect rgb(220, 240, 220)
         note over A,FS: Setup — two rules for same service
         A->>FS: POST /orchestration/flexiblestore/rules<br/>{priority:1, metadataFilter:{region:"eu"}, provider: EUSensor, ...}
         FS-->>A: 201 Created — FlexibleRule {id:1}
@@ -203,7 +203,7 @@ sequenceDiagram
         FS-->>A: 201 Created — FlexibleRule {id:2}
     end
 
-    rect rgb(20, 40, 70)
+    rect rgb(210, 225, 245)
         note over C,FS: Runtime — request with metadata {region:"eu"}
         C->>FS: POST /orchestration/flexiblestore<br/>{requestedService: {serviceDefinition: "temp", metadata: {region:"eu"}}}
         note over FS: Both rules match (id:2 filter is empty subset).<br/>id:1 wins — lower priority number = higher priority.
@@ -254,19 +254,19 @@ sequenceDiagram
     participant C as EnvironmentController<br/>(consumer)
     participant A as Administrator
 
-    rect rgb(40, 60, 40)
+    rect rgb(220, 240, 220)
         note over P,SR: 1 — Provider startup
         P->>SR: POST /serviceregistry/register
         SR-->>P: 201 ServiceInstance {id:1}
     end
 
-    rect rgb(80, 50, 10)
+    rect rgb(250, 235, 210)
         note over A,CA: 2 — Admin grants authorization
         A->>CA: POST /authorization/grant<br/>{consumer:"EnvironmentController", provider:"TemperatureSensor", service:"temperature"}
         CA-->>A: 201 AuthRule {id:1}
     end
 
-    rect rgb(20, 40, 70)
+    rect rgb(210, 225, 245)
         note over C,P: 3 — Consumer orchestrates and calls
         C->>DO: POST /orchestration/dynamic (ENABLE_AUTH=true)
         DO->>SR: POST /serviceregistry/query {serviceDefinition:"temperature"}
