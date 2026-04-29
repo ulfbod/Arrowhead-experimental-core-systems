@@ -13,7 +13,12 @@ import (
 )
 
 func newTestHandler(srURL, caURL string, checkAuth bool) http.Handler {
-	orch := dynservice.NewDynamicOrchestrator(srURL, caURL, checkAuth)
+	orch := dynservice.NewDynamicOrchestrator(srURL, caURL, "", checkAuth, false)
+	return api.NewHandler(orch)
+}
+
+func newTestHandlerWithIdentity(srURL, caURL, authSysURL string, checkAuth, checkIdentity bool) http.Handler {
+	orch := dynservice.NewDynamicOrchestrator(srURL, caURL, authSysURL, checkAuth, checkIdentity)
 	return api.NewHandler(orch)
 }
 
@@ -57,11 +62,31 @@ func fakeCA(authorized bool) *httptest.Server {
 	}))
 }
 
+func fakeAuthSys(valid bool, systemName string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"valid": valid, "systemName": systemName})
+	}))
+}
+
 func postOrchestrate(t *testing.T, h http.Handler, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	data, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/orchestration/dynamic", bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func postOrchestrateWithToken(t *testing.T, h http.Handler, body any, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/orchestration/dynamic", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	return w
@@ -162,5 +187,91 @@ func TestHandlerHealth(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("%s: expected 200, got %d", path, w.Code)
 		}
+	}
+}
+
+// ---- Identity check ----
+
+func TestHandlerOrchestrateIdentityNoToken401(t *testing.T) {
+	sr := fakeSR("sensor-1")
+	defer sr.Close()
+	authSys := fakeAuthSys(true, "consumer-app")
+	defer authSys.Close()
+
+	h := newTestHandlerWithIdentity(sr.URL, "", authSys.URL, false, true)
+	// No Authorization header.
+	w := postOrchestrate(t, h, validBody)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 when no token provided, got %d", w.Code)
+	}
+}
+
+func TestHandlerOrchestrateIdentityInvalidToken401(t *testing.T) {
+	sr := fakeSR("sensor-1")
+	defer sr.Close()
+	authSys := fakeAuthSys(false, "") // returns valid=false
+	defer authSys.Close()
+
+	h := newTestHandlerWithIdentity(sr.URL, "", authSys.URL, false, true)
+	w := postOrchestrateWithToken(t, h, validBody, "expired-or-bad-token")
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for invalid token, got %d", w.Code)
+	}
+}
+
+func TestHandlerOrchestrateIdentityValidToken200(t *testing.T) {
+	sr := fakeSR("sensor-1")
+	defer sr.Close()
+	authSys := fakeAuthSys(true, "consumer-app")
+	defer authSys.Close()
+
+	h := newTestHandlerWithIdentity(sr.URL, "", authSys.URL, false, true)
+	w := postOrchestrateWithToken(t, h, validBody, "valid-token")
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 with valid token, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp orchmodel.OrchestrationResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Response) != 1 {
+		t.Errorf("expected 1 result, got %d", len(resp.Response))
+	}
+}
+
+func TestHandlerOrchestrateIdentityTokenOverridesSelfReportedName(t *testing.T) {
+	// Provider authorized for "real-consumer" only.
+	// Request body claims systemName "impersonator".
+	// Valid token identifies "real-consumer".
+	// With identity check: CA sees "real-consumer" → authorized → result returned.
+	sr := fakeSR("sensor-1")
+	defer sr.Close()
+
+	authSys := fakeAuthSys(true, "real-consumer")
+	defer authSys.Close()
+
+	ca := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ConsumerSystemName string `json:"consumerSystemName"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		authorized := req.ConsumerSystemName == "real-consumer"
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"authorized": authorized})
+	}))
+	defer ca.Close()
+
+	body := map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "impersonator", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	}
+
+	h := newTestHandlerWithIdentity(sr.URL, ca.URL, authSys.URL, true, true)
+	w := postOrchestrateWithToken(t, h, body, "real-consumer-token")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp orchmodel.OrchestrationResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Response) != 1 {
+		t.Errorf("expected 1 result (verified name used), got %d", len(resp.Response))
 	}
 }

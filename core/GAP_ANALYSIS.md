@@ -49,9 +49,11 @@ All six systems store state in memory. All data is lost on restart. This is inte
 
 ---
 
-### G6 — Authentication and ConsumerAuthorization tokens are decoupled
+### G6 — Authentication and ConsumerAuthorization tokens are partially decoupled
 
-The Authentication system issues identity tokens (who are you?). The ConsumerAuthorization system issues authorization tokens (are you allowed to call this service?). The two are not linked: `POST /authorization/token/generate` does not require or validate a prior identity token from the Authentication system. AH5 describes a token-relay mechanism connecting these, but the relationship is not clearly specified in the current documentation. See also A5.
+The Authentication system issues identity tokens (who are you?). The ConsumerAuthorization system issues authorization tokens (are you allowed to call this service?). `POST /authorization/token/generate` does not require or validate a prior identity token from the Authentication system — these remain independent.
+
+However, DynamicOrchestration now connects the two when `ENABLE_IDENTITY_CHECK=true`: the identity token from the Authentication system is verified before the ConsumerAuthorization check, and the verified systemName from the token is used as the consumer identity. This partial coupling closes the impersonation gap (see D8). A5 covers remaining ambiguities about the full AH5 token-relay mechanism.
 
 ---
 
@@ -119,6 +121,28 @@ Every binary registers both `/health` (for direct access by port) and `/<prefix>
 ### D7 — POST /serviceregistry/query is retained alongside AH5-aligned endpoints
 
 `POST /serviceregistry/query` is kept as the primary discovery endpoint for backward compatibility with existing experiments. `GET /serviceregistry/lookup` is available as the AH5-aligned alternative. DynamicOrchestration uses the POST form internally.
+
+---
+
+### D8 — DynamicOrchestration: identity verification goes beyond AH5 spec
+
+**This is an explicit extension beyond the AH5 specification.**
+
+AH5 does not specify that `POST /orchestration/dynamic` requires authentication. The spec is silent on which endpoints of which systems must be token-gated and in what order. The implementation adds an optional `ENABLE_IDENTITY_CHECK` mode that:
+
+1. Requires an `Authorization: Bearer <token>` header on `POST /orchestration/dynamic`.
+2. Calls `GET /authentication/identity/verify` on the Authentication system to validate the token.
+3. Extracts the verified `systemName` from the token response.
+4. Replaces the self-reported `requesterSystem.systemName` in the request body with the verified name for all ConsumerAuthorization checks.
+5. Returns `401 Unauthorized` if the token is absent, expired, invalid, or if the Authentication system is unreachable (fail-closed).
+
+**Motivation:** Without this check, any client can claim to be an authorized consumer by setting `requesterSystem.systemName` to an arbitrary value. ConsumerAuthorization rules check the name string only — they cannot verify identity. This extension binds the orchestration request to a verified system identity, closing the impersonation gap.
+
+**Assumptions beyond spec:**
+- The Authentication system is assumed to be available when `ENABLE_IDENTITY_CHECK=true`. An unreachable auth system blocks all orchestration (fail-closed by design, consistent with D4).
+- Credential verification in login remains a stub (see G2). Until G2 is resolved, `ENABLE_IDENTITY_CHECK` prevents name spoofing but not token theft (since any system can log in as any name).
+- The verification protocol is the existing `GET /authentication/identity/verify` with `Authorization: Bearer <token>`, which is within the AH5 spec for the Authentication system.
+- `ENABLE_IDENTITY_CHECK` is independent of `ENABLE_AUTH`: identity verification and authorization grant checking can be combined or used separately.
 
 ---
 

@@ -117,11 +117,17 @@ Key technique: `newAuthService(-time.Second)` creates tokens that are immediatel
 - CA unreachable (fail-closed): provider excluded, no error returned
 - SR unreachable: error returned
 - Validation: missing requesterSystem.systemName, missing serviceDefinition
+- Identity check disabled: no token needed, works normally
+- Identity check enabled, empty token: `ErrIdentityRequired`
+- Identity check enabled, invalid/expired token: `ErrIdentityInvalid`
+- Identity check enabled, auth system unreachable: fail-closed error
+- Identity check enabled, verified name overrides self-reported name for CA check
 
-All tests use `httptest.NewServer` as fake SR and CA — no real network calls.
+All tests use `httptest.NewServer` as fake SR, CA, and Authentication system — no real network calls.
 
 **Handler layer** (`internal/orchestration/dynamic/api/`):
-- POST `/orchestration/dynamic` → 200 (match/no-match/auth-denied) / 400 (invalid JSON) / 405
+- POST `/orchestration/dynamic` → 200 (match/no-match/auth-denied) / 400 (invalid JSON) / 401 (no token when identity check on) / 401 (invalid token) / 405
+- Identity check: valid token with correct systemName → 200; self-reported name overridden by verified token name
 - GET `/health`, `/orchestration/dynamic/health` → 200
 
 ---
@@ -181,6 +187,9 @@ All six systems wired in-process using `httptest.NewServer`. No mocking of busin
 | `TestE2EDuplicateGrantRejected` | Grant same triple twice → second returns 409 |
 | `TestE2EFullFlow` | Register → grant → dynamic orchestrate (authenticated) → verify result |
 | `TestE2EUnregisterClearsOrchestration` | Register → orchestrate (match) → unregister → orchestrate (empty) |
+| `TestE2EIdentityCheckBlocksWithoutToken` | `ENABLE_IDENTITY_CHECK=true` + no Authorization header → 401 |
+| `TestE2EIdentityCheckAllowsWithValidToken` | Login → token → orchestrate with token + CA grant → result returned |
+| `TestE2EIdentityCheckPreventsImpersonation` | Token for "consumer-app", body claims "impersonator" → verified name used → authorized |
 
 ---
 

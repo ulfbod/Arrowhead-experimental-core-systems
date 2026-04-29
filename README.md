@@ -129,7 +129,11 @@ Each binary reads configuration from environment variables:
 | `TOKEN_DURATION_SECONDS` | Authentication | `3600` | Token lifetime |
 | `SERVICE_REGISTRY_URL` | DynamicOrchestration | `http://localhost:8080` | SR base URL |
 | `CONSUMER_AUTH_URL` | DynamicOrchestration | `http://localhost:8082` | ConsumerAuth base URL |
-| `ENABLE_AUTH` | DynamicOrchestration | `false` | Enable auth check |
+| `AUTH_SYSTEM_URL` | DynamicOrchestration | `http://localhost:8081` | Authentication system base URL |
+| `ENABLE_AUTH` | DynamicOrchestration | `false` | Filter providers via ConsumerAuthorization |
+| `ENABLE_IDENTITY_CHECK` | DynamicOrchestration | `false` | Require a valid Bearer token; use verified identity for auth checks |
+
+`ENABLE_IDENTITY_CHECK` connects the Authentication and DynamicOrchestration systems: consumers must log in first, then present their token when orchestrating. The verified `systemName` from the token replaces the self-reported value in the request body, preventing impersonation. See `core/GAP_ANALYSIS.md` (D8) for full design rationale.
 
 ---
 

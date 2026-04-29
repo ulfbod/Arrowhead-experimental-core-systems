@@ -6,6 +6,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	orchmodel "arrowhead/core/internal/orchestration/model"
 	"arrowhead/core/internal/orchestration/dynamic/service"
@@ -35,8 +36,13 @@ func (h *Handler) handleOrchestrate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	resp, err := h.orch.Orchestrate(req)
+	token := extractBearer(r)
+	resp, err := h.orch.Orchestrate(req, token)
 	if err != nil {
+		if err == service.ErrIdentityRequired || err == service.ErrIdentityInvalid {
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -45,6 +51,14 @@ func (h *Handler) handleOrchestrate(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "dynamicorchestration"})
+}
+
+func extractBearer(r *http.Request) string {
+	hdr := r.Header.Get("Authorization")
+	if after, ok := strings.CutPrefix(hdr, "Bearer "); ok {
+		return strings.TrimSpace(after)
+	}
+	return ""
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

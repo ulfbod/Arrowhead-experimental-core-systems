@@ -10,10 +10,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	srapi "arrowhead/core/internal/api"
 	srrepo "arrowhead/core/internal/repository"
 	srsvc "arrowhead/core/internal/service"
+
+	authapi "arrowhead/core/internal/authentication/api"
+	authrepo "arrowhead/core/internal/authentication/repository"
+	authsvc "arrowhead/core/internal/authentication/service"
 
 	caapi "arrowhead/core/internal/consumerauth/api"
 	carepo "arrowhead/core/internal/consumerauth/repository"
@@ -53,6 +58,21 @@ func mustPost(t *testing.T, server *httptest.Server, path string, body any, want
 	var result map[string]any
 	json.NewDecoder(resp.Body).Decode(&result)
 	return result
+}
+
+func postWithToken(t *testing.T, server *httptest.Server, path string, body any, token string) *http.Response {
+	t.Helper()
+	data, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, server.URL+path, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
+	}
+	return resp
 }
 
 func deleteAt(t *testing.T, server *httptest.Server, path string, wantStatus int) {
@@ -101,14 +121,19 @@ func startSR(t *testing.T) *httptest.Server {
 	return httptest.NewServer(srapi.NewHandler(srsvc.NewRegistryService(srrepo.NewMemoryRepository())))
 }
 
+func startAuth(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(authapi.NewHandler(authsvc.NewAuthService(authrepo.NewMemoryRepository(), time.Hour)))
+}
+
 func startCA(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(caapi.NewHandler(casvc.NewAuthService(carepo.NewMemoryRepository())))
 }
 
-func startDynOrch(t *testing.T, srURL, caURL string, checkAuth bool) *httptest.Server {
+func startDynOrch(t *testing.T, srURL, caURL, authSysURL string, checkAuth, checkIdentity bool) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(dynapi.NewHandler(dynsvc.NewDynamicOrchestrator(srURL, caURL, checkAuth)))
+	return httptest.NewServer(dynapi.NewHandler(dynsvc.NewDynamicOrchestrator(srURL, caURL, authSysURL, checkAuth, checkIdentity)))
 }
 
 func startSimpleStore(t *testing.T) *httptest.Server {
@@ -143,6 +168,20 @@ func grantRule(t *testing.T, ca *httptest.Server, consumer, provider, service st
 	}, http.StatusCreated)
 }
 
+// login calls the Authentication system and returns the issued token.
+func login(t *testing.T, auth *httptest.Server, systemName string) string {
+	t.Helper()
+	result := mustPost(t, auth, "/authentication/identity/login", map[string]string{
+		"systemName":  systemName,
+		"credentials": "ignored",
+	}, http.StatusCreated)
+	token, ok := result["token"].(string)
+	if !ok || token == "" {
+		t.Fatalf("login: no token returned for %s", systemName)
+	}
+	return token
+}
+
 // ── Dynamic Orchestration ─────────────────────────────────────────────────────
 
 func TestE2EDynamicOrchestrationWithoutAuth(t *testing.T) {
@@ -150,7 +189,7 @@ func TestE2EDynamicOrchestrationWithoutAuth(t *testing.T) {
 	ca := startCA(t); defer ca.Close()
 	registerService(t, sr, "sensor-1", "temperature-service")
 
-	dynOrch := startDynOrch(t, sr.URL, ca.URL, false)
+	dynOrch := startDynOrch(t, sr.URL, ca.URL, "", false, false)
 	defer dynOrch.Close()
 
 	results := decodeOrchResponse(t, post(t, dynOrch, "/orchestration/dynamic", map[string]any{
@@ -174,7 +213,7 @@ func TestE2EDynamicOrchestrationWithAuth(t *testing.T) {
 	grantRule(t, ca, "consumer-app", "sensor-1", "temperature-service")
 	// sensor-2 has no grant.
 
-	dynOrch := startDynOrch(t, sr.URL, ca.URL, true)
+	dynOrch := startDynOrch(t, sr.URL, ca.URL, "", true, false)
 	defer dynOrch.Close()
 
 	results := decodeOrchResponse(t, post(t, dynOrch, "/orchestration/dynamic", map[string]any{
@@ -195,7 +234,7 @@ func TestE2EDynamicOrchestrationNoGrantNoResults(t *testing.T) {
 	registerService(t, sr, "sensor-1", "temperature-service")
 	// No auth rules granted.
 
-	dynOrch := startDynOrch(t, sr.URL, ca.URL, true)
+	dynOrch := startDynOrch(t, sr.URL, ca.URL, "", true, false)
 	defer dynOrch.Close()
 
 	results := decodeOrchResponse(t, post(t, dynOrch, "/orchestration/dynamic", map[string]any{
@@ -390,7 +429,7 @@ func TestE2EDuplicateGrantRejected(t *testing.T) {
 func TestE2EFullFlow(t *testing.T) {
 	sr := startSR(t); defer sr.Close()
 	ca := startCA(t); defer ca.Close()
-	dynOrch := startDynOrch(t, sr.URL, ca.URL, true)
+	dynOrch := startDynOrch(t, sr.URL, ca.URL, "", true, false)
 	defer dynOrch.Close()
 
 	registerService(t, sr, "sensor-1", "temperature-service")
@@ -413,7 +452,7 @@ func TestE2EFullFlow(t *testing.T) {
 func TestE2EUnregisterClearsOrchestration(t *testing.T) {
 	sr := startSR(t); defer sr.Close()
 	ca := startCA(t); defer ca.Close()
-	dynOrch := startDynOrch(t, sr.URL, ca.URL, false)
+	dynOrch := startDynOrch(t, sr.URL, ca.URL, "", false, false)
 	defer dynOrch.Close()
 
 	registerService(t, sr, "sensor-1", "temperature-service")
@@ -436,5 +475,97 @@ func TestE2EUnregisterClearsOrchestration(t *testing.T) {
 	}))
 	if len(after) != 0 {
 		t.Errorf("expected 0 after unregister, got %d", len(after))
+	}
+}
+
+// ── Identity check integration ────────────────────────────────────────────────
+
+// TestE2EIdentityCheckBlocksWithoutToken verifies that when ENABLE_IDENTITY_CHECK=true,
+// a request without an Authorization header is rejected with 401.
+func TestE2EIdentityCheckBlocksWithoutToken(t *testing.T) {
+	sr := startSR(t); defer sr.Close()
+	auth := startAuth(t); defer auth.Close()
+	registerService(t, sr, "sensor-1", "temperature-service")
+
+	dynOrch := startDynOrch(t, sr.URL, "", auth.URL, false, true)
+	defer dynOrch.Close()
+
+	resp := post(t, dynOrch, "/orchestration/dynamic", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 without token, got %d", resp.StatusCode)
+	}
+}
+
+// TestE2EIdentityCheckAllowsWithValidToken verifies the full identity-verified flow:
+// consumer logs in → receives token → presents token → orchestrator verifies identity
+// → uses verified systemName for CA check → authorized provider returned.
+func TestE2EIdentityCheckAllowsWithValidToken(t *testing.T) {
+	sr := startSR(t); defer sr.Close()
+	auth := startAuth(t); defer auth.Close()
+	ca := startCA(t); defer ca.Close()
+
+	registerService(t, sr, "sensor-1", "temperature-service")
+	grantRule(t, ca, "consumer-app", "sensor-1", "temperature-service")
+
+	// Consumer logs in and gets a token.
+	token := login(t, auth, "consumer-app")
+
+	dynOrch := startDynOrch(t, sr.URL, ca.URL, auth.URL, true, true)
+	defer dynOrch.Close()
+
+	resp := postWithToken(t, dynOrch, "/orchestration/dynamic", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	}, token)
+	results := decodeOrchResponse(t, resp)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0]["provider"].(map[string]any)["systemName"] != "sensor-1" {
+		t.Errorf("unexpected provider: %v", results[0]["provider"])
+	}
+}
+
+// TestE2EIdentityCheckPreventsImpersonation verifies that a consumer cannot
+// impersonate another system: the verified token identity is used for CA checks,
+// not the self-reported requesterSystem.systemName.
+func TestE2EIdentityCheckPreventsImpersonation(t *testing.T) {
+	sr := startSR(t); defer sr.Close()
+	auth := startAuth(t); defer auth.Close()
+	ca := startCA(t); defer ca.Close()
+
+	registerService(t, sr, "sensor-1", "temperature-service")
+	// Only "consumer-app" is authorized — not "impersonator".
+	grantRule(t, ca, "consumer-app", "sensor-1", "temperature-service")
+
+	// "consumer-app" logs in and gets a token.
+	token := login(t, auth, "consumer-app")
+
+	dynOrch := startDynOrch(t, sr.URL, ca.URL, auth.URL, true, true)
+	defer dynOrch.Close()
+
+	// Request claims to be "impersonator" but presents consumer-app's token.
+	// The orchestrator should use "consumer-app" (from token) for CA check → authorized.
+	resp := postWithToken(t, dynOrch, "/orchestration/dynamic", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "impersonator", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	}, token)
+	results := decodeOrchResponse(t, resp)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (token identity used), got %d", len(results))
+	}
+
+	// Conversely: a system with no token at all should be blocked.
+	noTokenResp := post(t, dynOrch, "/orchestration/dynamic", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	})
+	noTokenResp.Body.Close()
+	if noTokenResp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 without token, got %d", noTokenResp.StatusCode)
 	}
 }

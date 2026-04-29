@@ -59,8 +59,17 @@ func caAlwaysDenied() func(http.ResponseWriter, *http.Request) {
 	}
 }
 
+// fakeAuthSys builds a fake Authentication identity/verify response.
+func fakeAuthSys(valid bool, systemName string) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"valid": valid, "systemName": systemName})
+	}
+}
+
+// newOrchestrator creates a DynamicOrchestrator with no identity check.
 func newOrchestrator(srURL, caURL string, checkAuth bool) *service.DynamicOrchestrator {
-	return service.NewDynamicOrchestrator(srURL, caURL, checkAuth)
+	return service.NewDynamicOrchestrator(srURL, caURL, "", checkAuth, false)
 }
 
 func validRequest() orchmodel.OrchestrationRequest {
@@ -79,7 +88,7 @@ func TestOrchestrateDynamicNoAuth(t *testing.T) {
 	defer ca.Close()
 
 	orch := newOrchestrator(sr.URL, ca.URL, false)
-	resp, err := orch.Orchestrate(validRequest())
+	resp, err := orch.Orchestrate(validRequest(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,7 +104,7 @@ func TestOrchestrateDynamicEmptySR(t *testing.T) {
 	defer ca.Close()
 
 	orch := newOrchestrator(sr.URL, ca.URL, false)
-	resp, err := orch.Orchestrate(validRequest())
+	resp, err := orch.Orchestrate(validRequest(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -113,7 +122,7 @@ func TestOrchestrateDynamicAuthAllAllowed(t *testing.T) {
 	defer ca.Close()
 
 	orch := newOrchestrator(sr.URL, ca.URL, true)
-	resp, err := orch.Orchestrate(validRequest())
+	resp, err := orch.Orchestrate(validRequest(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -129,7 +138,7 @@ func TestOrchestrateDynamicAuthAllDenied(t *testing.T) {
 	defer ca.Close()
 
 	orch := newOrchestrator(sr.URL, ca.URL, true)
-	resp, err := orch.Orchestrate(validRequest())
+	resp, err := orch.Orchestrate(validRequest(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -156,7 +165,7 @@ func TestOrchestrateDynamicAuthPartial(t *testing.T) {
 	defer sr.Close()
 
 	orch := newOrchestrator(sr.URL, ca.URL, true)
-	resp, err := orch.Orchestrate(validRequest())
+	resp, err := orch.Orchestrate(validRequest(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -174,7 +183,7 @@ func TestOrchestrateDynamicCAUnreachableFailsClosed(t *testing.T) {
 
 	// Point CA at a closed port to simulate unreachable service.
 	orch := newOrchestrator(sr.URL, "http://127.0.0.1:1", true)
-	resp, err := orch.Orchestrate(validRequest())
+	resp, err := orch.Orchestrate(validRequest(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -186,7 +195,7 @@ func TestOrchestrateDynamicCAUnreachableFailsClosed(t *testing.T) {
 
 func TestOrchestrateDynamicSRUnreachable(t *testing.T) {
 	orch := newOrchestrator("http://127.0.0.1:1", "http://127.0.0.1:1", false)
-	_, err := orch.Orchestrate(validRequest())
+	_, err := orch.Orchestrate(validRequest(), "")
 	if err == nil {
 		t.Error("expected error when SR is unreachable")
 	}
@@ -200,7 +209,7 @@ func TestOrchestrateDynamicMissingRequester(t *testing.T) {
 	orch := newOrchestrator(sr.URL, "", false)
 	_, err := orch.Orchestrate(orchmodel.OrchestrationRequest{
 		RequestedService: orchmodel.ServiceFilter{ServiceDefinition: "svc"},
-	})
+	}, "")
 	if err == nil {
 		t.Fatal("expected error for missing requesterSystem.systemName")
 	}
@@ -212,8 +221,101 @@ func TestOrchestrateDynamicMissingService(t *testing.T) {
 	orch := newOrchestrator(sr.URL, "", false)
 	_, err := orch.Orchestrate(orchmodel.OrchestrationRequest{
 		RequesterSystem: orchmodel.System{SystemName: "consumer"},
-	})
+	}, "")
 	if err == nil {
 		t.Fatal("expected error for missing serviceDefinition")
+	}
+}
+
+// ---- Identity check ----
+
+func TestOrchestrateIdentityRequired(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+	authSys := httptest.NewServer(http.HandlerFunc(fakeAuthSys(true, "consumer-app")))
+	defer authSys.Close()
+
+	orch := service.NewDynamicOrchestrator(sr.URL, "", authSys.URL, false, true)
+	_, err := orch.Orchestrate(validRequest(), "") // empty token
+	if err != service.ErrIdentityRequired {
+		t.Errorf("expected ErrIdentityRequired, got %v", err)
+	}
+}
+
+func TestOrchestrateIdentityInvalidToken(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+	authSys := httptest.NewServer(http.HandlerFunc(fakeAuthSys(false, "")))
+	defer authSys.Close()
+
+	orch := service.NewDynamicOrchestrator(sr.URL, "", authSys.URL, false, true)
+	_, err := orch.Orchestrate(validRequest(), "bad-token")
+	if err != service.ErrIdentityInvalid {
+		t.Errorf("expected ErrIdentityInvalid, got %v", err)
+	}
+}
+
+func TestOrchestrateIdentityAuthSysUnreachable(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+
+	// Auth system unreachable — fail-closed.
+	orch := service.NewDynamicOrchestrator(sr.URL, "", "http://127.0.0.1:1", false, true)
+	_, err := orch.Orchestrate(validRequest(), "some-token")
+	if err == nil {
+		t.Error("expected error when auth system unreachable (fail-closed)")
+	}
+}
+
+func TestOrchestrateIdentityVerifiedNameUsedForCACheck(t *testing.T) {
+	// The requester sends systemName "impersonator" in the body, but the
+	// verified token belongs to "consumer-app". The CA only authorizes
+	// "consumer-app" — if the orchestrator correctly uses the verified name,
+	// the result should be non-empty; if it uses the self-reported name, it would be empty.
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+
+	authSys := httptest.NewServer(http.HandlerFunc(fakeAuthSys(true, "consumer-app")))
+	defer authSys.Close()
+
+	ca := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ConsumerSystemName string `json:"consumerSystemName"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		authorized := req.ConsumerSystemName == "consumer-app"
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"authorized": authorized})
+	}))
+	defer ca.Close()
+
+	orch := service.NewDynamicOrchestrator(sr.URL, ca.URL, authSys.URL, true, true)
+
+	// Self-reported name is "impersonator" — should be overridden to "consumer-app".
+	req := orchmodel.OrchestrationRequest{
+		RequesterSystem:  orchmodel.System{SystemName: "impersonator", Address: "localhost", Port: 0},
+		RequestedService: orchmodel.ServiceFilter{ServiceDefinition: "temperature-service"},
+	}
+	resp, err := orch.Orchestrate(req, "valid-token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Response) != 1 {
+		t.Errorf("expected 1 result (verified name used for CA), got %d", len(resp.Response))
+	}
+}
+
+func TestOrchestrateIdentityDisabledNoTokenNeeded(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+
+	// checkIdentity=false — no token needed, should work fine.
+	orch := service.NewDynamicOrchestrator(sr.URL, "", "http://127.0.0.1:1", false, false)
+	resp, err := orch.Orchestrate(validRequest(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Response) != 1 {
+		t.Errorf("expected 1 result when identity check disabled, got %d", len(resp.Response))
 	}
 }

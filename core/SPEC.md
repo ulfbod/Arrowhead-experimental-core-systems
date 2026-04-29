@@ -298,14 +298,19 @@ Performs real-time discovery: queries the Service Registry and optionally filter
 ```
 
 **Behavior:**
-1. Calls `POST /serviceregistry/query` with `requestedService` as filters.
-2. If `ENABLE_AUTH=true`, calls `POST /authorization/verify` for each result and removes unauthorized providers.
-3. Returns the remaining results.
+1. If `ENABLE_IDENTITY_CHECK=true`: validates the `Authorization: Bearer <token>` header against the Authentication system. Returns `401 Unauthorized` if the token is absent, invalid, or expired. The verified `systemName` from the token replaces the self-reported `requesterSystem.systemName` for all subsequent checks.
+2. Calls `POST /serviceregistry/query` with `requestedService` as filters.
+3. If `ENABLE_AUTH=true`, calls `POST /authorization/verify` for each result and removes unauthorized providers.
+4. Returns the remaining results.
 
 **Configuration (env vars):**
 - `SERVICE_REGISTRY_URL` — default `http://localhost:8080`
 - `CONSUMER_AUTH_URL` — default `http://localhost:8082`
+- `AUTH_SYSTEM_URL` — default `http://localhost:8081`
 - `ENABLE_AUTH` — `true`/`false`, default `false`
+- `ENABLE_IDENTITY_CHECK` — `true`/`false`, default `false`. When `true`, requires a valid Bearer token issued by the Authentication system. The verified identity overrides the self-reported `requesterSystem.systemName`, preventing impersonation.
+
+**Note:** `ENABLE_IDENTITY_CHECK` goes beyond the AH5 specification. See `GAP_ANALYSIS.md` for rationale and design decisions.
 
 ---
 
