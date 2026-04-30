@@ -16,6 +16,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full structural overview.
 | DynamicOrchestration | 8083 | `cmd/dynamicorch` |
 | SimpleStoreOrchestration | 8084 | `cmd/simplestoreorch` |
 | FlexibleStoreOrchestration | 8085 | `cmd/flexiblestoreorch` |
+| CertificateAuthority | 8086 | `cmd/ca` *(extension, not in AH5 spec)* |
 
 All systems are in-memory, stateless across restarts, and independently runnable.
 
@@ -35,6 +36,7 @@ go run ./cmd/consumerauth         # :8082
 go run ./cmd/dynamicorch          # :8083
 go run ./cmd/simplestoreorch      # :8084
 go run ./cmd/flexiblestoreorch    # :8085
+go run ./cmd/ca                   # :8086  (CA extension)
 ```
 
 ### Dashboard (development mode)
@@ -134,6 +136,26 @@ Each binary reads configuration from environment variables:
 | `ENABLE_IDENTITY_CHECK` | DynamicOrchestration | `false` | Require a valid Bearer token; use verified identity for auth checks |
 
 `ENABLE_IDENTITY_CHECK` connects the Authentication and DynamicOrchestration systems: consumers must log in first, then present their token when orchestrating. The verified `systemName` from the token replaces the self-reported value in the request body, preventing impersonation. See `core/GAP_ANALYSIS.md` (D8) for full design rationale.
+
+---
+
+## Experiments
+
+Self-contained scenarios that demonstrate the core systems in realistic settings.
+
+| Experiment | Description |
+|---|---|
+| [experiment-1](experiments/experiment-1/) | Interactive browser demo: register services, grant authorization, orchestrate |
+| [experiment-2](experiments/experiment-2/) | Virtual local cloud with AMQP data plane: robot → RabbitMQ → edge-adapter → orchestrated consumer |
+
+### Experiment 2 quick start
+
+```bash
+cd experiments/experiment-2
+docker compose up --build
+```
+
+Watch `consumer` logs for orchestrated telemetry readings from `robot-simulator` via the `edge-adapter`.  Full details in [experiments/experiment-2/README.md](experiments/experiment-2/README.md).
 
 ---
 
