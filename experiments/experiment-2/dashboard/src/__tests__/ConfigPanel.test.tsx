@@ -50,4 +50,16 @@ describe('ConfigPanel', () => {
     fireEvent.change(input, { target: { value: 'my-consumer' } })
     expect(input.value).toBe('my-consumer')
   })
+
+  it('shows fleet stats interval input', () => {
+    wrap()
+    const input = screen.getByLabelText(/Fleet stats/i) as HTMLInputElement
+    expect(Number(input.value)).toBe(DEFAULT_CONFIG.polling.fleetStatsIntervalMs)
+  })
+
+  it('shows telemetry stats interval input', () => {
+    wrap()
+    const input = screen.getByLabelText(/Telemetry stats/i) as HTMLInputElement
+    expect(Number(input.value)).toBe(DEFAULT_CONFIG.polling.allTelemetryIntervalMs)
+  })
 })

@@ -3,11 +3,13 @@
 // support systems can add their own sections without touching the shared ones.
 
 export interface PollingConfig {
-  healthIntervalMs: number       // health endpoint poll rate
-  servicesIntervalMs: number     // service-registry query rate
-  telemetryIntervalMs: number    // edge-adapter telemetry poll rate
-  orchIntervalMs: number         // orchestration query rate
-  brokerIntervalMs: number       // RabbitMQ stats poll rate
+  healthIntervalMs: number        // health endpoint poll rate
+  servicesIntervalMs: number      // service-registry query rate
+  telemetryIntervalMs: number     // edge-adapter telemetry poll rate
+  orchIntervalMs: number          // orchestration query rate
+  brokerIntervalMs: number        // RabbitMQ stats poll rate
+  fleetStatsIntervalMs: number    // robot-fleet stats poll rate
+  allTelemetryIntervalMs: number  // edge-adapter /telemetry/stats poll rate
 }
 
 export interface DisplayConfig {

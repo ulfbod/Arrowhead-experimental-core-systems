@@ -3,15 +3,21 @@
 // On startup it:
 //  1. Obtains a certificate from the CA (port 8086) for the system "edge-adapter".
 //  2. Registers the "telemetry" service with the ServiceRegistry (port 8080).
-//  3. Subscribes to "telemetry.#" on the AMQP exchange and stores the latest payload.
-//  4. Serves GET /telemetry/latest — used by orchestrated consumers.
+//  3. Subscribes to "telemetry.#" on the AMQP exchange and stores the latest
+//     payload per robot.
+//  4. Serves HTTP endpoints:
+//     GET /telemetry/latest — backward-compat: most recently received (any robot)
+//     GET /telemetry/all   — latest payload per robot (map[robotId]entry)
+//     GET /telemetry/stats — per-robot latency/rate statistics
+//     GET /health
 //
 // Environment variables:
 //
-//	AMQP_URL  (default amqp://guest:guest@localhost:5672/)
-//	CA_URL    (default http://localhost:8086)
-//	SR_URL    (default http://localhost:8080)
-//	PORT      (default 9001)
+//	AMQP_URL   (default amqp://guest:guest@localhost:5672/)
+//	CA_URL     (default http://localhost:8086)
+//	SR_URL     (default http://localhost:8080)
+//	PORT       (default 9001)
+//	EDGE_HOST  (default edge-adapter)
 package main
 
 import (
@@ -22,25 +28,12 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	broker "arrowhead/message-broker"
 )
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
-
-var (
-	mu          sync.RWMutex
-	latestMsg   json.RawMessage
-	latestTime  time.Time
-)
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
+var state = newState()
 
 func main() {
 	amqpURL := envOr("AMQP_URL", "amqp://guest:guest@localhost:5672/")
@@ -57,8 +50,6 @@ func main() {
 	}
 
 	// 2. Register with ServiceRegistry.
-	// Use the EDGE_HOST env var (default "edge-adapter") so Docker consumers
-	// can reach this service by container name.
 	host := envOr("EDGE_HOST", "edge-adapter")
 	addr := fmt.Sprintf("%s:%s", host, port)
 	if err := registerService(srURL, host, port); err != nil {
@@ -83,10 +74,7 @@ func main() {
 	defer b.Close()
 
 	if err := b.Subscribe("edge-adapter-queue", "telemetry.#", func(payload []byte) {
-		mu.Lock()
-		latestMsg = json.RawMessage(payload)
-		latestTime = time.Now()
-		mu.Unlock()
+		state.Update(json.RawMessage(payload))
 		log.Printf("[edge-adapter] received telemetry (%d bytes)", len(payload))
 	}); err != nil {
 		log.Fatalf("[edge-adapter] AMQP subscribe: %v", err)
@@ -97,6 +85,8 @@ func main() {
 	// 4. Serve HTTP.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/telemetry/latest", handleLatest)
+	mux.HandleFunc("/telemetry/all", handleAll)
+	mux.HandleFunc("/telemetry/stats", handleStats)
 	mux.HandleFunc("/health", handleHealth)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
@@ -110,13 +100,9 @@ func handleLatest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET required", http.StatusMethodNotAllowed)
 		return
 	}
-	mu.RLock()
-	msg := latestMsg
-	ts  := latestTime
-	mu.RUnlock()
-
+	msg, ts, ok := state.Latest()
 	w.Header().Set("Content-Type", "application/json")
-	if msg == nil {
+	if !ok {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -125,6 +111,24 @@ func handleLatest(w http.ResponseWriter, r *http.Request) {
 		"payload":    msg,
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+func handleAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET required", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(state.All())
+}
+
+func handleStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET required", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(state.Stats())
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {

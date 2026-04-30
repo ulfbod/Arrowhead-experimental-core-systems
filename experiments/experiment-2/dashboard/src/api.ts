@@ -12,6 +12,9 @@ import type {
   OrchResponse,
   RabbitQueue,
   RabbitExchange,
+  FleetConfig,
+  TelemetryStatsResponse,
+  AllTelemetryEntry,
 } from './types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -116,6 +119,33 @@ export async function fetchTelemetry(signal?: AbortSignal): Promise<TelemetryRes
   if (resp.status === 204) return null
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
   return resp.json() as Promise<TelemetryResponse>
+}
+
+// ── Robot Fleet ───────────────────────────────────────────────────────────────
+
+export function fetchFleetConfig(signal?: AbortSignal): Promise<FleetConfig> {
+  return get<FleetConfig>('/api/robot-fleet/config', { signal })
+}
+
+export async function postFleetConfig(cfg: FleetConfig, signal?: AbortSignal): Promise<void> {
+  const resp = await fetch('/api/robot-fleet/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+    signal,
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(`HTTP ${resp.status}: ${text}`)
+  }
+}
+
+export function fetchTelemetryStats(signal?: AbortSignal): Promise<TelemetryStatsResponse> {
+  return get<TelemetryStatsResponse>('/api/telemetry/telemetry/stats', { signal })
+}
+
+export function fetchAllTelemetry(signal?: AbortSignal): Promise<Record<string, AllTelemetryEntry>> {
+  return get<Record<string, AllTelemetryEntry>>('/api/telemetry/telemetry/all', { signal })
 }
 
 // ── DynamicOrchestration ──────────────────────────────────────────────────────

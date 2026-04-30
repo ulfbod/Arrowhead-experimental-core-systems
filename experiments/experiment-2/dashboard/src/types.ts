@@ -81,12 +81,71 @@ export interface RabbitExchange {
 
 // ── Telemetry (edge-adapter) ──────────────────────────────────────────────────
 
+export interface ImuData {
+  roll: number
+  pitch: number
+  yaw: number
+}
+
+export interface PositionData {
+  x: number
+  y: number
+  z: number
+}
+
 export interface TelemetryPayload {
   robotId: string
   temperature: number
   humidity: number
   timestamp: string
   seq: number
+  imu?: ImuData
+  position?: PositionData
+}
+
+export interface LatencyStats {
+  mean: number
+  p50: number
+  p95: number
+  p99: number
+  max: number
+}
+
+export interface RobotStatsEntry {
+  rateHz: number
+  latency: LatencyStats
+  msgCount: number
+}
+
+export interface AggregateStats {
+  robotCount: number
+  totalMsgCount: number
+  meanLatencyMs: number
+  p95LatencyMs: number
+}
+
+export interface TelemetryStatsResponse {
+  robots: Record<string, RobotStatsEntry>
+  aggregate: AggregateStats
+}
+
+export interface AllTelemetryEntry {
+  receivedAt: string
+  payload: TelemetryPayload
+  latencyMs: number
+}
+
+// ── Robot Fleet ───────────────────────────────────────────────────────────────
+
+export interface RobotConfig {
+  id: string
+  networkPreset: string
+}
+
+export interface FleetConfig {
+  payloadType: 'basic' | 'imu'
+  payloadHz: number
+  robots: RobotConfig[]
 }
 
 export interface TelemetryResponse {

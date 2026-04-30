@@ -33,9 +33,9 @@ export default defineConfig({
         target: 'http://localhost:9001',
         rewrite: (path) => path.replace(/^\/api\/telemetry/, ''),
       },
-      '/api/robot-sim': {
+      '/api/robot-fleet': {
         target: 'http://localhost:9003',
-        rewrite: (path) => path.replace(/^\/api\/robot-sim/, ''),
+        rewrite: (path) => path.replace(/^\/api\/robot-fleet/, ''),
       },
       '/api/consumer': {
         target: 'http://localhost:9002',

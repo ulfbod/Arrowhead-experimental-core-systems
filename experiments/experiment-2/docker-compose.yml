@@ -4,7 +4,7 @@
 #   - RabbitMQ message broker
 #   - Arrowhead core systems (ServiceRegistry, Authentication, ConsumerAuthorization,
 #     DynamicOrchestration, CA)
-#   - Experiment services (robot-simulator, edge-adapter, consumer)
+#   - Experiment services (robot-fleet, edge-adapter, consumer ×3)
 #
 # Usage:
 #   docker compose up --build
@@ -14,6 +14,7 @@
 # inspection are exposed:
 #   - RabbitMQ management UI: http://localhost:15672  (guest/guest)
 #   - edge-adapter telemetry:  http://localhost:9001/telemetry/latest
+#   - robot-fleet control API: http://localhost:9003/config
 
 services:
 
@@ -117,28 +118,42 @@ services:
       timeout: 3s
       retries: 10
 
-  # Seeds the ConsumerAuthorization grant so demo-consumer can access telemetry.
-  # Runs once and exits; consumer depends on it completing successfully.
+  # Seeds ConsumerAuthorization grants for all three consumers.
+  # Runs once and exits; consumer services depend on it completing.
   setup:
     image: curlimages/curl:8.7.1
     depends_on:
       consumerauth:
         condition: service_healthy
     restart: "no"
-    command: >
-      curl -sf -X POST http://consumerauth:8082/authorization/grant
-      -H "Content-Type: application/json"
-      -d '{"consumerSystemName":"demo-consumer","providerSystemName":"edge-adapter","serviceDefinition":"telemetry"}'
+    command:
+      - sh
+      - -c
+      - |-
+        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer","providerSystemName":"edge-adapter","serviceDefinition":"telemetry"}' &&
+        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"edge-adapter","serviceDefinition":"telemetry"}' &&
+        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"edge-adapter","serviceDefinition":"telemetry"}'
 
   # ── Experiment Services ──────────────────────────────────────────────────────
 
-  robot-simulator:
+  robot-fleet:
     build:
       context: ../../
-      dockerfile: experiments/experiment-2/dockerfiles/robot-simulator.Dockerfile
+      dockerfile: experiments/experiment-2/dockerfiles/robot-fleet.Dockerfile
+    ports:
+      - "9003:9003"   # fleet control API — POST /config to reconfigure robots
     environment:
       AMQP_URL: "amqp://guest:guest@rabbitmq:5672/"
-      ROBOT_ID: "robot-1"
+      INITIAL_ROBOT_COUNT: "3"
+      PAYLOAD_TYPE: "imu"
+      PAYLOAD_HZ: "10"
+      NETWORK_PRESET: "5g_good"
+      FLEET_PORT: "9003"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9003/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -170,6 +185,41 @@ services:
       ORCH_URL: "http://dynamicorch:8083"
       CONSUMER_NAME: "demo-consumer"
       POLL_INTERVAL: "5s"
+      HEALTH_PORT: "9002"
+    depends_on:
+      dynamicorch:
+        condition: service_healthy
+      edge-adapter:
+        condition: service_started
+      setup:
+        condition: service_completed_successfully
+
+  consumer-2:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-2/dockerfiles/consumer.Dockerfile
+    environment:
+      ORCH_URL: "http://dynamicorch:8083"
+      CONSUMER_NAME: "demo-consumer-2"
+      POLL_INTERVAL: "5s"
+      HEALTH_PORT: "9004"
+    depends_on:
+      dynamicorch:
+        condition: service_healthy
+      edge-adapter:
+        condition: service_started
+      setup:
+        condition: service_completed_successfully
+
+  consumer-3:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-2/dockerfiles/consumer.Dockerfile
+    environment:
+      ORCH_URL: "http://dynamicorch:8083"
+      CONSUMER_NAME: "demo-consumer-3"
+      POLL_INTERVAL: "5s"
+      HEALTH_PORT: "9005"
     depends_on:
       dynamicorch:
         condition: service_healthy
@@ -199,3 +249,5 @@ services:
         condition: service_healthy
       edge-adapter:
         condition: service_started
+      robot-fleet:
+        condition: service_healthy

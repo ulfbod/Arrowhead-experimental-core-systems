@@ -88,6 +88,14 @@ export function ConfigPanel() {
           <NumberInput min={1000} value={draft.polling.brokerIntervalMs}
             onChange={v => updatePolling('brokerIntervalMs', v)} />
         </Field>
+        <Field label="Fleet stats (ms)" hint="Robot-fleet stats poll rate">
+          <NumberInput min={500} value={draft.polling.fleetStatsIntervalMs}
+            onChange={v => updatePolling('fleetStatsIntervalMs', v)} />
+        </Field>
+        <Field label="Telemetry stats (ms)" hint="Edge-adapter /telemetry/stats poll rate">
+          <NumberInput min={500} value={draft.polling.allTelemetryIntervalMs}
+            onChange={v => updatePolling('allTelemetryIntervalMs', v)} />
+        </Field>
       </section>
 
       <section style={s.section}>

@@ -19,9 +19,15 @@ export const ALL_SYSTEMS: SystemDef[] = [
     healthFetcher: fetchRabbitMQHealth,
     layer: 'support' },
   // ── Experiment ─────────────────────────────────────────────────────────────
-  { id: 'edge-adapter', label: 'EdgeAdapter', healthPath: '/api/telemetry', layer: 'experiment', dependsOn: ['serviceregistry', 'ca', 'rabbitmq'] },
-  { id: 'robot-sim',    label: 'RobotSim',    healthPath: '/api/robot-sim', layer: 'experiment', dependsOn: ['rabbitmq'] },
-  { id: 'consumer',     label: 'Consumer',    healthPath: '/api/consumer',  layer: 'experiment', dependsOn: ['dynamicorch', 'edge-adapter'] },
+  { id: 'edge-adapter', label: 'EdgeAdapter', healthPath: '/api/telemetry',  layer: 'experiment', dependsOn: ['serviceregistry', 'ca', 'rabbitmq'] },
+  { id: 'robot-fleet',  label: 'RobotFleet',  healthPath: '/api/robot-fleet', layer: 'experiment', dependsOn: ['rabbitmq'] },
+  { id: 'consumer',     label: 'Consumer',    healthPath: '/api/consumer',   layer: 'experiment', dependsOn: ['dynamicorch', 'edge-adapter'] },
+  { id: 'consumer-2',   label: 'Consumer-2',  healthPath: '/api/consumer',
+    healthUrl: 'http://localhost:9004/health',
+    layer: 'experiment', dependsOn: ['dynamicorch', 'edge-adapter'] },
+  { id: 'consumer-3',   label: 'Consumer-3',  healthPath: '/api/consumer',
+    healthUrl: 'http://localhost:9005/health',
+    layer: 'experiment', dependsOn: ['dynamicorch', 'edge-adapter'] },
 ]
 
 function probeToStatus(probe: HealthProbe | null): 'ok' | 'error' | 'loading' {

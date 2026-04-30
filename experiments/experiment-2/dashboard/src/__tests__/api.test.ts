@@ -7,7 +7,12 @@ import {
   fetchExchanges,
   fetchTelemetry,
   fetchOrchestration,
+  fetchFleetConfig,
+  postFleetConfig,
+  fetchTelemetryStats,
+  fetchAllTelemetry,
 } from '../api'
+import type { FleetConfig } from '../types'
 
 // Replace global fetch with a controllable mock.
 function mockFetch(status: number, body: unknown) {
@@ -105,6 +110,50 @@ describe('fetchTelemetry', () => {
   it('throws on non-ok, non-204 response', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 502 })
     await expect(fetchTelemetry()).rejects.toThrow('HTTP 502')
+  })
+})
+
+describe('fetchFleetConfig', () => {
+  it('fetches from /api/robot-fleet/config', async () => {
+    const cfg: FleetConfig = { payloadType: 'imu', payloadHz: 10, robots: [] }
+    globalThis.fetch = mockFetch(200, cfg)
+    const data = await fetchFleetConfig()
+    expect(data.payloadType).toBe('imu')
+    const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+    expect(url).toContain('/api/robot-fleet/config')
+  })
+})
+
+describe('postFleetConfig', () => {
+  it('sends PUT/POST to /api/robot-fleet/config', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, status: 204, text: () => Promise.resolve('') })
+    const cfg: FleetConfig = { payloadType: 'basic', payloadHz: 5, robots: [{ id: 'r1', networkPreset: '5g_good' }] }
+    await postFleetConfig(cfg)
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(call[0]).toContain('/api/robot-fleet/config')
+    expect(call[1].method).toBe('POST')
+  })
+
+  it('throws on non-ok response', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 400, text: () => Promise.resolve('bad') })
+    await expect(postFleetConfig({ payloadType: 'imu', payloadHz: 10, robots: [] })).rejects.toThrow('HTTP 400')
+  })
+})
+
+describe('fetchTelemetryStats', () => {
+  it('fetches from /api/telemetry/telemetry/stats', async () => {
+    const resp = { robots: {}, aggregate: { robotCount: 0, totalMsgCount: 0, meanLatencyMs: 0, p95LatencyMs: 0 } }
+    globalThis.fetch = mockFetch(200, resp)
+    const data = await fetchTelemetryStats()
+    expect(data.aggregate.robotCount).toBe(0)
+  })
+})
+
+describe('fetchAllTelemetry', () => {
+  it('fetches from /api/telemetry/telemetry/all', async () => {
+    globalThis.fetch = mockFetch(200, {})
+    const data = await fetchAllTelemetry()
+    expect(typeof data).toBe('object')
   })
 })
 

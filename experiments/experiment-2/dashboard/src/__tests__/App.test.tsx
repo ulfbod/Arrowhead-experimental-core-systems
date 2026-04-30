@@ -13,6 +13,12 @@ function stubFetch() {
     if ((url as string).includes('/telemetry/latest')) {
       return Promise.resolve({ ok: true, status: 204 })
     }
+    if ((url as string).includes('/telemetry/stats') || (url as string).includes('/telemetry/all')) {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ robots: {}, aggregate: { robotCount: 0, totalMsgCount: 0, meanLatencyMs: 0, p95LatencyMs: 0 } }) })
+    }
+    if ((url as string).includes('/api/robot-fleet')) {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ payloadType: 'imu', payloadHz: 10, robots: [] }) })
+    }
     if ((url as string).includes('/orchestration/dynamic')) {
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ response: [] }) })
     }
