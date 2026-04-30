@@ -1,0 +1,6 @@
+# Exclude generated artefacts from the dashboard build context.
+# Without this, node_modules (~90 MB) and dist/ are sent to the daemon on
+# every build, and the layer cache is keyed on their content instead of the
+# source files — causing stale cache hits when only src/ changes.
+experiments/experiment-2/dashboard/node_modules/
+experiments/experiment-2/dashboard/dist/

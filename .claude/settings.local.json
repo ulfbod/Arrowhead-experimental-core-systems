@@ -146,7 +146,17 @@
       "Bash(mv dashboard:*)",
       "Bash(echo \"exit: $?\")",
       "Bash(grep -E \"\\\\.\\(tsx|ts|json|html|md\\)$\")",
-      "Bash(npm test:*)"
+      "Bash(npm test:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -u guest:guest http://localhost:15672/api/overview)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3002/api/rabbitmq/api/overview)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -H \"Authorization: Basic Z3Vlc3Q6Z3Vlc3Q=\" http://localhost:3002/api/rabbitmq/api/overview)",
+      "Bash(curl -s http://localhost:3002/)",
+      "Bash(curl -s http://localhost:3002/assets/index-_SeRChb7.js)",
+      "Bash(curl -v -H \"Authorization: Basic Z3Vlc3Q6Z3Vlc3Q=\" http://localhost:3002/api/rabbitmq/api/overview)",
+      "Bash(node -e ':*)",
+      "Bash(node:*)",
+      "Bash(curl -s -w \"HTTP %{http_code}\" http://localhost:3002/ -o /dev/null)",
+      "Bash(pdftotext AH_Global_Servitization.pdf -)"
     ]
   }
 }

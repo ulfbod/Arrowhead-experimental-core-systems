@@ -8,6 +8,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -31,6 +32,21 @@ func main() {
 	if robotID == "" {
 		robotID = "robot-1"
 	}
+	healthPort := os.Getenv("HEALTH_PORT")
+	if healthPort == "" {
+		healthPort = "9003"
+	}
+
+	// Serve a /health endpoint so the dashboard can poll this service.
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok", "system": "robot-simulator"})
+		})
+		log.Printf("[robot-simulator] health server on :%s", healthPort)
+		log.Fatal(http.ListenAndServe(":"+healthPort, mux))
+	}()
 
 	// Retry connecting so the service survives a slow RabbitMQ startup.
 	var (

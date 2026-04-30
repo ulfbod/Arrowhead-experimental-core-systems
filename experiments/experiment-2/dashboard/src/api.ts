@@ -40,7 +40,7 @@ async function post<T>(url: string, body: unknown, init?: RequestInit): Promise<
 }
 
 // RabbitMQ management API requires Basic auth.
-const RMQ_AUTH = 'Basic ' + btoa('guest:guest')
+export const RMQ_AUTH = 'Basic ' + btoa('guest:guest')
 function rmqGet<T>(path: string, signal?: AbortSignal): Promise<T> {
   return get<T>(`/api/rabbitmq${path}`, { headers: { Authorization: RMQ_AUTH }, signal })
 }
@@ -52,11 +52,17 @@ export function fetchHealth(apiPrefix: string, signal?: AbortSignal): Promise<He
 }
 
 // fetchHealthProbe measures response latency alongside the health status.
-export async function fetchHealthProbe(apiPrefix: string, signal?: AbortSignal): Promise<HealthProbe> {
+// url is the complete path to GET; any 2xx response is treated as healthy.
+// headers are merged into the request (e.g. Authorization for RabbitMQ management API).
+export async function fetchHealthProbe(
+  url: string,
+  signal?: AbortSignal,
+  headers?: Record<string, string>,
+): Promise<HealthProbe> {
   const start = Date.now()
   try {
-    const data = await get<HealthResponse>(`${apiPrefix}/health`, { signal })
-    return { status: data.status === 'ok' ? 'ok' : 'degraded', latencyMs: Date.now() - start }
+    await get<unknown>(url, { signal, headers })
+    return { status: 'ok', latencyMs: Date.now() - start }
   } catch (err) {
     return { status: 'down', latencyMs: Date.now() - start, error: String(err) }
   }
@@ -75,6 +81,24 @@ export function fetchAuthRules(signal?: AbortSignal): Promise<LookupResponse> {
 }
 
 // ── RabbitMQ ──────────────────────────────────────────────────────────────────
+
+// fetchRabbitMQHealth checks the management API is reachable.
+// Uses a direct fetch (bypassing the shared get() helper) so we never call
+// resp.json() on the large overview body — only the HTTP status matters.
+export async function fetchRabbitMQHealth(signal?: AbortSignal): Promise<HealthProbe> {
+  const start = Date.now()
+  try {
+    const resp = await fetch('/api/rabbitmq/api/overview', {
+      headers: { Authorization: RMQ_AUTH },
+      signal,
+    })
+    await resp.text()  // drain body to release connection
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    return { status: 'ok', latencyMs: Date.now() - start }
+  } catch (err) {
+    return { status: 'down', latencyMs: Date.now() - start, error: String(err) }
+  }
+}
 
 export function fetchQueues(signal?: AbortSignal): Promise<RabbitQueue[]> {
   return rmqGet<RabbitQueue[]>('/api/queues', signal)

@@ -13,7 +13,13 @@ export type HealthStatus = 'ok' | 'error' | 'loading'
 export interface SystemDef {
   id: string
   label: string
-  healthPath: string  // full /api/... path to GET /health
+  healthPath: string   // proxy prefix, e.g. /api/sr
+  healthUrl?: string              // override: exact URL to GET for health check
+                                  // defaults to `${healthPath}/health`
+  healthHeaders?: Record<string, string>  // extra request headers (e.g. Authorization)
+  // Full override: replaces the default fetchHealthProbe call entirely.
+  // Use when the service needs a different auth/fetch path (e.g. RabbitMQ).
+  healthFetcher?: (signal: AbortSignal) => Promise<HealthProbe>
   layer: 'core' | 'support' | 'experiment'
   dependsOn?: string[]  // ids of systems this one depends on
 }

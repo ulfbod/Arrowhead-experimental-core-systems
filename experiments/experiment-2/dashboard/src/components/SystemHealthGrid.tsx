@@ -3,17 +3,25 @@
 
 import { useConfig } from '../config/context'
 import { usePolling } from '../hooks/usePolling'
-import { fetchHealthProbe } from '../api'
+import { fetchHealthProbe, fetchRabbitMQHealth } from '../api'
 import { StatusDot } from './StatusDot'
 import type { SystemDef, HealthProbe } from '../types'
 
 export const ALL_SYSTEMS: SystemDef[] = [
-  { id: 'serviceregistry', label: 'ServiceRegistry', healthPath: '/api/sr',           layer: 'core' },
-  { id: 'consumerauth',    label: 'ConsumerAuth',    healthPath: '/api/consumerauth',  layer: 'core',    dependsOn: [] },
-  { id: 'dynamicorch',     label: 'DynamicOrch',     healthPath: '/api/dynamicorch',   layer: 'core',    dependsOn: ['serviceregistry', 'consumerauth'] },
-  { id: 'ca',              label: 'CA',              healthPath: '/api/ca',            layer: 'core' },
-  { id: 'rabbitmq',        label: 'RabbitMQ',        healthPath: '/api/rabbitmq',      layer: 'support' },
-  { id: 'edge-adapter',    label: 'EdgeAdapter',     healthPath: '/api/telemetry',     layer: 'experiment', dependsOn: ['serviceregistry', 'ca', 'rabbitmq'] },
+  // ── Core ───────────────────────────────────────────────────────────────────
+  { id: 'serviceregistry', label: 'ServiceRegistry', healthPath: '/api/sr',          layer: 'core' },
+  { id: 'consumerauth',    label: 'ConsumerAuth',    healthPath: '/api/consumerauth', layer: 'core' },
+  { id: 'dynamicorch',     label: 'DynamicOrch',     healthPath: '/api/dynamicorch',  layer: 'core', dependsOn: ['serviceregistry', 'consumerauth'] },
+  { id: 'ca',              label: 'CA',              healthPath: '/api/ca',           layer: 'core' },
+  // ── Support ────────────────────────────────────────────────────────────────
+  // RabbitMQ: use the same rmqGet path as BrokerStats (proven auth + URL).
+  { id: 'rabbitmq', label: 'RabbitMQ', healthPath: '/api/rabbitmq',
+    healthFetcher: fetchRabbitMQHealth,
+    layer: 'support' },
+  // ── Experiment ─────────────────────────────────────────────────────────────
+  { id: 'edge-adapter', label: 'EdgeAdapter', healthPath: '/api/telemetry', layer: 'experiment', dependsOn: ['serviceregistry', 'ca', 'rabbitmq'] },
+  { id: 'robot-sim',    label: 'RobotSim',    healthPath: '/api/robot-sim', layer: 'experiment', dependsOn: ['rabbitmq'] },
+  { id: 'consumer',     label: 'Consumer',    healthPath: '/api/consumer',  layer: 'experiment', dependsOn: ['dynamicorch', 'edge-adapter'] },
 ]
 
 function probeToStatus(probe: HealthProbe | null): 'ok' | 'error' | 'loading' {
@@ -26,10 +34,11 @@ function SystemCard({ sys, intervalMs, showLatency }: {
   intervalMs: number
   showLatency: boolean
 }) {
-  const { data: probe, loading } = usePolling<HealthProbe>(
-    signal => fetchHealthProbe(sys.healthPath, signal),
-    intervalMs,
-  )
+  const healthUrl = sys.healthUrl ?? `${sys.healthPath}/health`
+  const fetcher = sys.healthFetcher
+    ? sys.healthFetcher
+    : (signal: AbortSignal) => fetchHealthProbe(healthUrl, signal, sys.healthHeaders)
+  const { data: probe, loading } = usePolling<HealthProbe>(fetcher, intervalMs)
 
   const status = loading && probe === null ? 'loading' : probeToStatus(probe)
 
@@ -40,7 +49,9 @@ function SystemCard({ sys, intervalMs, showLatency }: {
       {showLatency && probe && probe.latencyMs > 0 && (
         <span style={s.latency}>{probe.latencyMs}ms</span>
       )}
-      {probe?.status === 'down' && <span style={s.err}>down</span>}
+      {probe?.status === 'down' && (
+        <span style={s.err} title={probe.error}>down</span>
+      )}
     </div>
   )
 }

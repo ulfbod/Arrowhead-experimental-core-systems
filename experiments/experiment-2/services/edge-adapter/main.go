@@ -61,7 +61,7 @@ func main() {
 	// can reach this service by container name.
 	host := envOr("EDGE_HOST", "edge-adapter")
 	addr := fmt.Sprintf("%s:%s", host, port)
-	if err := registerService(srURL, addr, port); err != nil {
+	if err := registerService(srURL, host, port); err != nil {
 		log.Printf("[edge-adapter] WARNING: ServiceRegistry registration failed: %v", err)
 	} else {
 		log.Printf("[edge-adapter] registered telemetry service at %s", addr)

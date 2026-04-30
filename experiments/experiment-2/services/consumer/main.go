@@ -21,10 +21,23 @@ import (
 	"time"
 )
 
+func startHealthServer(port string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "system": "consumer"})
+	})
+	log.Printf("[consumer] health server on :%s", port)
+	log.Fatal(http.ListenAndServe(":"+port, mux))
+}
+
 func main() {
 	orchURL      := envOr("ORCH_URL", "http://localhost:8083")
 	consumerName := envOr("CONSUMER_NAME", "demo-consumer")
 	pollStr      := envOr("POLL_INTERVAL", "5s")
+	healthPort   := envOr("HEALTH_PORT", "9002")
+
+	go startHealthServer(healthPort)
 
 	pollInterval, err := time.ParseDuration(pollStr)
 	if err != nil {
