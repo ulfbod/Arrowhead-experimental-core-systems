@@ -7,10 +7,11 @@ WORKDIR /src
 # Copy message-broker dependency first (used by replace directive).
 COPY support/message-broker/ ./support/message-broker/
 
-# Copy service source.
-COPY experiments/experiment-2/services/robot-simulator/ ./services/robot-simulator/
+# Copy service source, preserving the repo-relative path so the replace
+# directive (../../../../support/message-broker) resolves correctly.
+COPY experiments/experiment-2/services/robot-simulator/ ./experiments/experiment-2/services/robot-simulator/
 
-WORKDIR /src/services/robot-simulator
+WORKDIR /src/experiments/experiment-2/services/robot-simulator
 RUN go mod download && CGO_ENABLED=0 go build -o /app .
 
 FROM alpine:3.19

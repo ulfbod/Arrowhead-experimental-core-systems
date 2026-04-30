@@ -32,9 +32,21 @@ func main() {
 		robotID = "robot-1"
 	}
 
-	b, err := broker.New(broker.Config{URL: amqpURL, Exchange: "arrowhead"})
+	// Retry connecting so the service survives a slow RabbitMQ startup.
+	var (
+		b   *broker.Broker
+		err error
+	)
+	for attempts := 0; attempts < 15; attempts++ {
+		b, err = broker.New(broker.Config{URL: amqpURL, Exchange: "arrowhead"})
+		if err == nil {
+			break
+		}
+		log.Printf("[robot-simulator] connect failed (attempt %d/15): %v — retrying in 2s", attempts+1, err)
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
-		log.Fatalf("[robot-simulator] connect: %v", err)
+		log.Fatalf("[robot-simulator] could not connect after 15 attempts: %v", err)
 	}
 	defer b.Close()
 

@@ -57,17 +57,28 @@ func main() {
 	}
 
 	// 2. Register with ServiceRegistry.
-	addr := fmt.Sprintf("localhost:%s", port)
+	// Use the EDGE_HOST env var (default "edge-adapter") so Docker consumers
+	// can reach this service by container name.
+	host := envOr("EDGE_HOST", "edge-adapter")
+	addr := fmt.Sprintf("%s:%s", host, port)
 	if err := registerService(srURL, addr, port); err != nil {
 		log.Printf("[edge-adapter] WARNING: ServiceRegistry registration failed: %v", err)
 	} else {
 		log.Printf("[edge-adapter] registered telemetry service at %s", addr)
 	}
 
-	// 3. Subscribe to AMQP telemetry.
-	b, err := broker.New(broker.Config{URL: amqpURL, Exchange: "arrowhead"})
+	// 3. Subscribe to AMQP telemetry (retry to survive slow RabbitMQ startup).
+	var b *broker.Broker
+	for attempts := 0; attempts < 15; attempts++ {
+		b, err = broker.New(broker.Config{URL: amqpURL, Exchange: "arrowhead"})
+		if err == nil {
+			break
+		}
+		log.Printf("[edge-adapter] AMQP connect failed (attempt %d/15): %v — retrying in 2s", attempts+1, err)
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
-		log.Fatalf("[edge-adapter] AMQP connect: %v", err)
+		log.Fatalf("[edge-adapter] could not connect to AMQP after 15 attempts: %v", err)
 	}
 	defer b.Close()
 
