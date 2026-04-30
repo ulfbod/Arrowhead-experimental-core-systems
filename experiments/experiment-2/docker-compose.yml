@@ -177,3 +177,25 @@ services:
         condition: service_started
       setup:
         condition: service_completed_successfully
+
+  # ── Dashboard ────────────────────────────────────────────────────────────────
+
+  dashboard:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-2/dockerfiles/dashboard.Dockerfile
+    ports:
+      - "3002:80"   # open http://localhost:3002 in your browser
+    depends_on:
+      serviceregistry:
+        condition: service_healthy
+      consumerauth:
+        condition: service_healthy
+      dynamicorch:
+        condition: service_healthy
+      ca:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      edge-adapter:
+        condition: service_started

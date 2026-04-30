@@ -144,7 +144,9 @@
       "WebFetch(domain:aitia-iiot.github.io)",
       "Bash(mkdir experiment-1:*)",
       "Bash(mv dashboard:*)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(grep -E \"\\\\.\\(tsx|ts|json|html|md\\)$\")",
+      "Bash(npm test:*)"
     ]
   }
 }
