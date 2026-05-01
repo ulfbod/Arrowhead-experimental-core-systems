@@ -127,6 +127,18 @@ func (b *Broker) Subscribe(queue, bindingKey string, handler Handler) error {
 	return nil
 }
 
+// Done returns a channel that is closed when the AMQP connection is lost.
+// Callers can use this to detect unexpected disconnects and trigger reconnection.
+func (b *Broker) Done() <-chan struct{} {
+	done := make(chan struct{})
+	notify := b.conn.NotifyClose(make(chan *amqp.Error, 1))
+	go func() {
+		<-notify
+		close(done)
+	}()
+	return done
+}
+
 // Close releases the AMQP channel and connection.
 func (b *Broker) Close() error {
 	if err := b.ch.Close(); err != nil {

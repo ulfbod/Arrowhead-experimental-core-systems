@@ -41,13 +41,15 @@ RabbitMQ by the `topic-auth-sync` service.
    └───────────────────┘
 ```
 
+See [DIAGRAMS.md](DIAGRAMS.md) for Mermaid component and sequence diagrams.
+
 ### Services
 
 | Service | Port | Role |
 |---|---|---|
 | **consumerauth** | 8082 | Stores authorization grants; `topic-auth-sync` polls `/authorization/lookup` |
 | **rabbitmq** | 5672 / 15673 | AMQP broker with `rabbitmq_auth_backend_topic` plugin; management UI on 15673 |
-| **topic-auth-sync** | 9200 | Reconciles RabbitMQ users and topic permissions from ConsumerAuth every 10 s |
+| **topic-auth-sync** | 9090 | Reconciles RabbitMQ users and topic permissions from ConsumerAuth every 10 s |
 | **robot-fleet** | 9103 | Publishes synthetic telemetry to `telemetry.<robot-id>` routing keys |
 | **consumer-1/2/3** | — | Subscribe directly to RabbitMQ using per-consumer credentials |
 
@@ -71,6 +73,8 @@ Services start in dependency order:
 ```
 rabbitmq → consumerauth → setup (seeds grants) → topic-auth-sync → robot-fleet + consumers
 ```
+
+Open the dashboard at **http://localhost:3003**.
 
 Watch consumer logs for live telemetry:
 
@@ -140,17 +144,7 @@ curl -X POST http://localhost:8082/authorization/grant \
   -d '{"consumerSystemName":"new-consumer","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}'
 
 # Within ~10 s, topic-auth-sync creates user "new-consumer" in RabbitMQ.
-# Check: RabbitMQ management UI → Admin → Users  (http://localhost:15673, guest/guest)
-```
-
-**Unauthorized bind attempt (rejected at broker):**
-```bash
-docker run --rm --network experiment-3_default \
-  pivotalrabbitmq/perf-test:latest \
-  --uri "amqp://unknown-user:wrong-pass@rabbitmq:5672/" \
-  --queue test-unauthorized --routing-key "telemetry.#" \
-  --consumers 1 --producers 0
-# Expected: connection refused or permission error
+# Check: RabbitMQ management UI → Admin → Users  (http://localhost:15673)
 ```
 
 ---

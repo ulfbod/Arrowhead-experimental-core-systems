@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -60,8 +61,9 @@ func run(amqpURL, name, queue, bindingKey string, st *statsTracker) error {
 
 	log.Printf("[%s] subscribed with binding key %q — waiting for messages", name, bindingKey)
 
-	// Block until process exits. Reconnection requires restart.
-	select {}
+	// Block until the connection drops, then return so the retry loop reconnects.
+	<-b.Done()
+	return fmt.Errorf("connection closed")
 }
 
 func main() {

@@ -59,9 +59,9 @@ services:
       - sh
       - -c
       - |-
-        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-1","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' &&
-        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' &&
-        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}'
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-1","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists'
 
   # ── Topic Auth Sync ────────────────────────────────────────────────────────────
 
