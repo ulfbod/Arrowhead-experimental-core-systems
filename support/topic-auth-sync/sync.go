@@ -51,10 +51,11 @@ func (s *syncer) sync() error {
 		}
 		log.Printf("[sync] ensured user %q", username)
 
-		// Regular permissions: consumers can read queues but not configure or write.
+		// Regular permissions: consumers need configure access to declare the exchange
+		// and their own queue, and read access to consume from it.
 		perm := rmqPermission{
-			Configure: "",
-			Write:     "",
+			Configure: ".*",
+			Write:     ".*",
 			Read:      ".*",
 		}
 		if err := s.rmq.setPermissions(username, perm); err != nil {
@@ -74,11 +75,15 @@ func (s *syncer) sync() error {
 	}
 
 	// 4. Remove stale managed users that are no longer in the desired set.
+	// The publisher user is managed separately and must never be treated as stale.
 	managed, err := s.rmq.listManagedUsers()
 	if err != nil {
 		return fmt.Errorf("listManagedUsers: %w", err)
 	}
 	for _, username := range managed {
+		if username == s.cfg.publisherUser {
+			continue
+		}
 		if _, ok := desired[username]; !ok {
 			if err := s.rmq.deleteUser(username); err != nil {
 				return fmt.Errorf("deleteUser %q: %w", username, err)

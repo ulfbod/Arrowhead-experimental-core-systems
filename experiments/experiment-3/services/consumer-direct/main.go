@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	gosync "sync"
+	"sync/atomic"
 	"time"
 
 	broker "arrowhead/message-broker"
@@ -17,7 +19,32 @@ func envOr(key, def string) string {
 	return def
 }
 
-func run(amqpURL, name, queue, bindingKey string) error {
+// statsTracker counts received messages and records the last receipt time.
+type statsTracker struct {
+	msgCount       atomic.Int64
+	mu             gosync.Mutex
+	lastReceivedAt string
+}
+
+func (st *statsTracker) record() {
+	st.msgCount.Add(1)
+	st.mu.Lock()
+	st.lastReceivedAt = time.Now().UTC().Format(time.RFC3339)
+	st.mu.Unlock()
+}
+
+func (st *statsTracker) snapshot(name string) map[string]interface{} {
+	st.mu.Lock()
+	last := st.lastReceivedAt
+	st.mu.Unlock()
+	return map[string]interface{}{
+		"name":           name,
+		"msgCount":       st.msgCount.Load(),
+		"lastReceivedAt": last,
+	}
+}
+
+func run(amqpURL, name, queue, bindingKey string, st *statsTracker) error {
 	b, err := broker.New(broker.Config{URL: amqpURL, Exchange: "arrowhead"})
 	if err != nil {
 		return err
@@ -25,6 +52,7 @@ func run(amqpURL, name, queue, bindingKey string) error {
 	defer b.Close()
 
 	if err := b.Subscribe(queue, bindingKey, func(payload []byte) {
+		st.record()
 		log.Printf("[%s] received: %s", name, payload)
 	}); err != nil {
 		return err
@@ -47,11 +75,18 @@ func main() {
 	healthPort := envOr("HEALTH_PORT", "9002")
 	queue := name + "-queue"
 
-	// Health server — always returns 200.
+	st := &statsTracker{}
+
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
+
+	http.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(st.snapshot(name))
+	})
+
 	go func() {
 		log.Printf("[%s] health server on :%s", name, healthPort)
 		if err := http.ListenAndServe(":"+healthPort, nil); err != nil {
@@ -61,7 +96,7 @@ func main() {
 
 	// Retry loop with 3s back-off.
 	for {
-		if err := run(amqpURL, name, queue, bindingKey); err != nil {
+		if err := run(amqpURL, name, queue, bindingKey, st); err != nil {
 			log.Printf("[%s] error: %v — retrying in 3s", name, err)
 			time.Sleep(3 * time.Second)
 		}

@@ -55,10 +55,10 @@ func TestEnsureUser(t *testing.T) {
 
 func TestListManagedUsers_filtersTag(t *testing.T) {
 	users := []rmqUserResp{
-		{Name: "guest", Tags: "administrator"},
-		{Name: "managed-user", Tags: managedTag},
-		{Name: "other-managed", Tags: "other, " + managedTag},
-		{Name: "unmanaged", Tags: ""},
+		{Name: "guest", Tags: []string{"administrator"}},
+		{Name: "managed-user", Tags: []string{managedTag}},
+		{Name: "other-managed", Tags: []string{"other", managedTag}},
+		{Name: "unmanaged", Tags: []string{}},
 	}
 
 	c, _ := makeClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -195,22 +195,21 @@ func TestDeleteTopicPermissions(t *testing.T) {
 
 func TestContainsTag(t *testing.T) {
 	cases := []struct {
-		tags   string
+		tags   []string
 		target string
 		want   bool
 	}{
-		{"", managedTag, false},
-		{managedTag, managedTag, true},
-		{"administrator," + managedTag, managedTag, true},
-		{"administrator, " + managedTag, managedTag, true},
-		{"administrator", managedTag, false},
-		{"arrowhead-managedextra", managedTag, false},
+		{[]string{}, managedTag, false},
+		{[]string{managedTag}, managedTag, true},
+		{[]string{"administrator", managedTag}, managedTag, true},
+		{[]string{"administrator"}, managedTag, false},
+		{[]string{"arrowhead-managedextra"}, managedTag, false},
 	}
 
 	for _, tc := range cases {
 		got := containsTag(tc.tags, tc.target)
 		if got != tc.want {
-			t.Errorf("containsTag(%q, %q) = %v, want %v", tc.tags, tc.target, got, tc.want)
+			t.Errorf("containsTag(%v, %q) = %v, want %v", tc.tags, tc.target, got, tc.want)
 		}
 	}
 }

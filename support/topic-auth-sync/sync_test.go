@@ -133,7 +133,7 @@ func TestSync_staleUser(t *testing.T) {
 
 	rmq := &mockRMQ{
 		users: []rmqUserResp{
-			{Name: "stale-consumer", Tags: managedTag},
+			{Name: "stale-consumer", Tags: []string{managedTag}},
 		},
 	}
 	rmqSrv := httptest.NewServer(rmq)
@@ -146,6 +146,30 @@ func TestSync_staleUser(t *testing.T) {
 
 	if !rmq.saw(http.MethodDelete, "/api/users/stale-consumer") {
 		t.Error("expected DELETE /api/users/stale-consumer")
+	}
+}
+
+func TestSync_publisherNotDeleted(t *testing.T) {
+	// No rules → publisher should be preserved even though it is managed and not a consumer.
+	ca := &mockConsumerAuth{rules: nil}
+	caSrv := httptest.NewServer(ca)
+	defer caSrv.Close()
+
+	rmq := &mockRMQ{
+		users: []rmqUserResp{
+			{Name: "robot-fleet", Tags: []string{managedTag}},
+		},
+	}
+	rmqSrv := httptest.NewServer(rmq)
+	defer rmqSrv.Close()
+
+	s := newTestSyncer(caSrv.URL, rmqSrv.URL)
+	if err := s.sync(); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+
+	if rmq.saw(http.MethodDelete, "/api/users/robot-fleet") {
+		t.Error("publisher user robot-fleet must not be deleted")
 	}
 }
 

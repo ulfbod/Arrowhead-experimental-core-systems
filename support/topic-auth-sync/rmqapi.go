@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
 const managedTag = "arrowhead-managed"
@@ -23,9 +22,12 @@ type rmqUserBody struct {
 	Tags     string `json:"tags"`
 }
 
+// rmqUserResp models the GET /api/users response.
+// RabbitMQ 3.12+ returns tags as a JSON array; older versions returned a
+// comma-separated string. We use []string to handle the modern format.
 type rmqUserResp struct {
-	Name string `json:"name"`
-	Tags string `json:"tags"`
+	Name string   `json:"name"`
+	Tags []string `json:"tags"`
 }
 
 type rmqPermission struct {
@@ -162,10 +164,10 @@ func (c *rmqClient) doDELETE(path string) error {
 	return nil
 }
 
-// containsTag reports whether target appears as a comma-separated tag in tags.
-func containsTag(tags, target string) bool {
-	for _, t := range strings.Split(tags, ",") {
-		if strings.TrimSpace(t) == target {
+// containsTag reports whether target appears in the tags slice.
+func containsTag(tags []string, target string) bool {
+	for _, t := range tags {
+		if t == target {
 			return true
 		}
 	}

@@ -8,7 +8,8 @@
 # Consumers subscribe directly — no edge-adapter HTTP intermediary.
 #
 # Ports exposed to host:
-#   RabbitMQ management UI: http://localhost:15673  (guest/guest)
+#   Dashboard:              http://localhost:3003
+#   RabbitMQ management UI: http://localhost:15673  (admin/admin)
 #   robot-fleet control API: http://localhost:9103/config
 
 services:
@@ -20,8 +21,8 @@ services:
     ports:
       - "15673:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
     volumes:
       - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
       - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
@@ -71,8 +72,8 @@ services:
     environment:
       CONSUMERAUTH_URL: "http://consumerauth:8082"
       RABBITMQ_URL: "http://rabbitmq:15672"
-      RABBITMQ_ADMIN_USER: guest
-      RABBITMQ_ADMIN_PASS: guest
+      RABBITMQ_ADMIN_USER: admin
+      RABBITMQ_ADMIN_PASS: admin
       RABBITMQ_VHOST: "/"
       RABBITMQ_EXCHANGE: "arrowhead"
       CONSUMER_PASSWORD: "consumer-secret"
@@ -99,6 +100,7 @@ services:
     build:
       context: ../../
       dockerfile: experiments/experiment-3/dockerfiles/robot-fleet.Dockerfile
+    restart: on-failure
     ports:
       - "9103:9003"
     environment:
@@ -157,3 +159,20 @@ services:
     depends_on:
       topic-auth-sync:
         condition: service_healthy
+
+  # ── Dashboard ──────────────────────────────────────────────────────────────
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dockerfiles/dashboard.Dockerfile
+    ports:
+      - "3003:80"
+    depends_on:
+      - consumerauth
+      - rabbitmq
+      - topic-auth-sync
+      - robot-fleet
+      - consumer-1
+      - consumer-2
+      - consumer-3
