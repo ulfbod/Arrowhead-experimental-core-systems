@@ -24,7 +24,7 @@ export function LatencyChart({ stats }: Props) {
   }
 
   const robots = Object.entries(stats.robots)
-  const maxVal = Math.max(...robots.map(([, r]) => r.latency.p95), 1)
+  const maxVal = Math.max(...robots.map(([, r]) => r.latencyMs.p95), 1)
   const barW = Math.floor(CHART_W / robots.length)
   const groupW = Math.max(4, barW - 8)
   const halfW = Math.floor(groupW / 2) - 1
@@ -52,8 +52,8 @@ export function LatencyChart({ stats }: Props) {
           {/* Bars */}
           {robots.map(([id, r], i) => {
             const cx = i * barW + barW / 2
-            const meanH = (r.latency.mean / maxVal) * CHART_H
-            const p95H  = (r.latency.p95  / maxVal) * CHART_H
+            const meanH = (r.latencyMs.mean / maxVal) * CHART_H
+            const p95H  = (r.latencyMs.p95  / maxVal) * CHART_H
             return (
               <g key={id} data-testid={`bar-${id}`}>
                 {/* p95 bar (lighter) */}

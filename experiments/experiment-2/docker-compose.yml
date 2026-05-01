@@ -169,6 +169,11 @@ services:
       PORT: "9001"
     ports:
       - "9001:9001"   # exposed for manual inspection
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9001/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -190,7 +195,7 @@ services:
       dynamicorch:
         condition: service_healthy
       edge-adapter:
-        condition: service_started
+        condition: service_healthy
       setup:
         condition: service_completed_successfully
 
@@ -207,7 +212,7 @@ services:
       dynamicorch:
         condition: service_healthy
       edge-adapter:
-        condition: service_started
+        condition: service_healthy
       setup:
         condition: service_completed_successfully
 
@@ -224,7 +229,7 @@ services:
       dynamicorch:
         condition: service_healthy
       edge-adapter:
-        condition: service_started
+        condition: service_healthy
       setup:
         condition: service_completed_successfully
 
@@ -248,6 +253,6 @@ services:
       rabbitmq:
         condition: service_healthy
       edge-adapter:
-        condition: service_started
+        condition: service_healthy
       robot-fleet:
         condition: service_healthy

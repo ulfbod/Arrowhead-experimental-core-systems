@@ -15,8 +15,8 @@ export function AnalysisSummary({ stats }: Props) {
         <div style={s.grid}>
           <Stat label="Active robots"    value={String(stats.aggregate.robotCount)} />
           <Stat label="Total messages"   value={String(stats.aggregate.totalMsgCount)} />
-          <Stat label="Mean latency"     value={`${stats.aggregate.meanLatencyMs.toFixed(1)} ms`} />
-          <Stat label="p95 latency"      value={`${stats.aggregate.p95LatencyMs.toFixed(1)} ms`} />
+          <Stat label="Mean latency"     value={`${stats.aggregate.latencyMs.mean.toFixed(1)} ms`} />
+          <Stat label="p95 latency"      value={`${stats.aggregate.latencyMs.p95.toFixed(1)} ms`} />
           <Stat label="Msg rate (total)" value={`${totalRate(stats).toFixed(1)} Hz`} />
         </div>
       )}

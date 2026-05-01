@@ -37,6 +37,18 @@ export default defineConfig({
         target: 'http://localhost:9003',
         rewrite: (path) => path.replace(/^\/api\/robot-fleet/, ''),
       },
+      '/api/consumer-1': {
+        target: 'http://localhost:9002',
+        rewrite: (path) => path.replace(/^\/api\/consumer-1/, ''),
+      },
+      '/api/consumer-2': {
+        target: 'http://localhost:9004',
+        rewrite: (path) => path.replace(/^\/api\/consumer-2/, ''),
+      },
+      '/api/consumer-3': {
+        target: 'http://localhost:9005',
+        rewrite: (path) => path.replace(/^\/api\/consumer-3/, ''),
+      },
       '/api/consumer': {
         target: 'http://localhost:9002',
         rewrite: (path) => path.replace(/^\/api\/consumer/, ''),

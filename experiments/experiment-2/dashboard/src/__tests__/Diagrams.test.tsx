@@ -42,7 +42,7 @@ describe('ExperimentDiagram', () => {
 
   it('shows all major components', () => {
     const { getByText } = render(<ExperimentDiagram />)
-    expect(getByText('robot-sim')).toBeTruthy()
+    expect(getByText('robot-fleet')).toBeTruthy()
     expect(getByText('edge-adapter')).toBeTruthy()
     expect(getByText('consumer')).toBeTruthy()
     expect(getByText('DynamicOrch')).toBeTruthy()
@@ -56,7 +56,7 @@ describe('DiagramsView', () => {
     // Heading present
     expect(getByText('System Diagrams')).toBeTruthy()
     // Default tab is Experiment 2
-    expect(getByText('robot-sim')).toBeTruthy()
+    expect(getByText('robot-fleet')).toBeTruthy()
   })
 
   it('switches to Core Systems diagram', async () => {

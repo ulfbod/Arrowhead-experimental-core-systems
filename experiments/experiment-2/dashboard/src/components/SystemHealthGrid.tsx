@@ -7,28 +7,33 @@ import { fetchHealthProbe, fetchRabbitMQHealth } from '../api'
 import { StatusDot } from './StatusDot'
 import type { SystemDef, HealthProbe } from '../types'
 
-export const ALL_SYSTEMS: SystemDef[] = [
+// Non-consumer systems — always shown regardless of consumer count.
+const BASE_SYSTEMS: SystemDef[] = [
   // ── Core ───────────────────────────────────────────────────────────────────
   { id: 'serviceregistry', label: 'ServiceRegistry', healthPath: '/api/sr',          layer: 'core' },
   { id: 'consumerauth',    label: 'ConsumerAuth',    healthPath: '/api/consumerauth', layer: 'core' },
   { id: 'dynamicorch',     label: 'DynamicOrch',     healthPath: '/api/dynamicorch',  layer: 'core', dependsOn: ['serviceregistry', 'consumerauth'] },
   { id: 'ca',              label: 'CA',              healthPath: '/api/ca',           layer: 'core' },
   // ── Support ────────────────────────────────────────────────────────────────
-  // RabbitMQ: use the same rmqGet path as BrokerStats (proven auth + URL).
   { id: 'rabbitmq', label: 'RabbitMQ', healthPath: '/api/rabbitmq',
     healthFetcher: fetchRabbitMQHealth,
     layer: 'support' },
-  // ── Experiment ─────────────────────────────────────────────────────────────
+  // ── Experiment (non-consumer) ──────────────────────────────────────────────
   { id: 'edge-adapter', label: 'EdgeAdapter', healthPath: '/api/telemetry',  layer: 'experiment', dependsOn: ['serviceregistry', 'ca', 'rabbitmq'] },
   { id: 'robot-fleet',  label: 'RobotFleet',  healthPath: '/api/robot-fleet', layer: 'experiment', dependsOn: ['rabbitmq'] },
-  { id: 'consumer',     label: 'Consumer',    healthPath: '/api/consumer',   layer: 'experiment', dependsOn: ['dynamicorch', 'edge-adapter'] },
-  { id: 'consumer-2',   label: 'Consumer-2',  healthPath: '/api/consumer',
-    healthUrl: 'http://localhost:9004/health',
-    layer: 'experiment', dependsOn: ['dynamicorch', 'edge-adapter'] },
-  { id: 'consumer-3',   label: 'Consumer-3',  healthPath: '/api/consumer',
-    healthUrl: 'http://localhost:9005/health',
-    layer: 'experiment', dependsOn: ['dynamicorch', 'edge-adapter'] },
 ]
+
+// Consumer-N proxy paths: consumer-1 maps to the `consumer` container (:9002),
+// consumer-2 to `consumer-2` (:9004), consumer-3 to `consumer-3` (:9005).
+function buildConsumerDefs(count: number): SystemDef[] {
+  return Array.from({ length: count }, (_, i) => ({
+    id:         `consumer-${i + 1}`,
+    label:      `Consumer-${i + 1}`,
+    healthPath: `/api/consumer-${i + 1}`,
+    layer:      'experiment' as const,
+    dependsOn:  ['dynamicorch', 'edge-adapter'],
+  }))
+}
 
 function probeToStatus(probe: HealthProbe | null): 'ok' | 'error' | 'loading' {
   if (!probe) return 'loading'
@@ -66,12 +71,13 @@ export function SystemHealthGrid() {
   const { config } = useConfig()
   const { healthIntervalMs } = config.polling
   const { showHealthLatency } = config.display
+  const systems = [...BASE_SYSTEMS, ...buildConsumerDefs(3)]
 
   return (
     <section>
       <h2 style={s.heading}>System Health</h2>
       <div style={s.grid}>
-        {ALL_SYSTEMS.map(sys => (
+        {systems.map(sys => (
           <SystemCard
             key={sys.id}
             sys={sys}

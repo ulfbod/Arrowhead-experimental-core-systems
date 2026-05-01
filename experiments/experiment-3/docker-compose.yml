@@ -1,0 +1,159 @@
+# Experiment 3 — Direct AMQP consumer subscriptions with topic-based authorization.
+#
+# Architecture:
+#   robot-fleet → RabbitMQ (topic exchange) ← consumer-direct ×3
+#
+# Authorization policy is managed by Arrowhead ConsumerAuthorization and
+# synced to RabbitMQ topic permissions by topic-auth-sync.
+# Consumers subscribe directly — no edge-adapter HTTP intermediary.
+#
+# Ports exposed to host:
+#   RabbitMQ management UI: http://localhost:15673  (guest/guest)
+#   robot-fleet control API: http://localhost:9103/config
+
+services:
+
+  # ── Infrastructure ────────────────────────────────────────────────────────────
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "15673:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Arrowhead Authorization (policy source only) ───────────────────────────────
+
+  consumerauth:
+    build:
+      context: ../../core
+      dockerfile: ../experiments/experiment-3/dockerfiles/core.Dockerfile
+      args:
+        CMD: consumerauth
+    environment:
+      PORT: "8082"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Seeds authorization grants for the 3 direct consumers.
+  setup:
+    image: curlimages/curl:8.7.1
+    depends_on:
+      consumerauth:
+        condition: service_healthy
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |-
+        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-1","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' &&
+        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' &&
+        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}'
+
+  # ── Topic Auth Sync ────────────────────────────────────────────────────────────
+
+  topic-auth-sync:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-3/dockerfiles/topic-auth-sync.Dockerfile
+    environment:
+      CONSUMERAUTH_URL: "http://consumerauth:8082"
+      RABBITMQ_URL: "http://rabbitmq:15672"
+      RABBITMQ_ADMIN_USER: guest
+      RABBITMQ_ADMIN_PASS: guest
+      RABBITMQ_VHOST: "/"
+      RABBITMQ_EXCHANGE: "arrowhead"
+      CONSUMER_PASSWORD: "consumer-secret"
+      PUBLISHER_USER: "robot-fleet"
+      PUBLISHER_PASSWORD: "fleet-secret"
+      SYNC_INTERVAL: "10s"
+      PORT: "9090"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      consumerauth:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Experiment Services ────────────────────────────────────────────────────────
+
+  robot-fleet:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-3/dockerfiles/robot-fleet.Dockerfile
+    ports:
+      - "9103:9003"
+    environment:
+      AMQP_URL: "amqp://robot-fleet:fleet-secret@rabbitmq:5672/"
+      INITIAL_ROBOT_COUNT: "3"
+      PAYLOAD_TYPE: "imu"
+      PAYLOAD_HZ: "10"
+      NETWORK_PRESET: "5g_good"
+      FLEET_PORT: "9003"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9003/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      topic-auth-sync:
+        condition: service_healthy
+
+  consumer-1:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-3/dockerfiles/consumer-direct.Dockerfile
+    environment:
+      AMQP_URL: "amqp://demo-consumer-1:consumer-secret@rabbitmq:5672/"
+      CONSUMER_NAME: "demo-consumer-1"
+      BINDING_KEY: "telemetry.#"
+      HEALTH_PORT: "9002"
+    depends_on:
+      topic-auth-sync:
+        condition: service_healthy
+
+  consumer-2:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-3/dockerfiles/consumer-direct.Dockerfile
+    environment:
+      AMQP_URL: "amqp://demo-consumer-2:consumer-secret@rabbitmq:5672/"
+      CONSUMER_NAME: "demo-consumer-2"
+      BINDING_KEY: "telemetry.#"
+      HEALTH_PORT: "9004"
+    depends_on:
+      topic-auth-sync:
+        condition: service_healthy
+
+  consumer-3:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-3/dockerfiles/consumer-direct.Dockerfile
+    environment:
+      AMQP_URL: "amqp://demo-consumer-3:consumer-secret@rabbitmq:5672/"
+      CONSUMER_NAME: "demo-consumer-3"
+      BINDING_KEY: "telemetry.#"
+      HEALTH_PORT: "9005"
+    depends_on:
+      topic-auth-sync:
+        condition: service_healthy

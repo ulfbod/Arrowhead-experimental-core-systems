@@ -103,6 +103,7 @@ export interface TelemetryPayload {
   position?: PositionData
 }
 
+// LatencyStats matches the Go LatencyStats struct JSON output.
 export interface LatencyStats {
   mean: number
   p50: number
@@ -111,17 +112,22 @@ export interface LatencyStats {
   max: number
 }
 
+// RobotStatsEntry matches Go's RobotStatsEntry JSON: latency is nested under "latencyMs".
 export interface RobotStatsEntry {
-  rateHz: number
-  latency: LatencyStats
+  lastSeq: number
   msgCount: number
+  rateHz: number
+  latencyMs: LatencyStats
+  lastReceivedAt: string
 }
 
+// AggregateStats matches Go's AggregateStats JSON: latency is nested under "latencyMs".
 export interface AggregateStats {
   robotCount: number
   totalMsgCount: number
-  meanLatencyMs: number
-  p95LatencyMs: number
+  totalRateHz: number
+  totalKbps: number
+  latencyMs: LatencyStats
 }
 
 export interface TelemetryStatsResponse {
@@ -132,7 +138,6 @@ export interface TelemetryStatsResponse {
 export interface AllTelemetryEntry {
   receivedAt: string
   payload: TelemetryPayload
-  latencyMs: number
 }
 
 // ── Robot Fleet ───────────────────────────────────────────────────────────────

@@ -35,8 +35,8 @@ export function FleetMetrics() {
               <tr key={id} data-testid={`robot-row-${id}`}>
                 <td style={s.td}>{id}</td>
                 <td style={s.td}>{r.rateHz.toFixed(1)}</td>
-                <td style={s.td}>{r.latency.mean.toFixed(1)} ms</td>
-                <td style={s.td}>{r.latency.p95.toFixed(1)} ms</td>
+                <td style={s.td}>{r.latencyMs.mean.toFixed(1)} ms</td>
+                <td style={s.td}>{r.latencyMs.p95.toFixed(1)} ms</td>
                 <td style={s.td}>{r.msgCount}</td>
               </tr>
             ))}
@@ -47,8 +47,8 @@ export function FleetMetrics() {
         <div style={s.agg} data-testid="aggregate-stats">
           <span>Robots: <b>{data.aggregate.robotCount}</b></span>
           <span>Total msgs: <b>{data.aggregate.totalMsgCount}</b></span>
-          <span>Mean latency: <b>{data.aggregate.meanLatencyMs.toFixed(1)} ms</b></span>
-          <span>p95 latency: <b>{data.aggregate.p95LatencyMs.toFixed(1)} ms</b></span>
+          <span>Mean latency: <b>{data.aggregate.latencyMs.mean.toFixed(1)} ms</b></span>
+          <span>p95 latency: <b>{data.aggregate.latencyMs.p95.toFixed(1)} ms</b></span>
         </div>
       )}
     </section>

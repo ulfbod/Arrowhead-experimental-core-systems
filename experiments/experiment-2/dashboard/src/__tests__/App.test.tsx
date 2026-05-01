@@ -14,7 +14,7 @@ function stubFetch() {
       return Promise.resolve({ ok: true, status: 204 })
     }
     if ((url as string).includes('/telemetry/stats') || (url as string).includes('/telemetry/all')) {
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ robots: {}, aggregate: { robotCount: 0, totalMsgCount: 0, meanLatencyMs: 0, p95LatencyMs: 0 } }) })
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ robots: {}, aggregate: { robotCount: 0, totalMsgCount: 0, totalRateHz: 0, totalKbps: 0, latencyMs: { mean: 0, p50: 0, p95: 0, p99: 0, max: 0 } } }) })
     }
     if ((url as string).includes('/api/robot-fleet')) {
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ payloadType: 'imu', payloadHz: 10, robots: [] }) })

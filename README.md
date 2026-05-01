@@ -147,6 +147,7 @@ Self-contained scenarios that demonstrate the core systems in realistic settings
 |---|---|
 | [experiment-1](experiments/experiment-1/) | Interactive browser demo: register services, grant authorization, orchestrate |
 | [experiment-2](experiments/experiment-2/) | Virtual local cloud with AMQP data plane: robot → RabbitMQ → edge-adapter → orchestrated consumer |
+| [experiment-3](experiments/experiment-3/) | Direct AMQP subscriptions with broker-level topic authorization sourced from ConsumerAuth |
 
 ### Experiment 2 quick start
 
@@ -156,6 +157,15 @@ docker compose up --build
 ```
 
 Watch `consumer` logs for orchestrated telemetry readings from `robot-simulator` via the `edge-adapter`.  Full details in [experiments/experiment-2/README.md](experiments/experiment-2/README.md).
+
+### Experiment 3 quick start
+
+```bash
+cd experiments/experiment-3
+docker compose up --build
+```
+
+Consumers subscribe directly to RabbitMQ using per-consumer credentials provisioned by `topic-auth-sync` from ConsumerAuth policies. Unauthorized bind attempts are rejected at the broker.  Full details in [experiments/experiment-3/README.md](experiments/experiment-3/README.md).
 
 ---
 

@@ -142,7 +142,7 @@ describe('postFleetConfig', () => {
 
 describe('fetchTelemetryStats', () => {
   it('fetches from /api/telemetry/telemetry/stats', async () => {
-    const resp = { robots: {}, aggregate: { robotCount: 0, totalMsgCount: 0, meanLatencyMs: 0, p95LatencyMs: 0 } }
+    const resp = { robots: {}, aggregate: { robotCount: 0, totalMsgCount: 0, totalRateHz: 0, totalKbps: 0, latencyMs: { mean: 0, p50: 0, p95: 0, p99: 0, max: 0 } } }
     globalThis.fetch = mockFetch(200, resp)
     const data = await fetchTelemetryStats()
     expect(data.aggregate.robotCount).toBe(0)

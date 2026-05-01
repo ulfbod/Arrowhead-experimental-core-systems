@@ -116,6 +116,17 @@ go test ./...
 
 ---
 
+## /support — Shared Support Libraries
+
+Reusable modules shared across experiments. Each module is a standalone Go module referenced via `replace` directives by the services that use it.
+
+| Module | Path | Description |
+|---|---|---|
+| `message-broker` | `support/message-broker/` | AMQP publish/subscribe wrapper (used by experiment-2 and experiment-3) |
+| `topic-auth-sync` | `support/topic-auth-sync/` | Syncs Arrowhead ConsumerAuth policies to RabbitMQ topic permissions (used by experiment-3) |
+
+---
+
 ## /experiments — Experimental Extensions
 
 Exploratory code built on top of the core. May include additional frontends, simulation drivers, client libraries, or analysis tools.
@@ -123,6 +134,14 @@ Exploratory code built on top of the core. May include additional frontends, sim
 - Communicates with core via HTTP only — no internal package imports
 - Self-contained per experiment; each subdirectory manages its own dependencies
 - Not held to the strict correctness standard of `core/`
+
+### Experiments
+
+| Experiment | Description |
+|---|---|
+| [experiment-1](experiments/experiment-1/) | Interactive browser demo: register services, grant authorization, orchestrate |
+| [experiment-2](experiments/experiment-2/) | Virtual local cloud with AMQP data plane: robot-fleet → RabbitMQ → edge-adapter → orchestrated consumers |
+| [experiment-3](experiments/experiment-3/) | Direct AMQP subscriptions with broker-level topic authorization sourced from ConsumerAuth |
 
 See [`experiments/CLAUDE_EXPERIMENTS.md`](experiments/CLAUDE_EXPERIMENTS.md) for rules.
 
@@ -210,6 +229,31 @@ No code in `experiments/` or `dashboard/` may import packages from `core/interna
 │               ├── AuthRulesPanel.tsx
 │               └── OrchestrationPanel.tsx
 │
+├── support/
+│   ├── message-broker/              # AMQP publish/subscribe library
+│   └── topic-auth-sync/             # ConsumerAuth → RabbitMQ topic-permission sync
+│       ├── go.mod
+│       ├── main.go                  # env config, health server, run loop
+│       ├── policy.go                # ConsumerAuth rules → RabbitMQ permission patterns
+│       ├── rmqapi.go                # RabbitMQ Management API client
+│       └── sync.go                  # reconciliation logic
+│
 └── experiments/
-    └── CLAUDE_EXPERIMENTS.md
+    ├── CLAUDE_EXPERIMENTS.md
+    ├── experiment-1/
+    ├── experiment-2/
+    │   ├── docker-compose.yml
+    │   ├── dockerfiles/
+    │   ├── services/
+    │   │   ├── robot-simulator/
+    │   │   ├── edge-adapter/
+    │   │   └── consumer/
+    │   ├── dashboard/               # React dashboard (nginx-served in Docker)
+    │   └── tests/
+    └── experiment-3/
+        ├── docker-compose.yml
+        ├── dockerfiles/
+        ├── rabbitmq/                # rabbitmq.conf + enabled_plugins
+        └── services/
+            └── consumer-direct/     # direct AMQP subscriber
 ```
