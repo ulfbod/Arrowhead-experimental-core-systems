@@ -79,21 +79,89 @@ consumer would execute against a direct REST provider.
 This means the same consumer code works across local clouds where some services
 use direct HTTP and others are broker-mediated.
 
-### 3. ConsumerAuthorization remains the single policy authority
+### 3. Single source of truth: policy defined once, enforced at multiple independent points
 
-Without the integration in experiment-4, a broker-mediated deployment has two
-independent policy authorities: CA (controlling which consumers may orchestrate)
-and the broker's native ACLs (controlling which consumers may connect). These
-must be kept in sync manually, and revocation in one does not affect the other.
+The core architectural principle of experiment-4 is a strict separation between
+*where policy is defined* and *where policy is enforced*.
 
-Experiment-4 eliminates the independent broker policy. RabbitMQ's
-`rabbitmq-auth-backend-http` plugin delegates all authorization decisions to
-`topic-auth-sync`, which derives every permission from CA and from nothing else.
-The broker has no autonomous policy authority. An operator managing grants in CA
-is managing the complete access-control state for both the orchestration layer
-and the broker layer.
+**Policy** — the set of rules expressing which consumer may use which service —
+is defined exclusively in ConsumerAuthorization as `(consumer, provider, service)`
+triples. No other component can add or remove rules. CA is the single source of
+truth.
 
-### 4. Revocation has a formal, bounded guarantee across all enforcement points
+**Enforcement points** are components that make access-control decisions. In
+experiment-4 there are two: DynamicOrchestration (Layer 1) and RabbitMQ via
+`topic-auth-sync` (Layer 2). Neither enforcement point holds an independent
+policy. Each maintains only a *derived projection* of the CA rule set — a
+representation suited to its own access-control model (orchestration result
+filtering and broker topic permissions, respectively). When CA changes, every
+projection converges to reflect that change within a bounded window.
+
+Without this integration, a broker-mediated deployment has two *independent*
+policy authorities: CA controls orchestration access; the broker's native ACLs
+control connection access. These are managed separately. Revoking a grant in CA
+does not affect the broker, and the broker's permissions cannot express
+Arrowhead-level semantics such as `(consumer, provider, service)` triples.
+
+The practical consequences of the single-source architecture:
+
+- **Operators manage policy in one place.** A grant added or revoked in CA is
+  the complete management action. There is no second step to update broker ACLs.
+- **Audit is centralized.** All access-control decisions trace back to CA. There
+  is no shadow policy at the broker that could diverge from the CA record.
+- **New enforcement points do not create new policy authorities.** Adding a
+  second broker, a gateway, or any other component that needs to enforce access
+  control means connecting it as a new derived projection of CA — not creating a
+  new policy store. The pattern generalises: the same CA rule set can be
+  projected into any number of heterogeneous enforcement mechanisms without
+  splitting policy authority.
+
+### 4. The broker decouples providers from consumers
+
+In a direct service-oriented model without a broker, a consumer opens a
+persistent connection to the provider's own endpoint. This creates three forms
+of tight coupling:
+
+**Spatial coupling.** The provider must expose a reachable address. Every
+consumer must know that address. If the provider moves, is replaced, or scales
+to multiple instances, every consumer must be reconfigured or re-orchestrated.
+
+**Logical coupling.** The provider is aware of each incoming consumer connection.
+Scaling to N consumers means N simultaneous connections to the provider process.
+The provider's load scales directly with the number of active consumers. Adding
+or removing consumers is observable by the provider.
+
+**Temporal coupling.** The provider and consumer must be online simultaneously
+for data to flow. A consumer that is temporarily unavailable (restart, network
+partition) misses all data produced during the outage, because there is nowhere
+for the data to be buffered.
+
+A message broker eliminates all three forms of coupling:
+
+- The provider publishes to the broker and has no knowledge of how many
+  consumers exist, who they are, or where they are located. Its load is
+  one outbound connection regardless of consumer count.
+- Consumers subscribe independently. Adding a new consumer is transparent to
+  the provider; no provider configuration or code changes.
+- The broker buffers messages in queues. A consumer that reconnects after a
+  transient disconnection can resume from the last acknowledged message (subject
+  to queue durability and retention settings).
+
+**In the context of geo-distributed local clouds,** this decoupling is
+especially valuable. A telemetry provider in a factory local cloud publishes to
+a shared broker. Analytics consumers in a cloud local cloud subscribe
+independently. The factory and cloud sites are operationally independent: either
+can restart, scale, or relocate without the other being aware, as long as both
+maintain connectivity to the broker.
+
+Without experiment-4's integration, this decoupling would exist at the transport
+layer but not at the governance layer: consumers would still need out-of-band
+knowledge of broker credentials and exchange names, and authorization would
+still be managed separately at the broker. Experiment-4 extends the decoupling
+into the governance layer: consumers learn all broker coordinates from
+DynamicOrchestration, and access control is managed solely in CA.
+
+### 5. Revocation has a formal, bounded guarantee across all enforcement points
 
 In a standalone-broker setup, revoking a grant in CA stops future
 re-orchestrations but does not affect active broker connections.
@@ -109,11 +177,50 @@ Experiment-4 provides two independently enforced revocation effects:
   set by the consumer retry interval). The consumer cannot obtain a broker
   address regardless of what credentials it holds.
 
-- **Layer 2 — Data plane (bounded, δ ≤ T_sync = 10 s).**
-  `topic-auth-sync` polls CA at interval `T_sync` and reconciles RabbitMQ user
-  and permission state. A revoked grant causes the corresponding RabbitMQ user
-  to be deleted. The broker terminates the active AMQP connection for that user.
-  The consumer is disconnected from the broker within one `T_sync` cycle.
+- **Layer 2 — Data plane (live HTTP authz backend + reconciliation safety net).**
+  `topic-auth-http` serves the RabbitMQ HTTP authorization backend API. RabbitMQ
+  is configured with a split authn/authz model:
+
+  - **authn**: `rabbit_auth_backend_internal` — password validated against the
+    internal user store provisioned by the reconciliation sync.
+  - **authz**: `rabbit_auth_backend_http` — every vhost access, resource
+    operation, and topic routing-key check is delegated to `topic-auth-http`,
+    which queries CA live. A revoked grant causes the next broker operation by
+    that consumer to be denied immediately — there is no polling delay.
+
+  **Revocation timing by scenario:**
+
+  | Scenario | Mechanism | Window |
+  |---|---|---|
+  | Consumer reconnects after revocation | Vhost authz check → CA no grant → deny connection | Immediate (sub-second) |
+  | Publisher publish after revocation | Topic authz check on each basic.publish → deny | Within next publish cycle |
+  | Active subscriber (connection never drops) | Reconciliation sync deletes user | Within SYNC_INTERVAL (60 s) |
+  | Consumer reconnects after user deletion | Internal authn fails (user gone) | Immediate |
+
+  **Cache TTL.** `topic-auth-http` caches CA responses for `CACHE_TTL`
+  (default `0s` — no caching). Zero TTL means every authorization check hits CA
+  live, at the cost of one CA HTTP call per broker operation. Operators may set a
+  short TTL (e.g., `1s`–`5s`) to reduce CA load; the revocation window for
+  reconnect scenarios then extends by at most one TTL period.
+
+  **CA availability.** With authz delegated to the HTTP backend, a CA outage
+  causes authorization checks to fail with `deny` (safe default). New consumer
+  connections and publish operations will be refused until CA is reachable again.
+  This is the correct behaviour for a security-critical system but must be
+  accounted for in the CA availability SLA.
+
+  **Residual window for active subscribers.** An AMQP consumer that is already
+  subscribed to a queue will not be checked again until it attempts a new bind or
+  reconnects. The reconciliation sync (every 60 s) is the backstop: it deletes
+  the user, which terminates the connection. A targeted force-close of the user's
+  AMQP connection via the RabbitMQ management API would eliminate this residual
+  window, but is not implemented in this experiment.
+
+  The conditional-bound caveat from the polling-only architecture still applies:
+  if `topic-auth-http` cannot reach CA, authz checks return `deny` by default,
+  which means revocation is over-enforced (safe) rather than under-enforced
+  during a partition. This is the opposite failure mode from the polling-only
+  approach, where a partition left stale grants in force.
 
 Together, these layers provide a revocation guarantee that is impossible to
 achieve with a standalone broker or with CA and broker ACLs managed
@@ -122,11 +229,12 @@ independently:
 | Scenario | Standalone broker | Experiment-4 |
 |---|---|---|
 | Consumer calls DO after revocation | DO denies (CA checked) | DO denies (immediate) |
-| Consumer already connected to broker | Still connected (broker unaware) | Disconnected within T_sync |
-| Consumer reconnects to broker with old credentials | Succeeds if credentials are valid | Fails (user deleted by topic-auth-sync) |
-| Consumer reconnects via DO after T_sync | DO denies | DO denies |
+| Consumer reconnects to broker after revocation | Succeeds if credentials are valid | Denied at vhost check (immediate) |
+| Publisher publishes after its grant is revoked | Continues until ACL updated | Denied on next publish (sub-second) |
+| Active subscriber (connection never drops) | Still subscribed indefinitely | Disconnected within SYNC_INTERVAL (60 s) |
+| Consumer reconnects via DO after grant revoked | DO denies | DO denies (immediate) |
 
-### 5. No broker configuration knowledge required by consumers or operators
+### 6. No broker configuration knowledge required by consumers or operators
 
 In a standalone-broker deployment, every consumer must be pre-configured with
 the broker address, port, virtual host, exchange name, and its own credentials.
@@ -138,10 +246,10 @@ In experiment-4, consumers learn broker coordinates from the orchestration
 response. Adding a second `robot-fleet` instance requires only a new
 ServiceRegistry registration; existing consumers discover it at their next
 orchestration call without any reconfiguration. Adding a new consumer requires
-only a new CA grant; `topic-auth-sync` provisions the corresponding RabbitMQ
-user within one `T_sync` cycle.
+only a new CA grant; `topic-auth-http` provisions the corresponding RabbitMQ
+user within one `SYNC_INTERVAL` cycle (default 60 s).
 
-### 6. Identity verification closes the credential-theft attack vector
+### 7. Identity verification closes the credential-theft attack vector
 
 In a standalone-broker deployment, broker credentials are the sole identity
 proof. A stolen password gives access equivalent to the legitimate consumer.
@@ -158,18 +266,22 @@ broker.
 
 ## Summary table
 
-| Concern | Broker used separately | Experiment-4 |
-|---|---|---|
-| **Cross-network connectivity** | Requires bilateral reachability or VPN mesh | Both sides connect outward to broker; no inbound exposure needed |
-| **Service discovery** | Hardcoded broker coordinates | Broker address and routing metadata returned by DynamicOrchestration |
-| **Policy authority** | CA + broker ACLs (two independent sources) | CA only; broker permissions are derived projections |
-| **Revocation — control plane** | Immediate at DO | Immediate at DO |
-| **Revocation — data plane** | Unbounded (active connections persist) | Bounded (≤ T_sync = 10 s) |
-| **Consumer configuration** | Broker address, exchange, credentials required | Identity credentials and orchestration URL only |
-| **Adding a provider** | Notify all consumers of new coordinates | Register in SR; consumers adapt at next orchestration call |
-| **Adding a consumer** | Configure broker ACLs + distribute credentials | Add CA grant; topic-auth-sync provisions broker user |
-| **Impersonation resistance** | Credential-based only | Identity token verified by DO before CA check |
-| **AHF spec compliance** | Partial (CA only) | Full: SR + AUTH + CA + DO all in the governance loop |
+| Concern | Direct SOA (no broker) | Broker used separately | Experiment-4 |
+|---|---|---|---|
+| **Cross-network connectivity** | Provider must be reachable by consumer | Both sides connect outward; no inbound exposure | Both sides connect outward; no inbound exposure |
+| **Service discovery** | Provider address from DO | Hardcoded broker coordinates | Broker address and routing metadata from DO |
+| **Policy authority** | CA only | CA + broker ACLs (two independent sources) | CA only; broker permissions are derived projections |
+| **Policy management** | One place (CA) | Two places (CA + broker ACLs) | One place (CA) |
+| **Audit trail** | Centralized in CA | Split across CA and broker logs | Centralized in CA |
+| **Revocation — control plane** | Immediate at DO | Immediate at DO | Immediate at DO |
+| **Revocation — data plane** | n/a (no persistent connection after request) | Unbounded (active connections persist) | Immediate on reconnect/publish (HTTP authz); ≤ SYNC_INTERVAL (60 s) for active idle subscribers |
+| **Provider load** | Scales with N consumers | One outbound connection to broker | One outbound connection to broker |
+| **Adding a consumer** | Add CA grant | Configure broker ACLs + distribute credentials | Add CA grant; topic-auth-http provisions broker user within SYNC_INTERVAL |
+| **Consumer knows provider address** | Yes (direct connection) | No (connects to broker) | No (connects to broker) |
+| **Temporal coupling** | Provider and consumer must be online together | Broker queues buffer messages | Broker queues buffer messages |
+| **Consumer configuration** | Provider address from DO | Broker address, exchange, credentials required | Identity credentials and orchestration URL only |
+| **Impersonation resistance** | Identity token verified by DO | Credential-based only | Identity token verified by DO before CA check |
+| **AHF spec compliance** | Full | Partial (CA only) | Full: SR + AUTH + CA + DO all in the governance loop |
 
 ---
 
@@ -182,7 +294,32 @@ broker.
 - **Multi-broker federation.** The architecture assumes a single broker reachable
   by all parties. Extending the transformation to federated topologies with
   cross-cloud grant scoping is left for future work.
-- **Push-based revocation.** `topic-auth-sync` polls CA on a fixed interval.
-  Replacing polling with CA-emitted change events would reduce the data-plane
-  revocation window from `T_sync` to near-zero while retaining reconciliation as
-  a safety net.
+- **Active subscriber termination without reconnect.** An active AMQP consumer
+  that never disconnects will not be denied by the HTTP authz backend until it
+  attempts a new operation (bind or reconnect). The reconciliation sync (every
+  60 s by default) is the backstop via user deletion. A targeted force-close of
+  the AMQP connection via the RabbitMQ management API after CA revocation would
+  close this residual window but is not yet implemented.
+
+---
+
+## References
+
+[1] RabbitMQ HTTP auth backend — plugin source, endpoint protocol, and
+    configuration options:
+    https://github.com/rabbitmq/rabbitmq-auth-backend-http
+
+[2] RabbitMQ Access Control guide — authn/authz split (`auth_backends.N.authn` /
+    `auth_backends.N.authz`), HTTP backend, and topic authorization:
+    https://www.rabbitmq.com/docs/access-control
+
+[3] Open Policy Agent — externalized authorization / Policy Decision Point pattern:
+    https://www.openpolicyagent.org/docs/latest/
+
+[4] Kubernetes controller pattern — level-triggered reconciliation (desired vs.
+    current state, self-healing control loop):
+    https://kubernetes.io/docs/concepts/architecture/controller/
+
+[5] HashiCorp Vault RabbitMQ secrets engine — dynamic credential generation with
+    TTL-based revocation as an alternative to live authz queries:
+    https://developer.hashicorp.com/vault/docs/secrets/rabbitmq

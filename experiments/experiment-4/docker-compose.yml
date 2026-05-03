@@ -1,8 +1,15 @@
-# Experiment 4 — Full AHC integration: SR + Auth + ConsumerAuth + DO + CA + topic-auth-sync.
+# Experiment 4 — Full AHC integration: SR + Auth + ConsumerAuth + DO + CA + topic-auth-http.
 #
 # Authorization enforced at two independent layers:
 #   1. DynamicOrchestration gate (refuses endpoint if grant absent or identity invalid)
-#   2. RabbitMQ topic-auth-backend (refuses bind if topic permission absent)
+#   2. RabbitMQ HTTP authz backend (live CA check on every publish and bind; no sync delay)
+#
+# RabbitMQ uses a split authn/authz model:
+#   authn = rabbit_auth_backend_internal  (password validation)
+#   authz = rabbit_auth_backend_http      (live CA query via topic-auth-http)
+#
+# topic-auth-http also runs a background reconciliation sync (default 60s) as a
+# safety net for user lifecycle management (creation and stale-user cleanup).
 #
 # Ports exposed to host:
 #   Dashboard:               http://localhost:3004
@@ -34,7 +41,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # ── Arrowhead Core Systems ──────────────────────────────────────────────────────
+  # ── Arrowhead Core Systems ──────────────────────────────────────────────────────────
 
   serviceregistry:
     build:
@@ -143,12 +150,16 @@ services:
         curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
         curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists'
 
-  # ── Topic Auth Sync ─────────────────────────────────────────────────────────────
+  # ── Topic Auth HTTP ────────────────────────────────────────────────────────────────
+  #
+  # Serves the RabbitMQ HTTP auth backend API (/auth/vhost, /auth/resource,
+  # /auth/topic) and runs a background reconciliation sync for user lifecycle.
+  # Replaces the polling-only topic-auth-sync service.
 
-  topic-auth-sync:
+  topic-auth-http:
     build:
       context: ../../
-      dockerfile: experiments/experiment-4/dockerfiles/topic-auth-sync.Dockerfile
+      dockerfile: experiments/experiment-4/dockerfiles/topic-auth-http.Dockerfile
     environment:
       CONSUMERAUTH_URL: "http://consumerauth:8082"
       RABBITMQ_URL: "http://rabbitmq:15672"
@@ -159,10 +170,15 @@ services:
       CONSUMER_PASSWORD: "consumer-secret"
       PUBLISHER_USER: "robot-fleet"
       PUBLISHER_PASSWORD: "fleet-secret"
-      SYNC_INTERVAL: "10s"
+      # SYNC_INTERVAL: background reconciliation safety net (user lifecycle only).
+      # Primary enforcement is via the HTTP authz backend — live, no delay.
+      SYNC_INTERVAL: "60s"
+      # CACHE_TTL: how long CA responses are cached between auth checks.
+      # Default 0s = live check on every operation (maximum revocation speed).
+      CACHE_TTL: "0s"
       PORT: "9090"
       AUTH_URL: "http://authentication:8081"
-      SYSTEM_NAME: "topic-auth-sync"
+      SYSTEM_NAME: "topic-auth-http"
       SYSTEM_CREDENTIALS: "sync-secret"
     depends_on:
       rabbitmq:
@@ -207,7 +223,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      topic-auth-sync:
+      topic-auth-http:
         condition: service_healthy
       serviceregistry:
         condition: service_healthy
@@ -227,7 +243,7 @@ services:
       CONSUMERAUTH_URL: "http://consumerauth:8082"
       HEALTH_PORT: "9002"
     depends_on:
-      topic-auth-sync:
+      topic-auth-http:
         condition: service_healthy
       dynamicorch:
         condition: service_healthy
@@ -247,7 +263,7 @@ services:
       CONSUMERAUTH_URL: "http://consumerauth:8082"
       HEALTH_PORT: "9004"
     depends_on:
-      topic-auth-sync:
+      topic-auth-http:
         condition: service_healthy
       dynamicorch:
         condition: service_healthy
@@ -267,7 +283,7 @@ services:
       CONSUMERAUTH_URL: "http://consumerauth:8082"
       HEALTH_PORT: "9005"
     depends_on:
-      topic-auth-sync:
+      topic-auth-http:
         condition: service_healthy
       dynamicorch:
         condition: service_healthy
@@ -285,7 +301,7 @@ services:
     depends_on:
       - consumerauth
       - rabbitmq
-      - topic-auth-sync
+      - topic-auth-http
       - robot-fleet
       - consumer-1
       - consumer-2
