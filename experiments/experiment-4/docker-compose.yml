@@ -162,17 +162,11 @@ services:
       dockerfile: experiments/experiment-4/dockerfiles/topic-auth-http.Dockerfile
     environment:
       CONSUMERAUTH_URL: "http://consumerauth:8082"
-      RABBITMQ_URL: "http://rabbitmq:15672"
       RABBITMQ_ADMIN_USER: admin
-      RABBITMQ_ADMIN_PASS: admin
-      RABBITMQ_VHOST: "/"
-      RABBITMQ_EXCHANGE: "arrowhead"
+      RABBITMQ_ADMIN_PASS: admin   # must match RABBITMQ_DEFAULT_PASS; used by /auth/user to issue management tags
       CONSUMER_PASSWORD: "consumer-secret"
       PUBLISHER_USER: "robot-fleet"
       PUBLISHER_PASSWORD: "fleet-secret"
-      # SYNC_INTERVAL: background reconciliation safety net (user lifecycle only).
-      # Primary enforcement is via the HTTP authz backend — live, no delay.
-      SYNC_INTERVAL: "60s"
       # CACHE_TTL: how long CA responses are cached between auth checks.
       # Default 0s = live check on every operation (maximum revocation speed).
       CACHE_TTL: "0s"

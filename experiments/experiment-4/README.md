@@ -12,10 +12,10 @@ from experiment-3.
 |---|---|---|
 | **Service location** | Hardcoded `AMQP_URL` env var | robot-fleet registers in ServiceRegistry; consumers discover via DynamicOrchestration |
 | **Consumer identity** | None — password is the only credential | Identity token from Authentication; verified by DynamicOrchestration |
-| **Authorization gate** | Broker topic-permissions only | Two independent layers: orchestration gate **+** broker topic-permissions |
-| **Policy read security** | ConsumerAuth API open to all | topic-auth-sync carries Bearer token on ConsumerAuth calls |
+| **Authorization gate** | Broker topic-permissions only | Two independent layers: orchestration gate **+** live HTTP authz backend |
+| **Policy read security** | ConsumerAuth API open to all | topic-auth-http carries Bearer token on ConsumerAuth calls |
 | **Consumer flow** | `AMQP_URL` → connect directly | Auth login → DynamicOrchestration → CA token → connect to discovered endpoint |
-| **Revocation** | Effective at next sync cycle (≤ 10 s) | Immediate at orchestration layer; also at next sync cycle at broker layer |
+| **Revocation** | Effective at next sync cycle (≤ 10 s) | Immediate at orchestration layer; immediate at broker layer on reconnect/publish |
 | **Core systems used** | ConsumerAuth only | ServiceRegistry + Authentication + ConsumerAuth + DynamicOrchestration + CA |
 
 Phase 5 (mTLS via CertificateAuthority) is declared in docker-compose but not
@@ -38,13 +38,13 @@ inter-system communication remains plain HTTP.
 │         │ register        │ login/verify     │ grants        │ orch │
 └─────────┼─────────────────┼──────────────────┼───────────────┼──────┘
           │                 │                  │               │
-   robot-fleet          all services    topic-auth-sync   consumers
-   (at startup)         (at startup)    (every 10 s)      (at startup)
+   robot-fleet          all services    topic-auth-http   consumers
+   (at startup)         (at startup)    (live CA check)   (at startup)
                                                                │
                                         ┌──────────────────────▼──────┐
                                         │  RabbitMQ :5672             │
                                         │  exchange: arrowhead        │
-                                        │  (topic + topic-auth plugin)│
+                                        │  (HTTP authz backend)       │
                                         └──────┬──────────────────────┘
                                                │
                          ┌─────────────────────┼──────────────────────┐
@@ -86,11 +86,11 @@ DynamicOrchestration internally:
 |---|---|---|
 | **serviceregistry** | 8080 | Stores service registrations; queried by DynamicOrchestration |
 | **authentication** | 8081 | Issues and verifies Bearer identity tokens |
-| **consumerauth** | 8082 | Stores authorization grants; polled by topic-auth-sync |
+| **consumerauth** | 8082 | Stores authorization grants; queried live by topic-auth-http |
 | **dynamicorch** | 8083 | Orchestration gate: verify identity + query SR + check CA |
 | **ca** | 8086 | Certificate Authority (Phase 5 placeholder — mTLS not yet wired) |
 | **rabbitmq** | 5672 / 15674 | AMQP broker; management UI on 15674 |
-| **topic-auth-sync** | 9090 | Reconciles RabbitMQ users and topic permissions from ConsumerAuth |
+| **topic-auth-http** | 9090 | RabbitMQ HTTP authz backend: live CA check on every broker operation |
 | **robot-fleet** | 9104→9003 | Publishes synthetic telemetry; registers in ServiceRegistry at startup |
 | **consumer-1/2/3** | — | Subscribe via AHC orchestration flow |
 
@@ -108,8 +108,8 @@ Service startup order:
 rabbitmq + serviceregistry + authentication + consumerauth + ca
   → dynamicorch (needs SR + auth + consumerauth)
   → setup (seeds grants into consumerauth)
-  → topic-auth-sync (needs setup + authentication)
-  → robot-fleet (registers in SR; needs topic-auth-sync + authentication)
+  → topic-auth-http (needs setup + authentication)
+  → robot-fleet (registers in SR; needs topic-auth-http + authentication)
   → consumer-1/2/3 (orchestrate via DO; needs robot-fleet registered)
 ```
 
@@ -124,9 +124,9 @@ RabbitMQ management UI: **http://localhost:15674** (admin/admin)
 ### Dual-layer authorization
 
 Grant revocation is effective **immediately** at the orchestration layer (DynamicOrchestration
-returns empty results) and additionally at the broker layer (topic-auth-sync removes the
-RabbitMQ user within ≤ 10 s). A consumer cannot reconnect even if it has cached credentials,
-because the orchestration gate refuses to supply the endpoint.
+returns empty results) and **immediately** at the broker layer (topic-auth-http denies the next
+connect, bind, or publish attempt via a live CA check). A consumer cannot reconnect even if it
+has cached credentials, because the orchestration gate refuses to supply the endpoint.
 
 ### Identity verification
 
@@ -161,6 +161,7 @@ curl -X DELETE http://localhost:8082/authorization/revoke/{id}
 
 # Within 5 s consumer-2 logs:
 #   "no authorized providers — grant may be missing"
+# Any reconnect attempt is also denied immediately by RabbitMQ via topic-auth-http.
 ```
 
 **Restore the grant and observe reconnection:**
@@ -183,7 +184,7 @@ experiment-4/
 │   ├── core.Dockerfile              # shared Dockerfile for all core binaries
 │   ├── consumer-direct.Dockerfile   # builds experiment-4 consumer
 │   ├── robot-fleet.Dockerfile       # builds experiment-4 robot-fleet
-│   ├── topic-auth-sync.Dockerfile   # builds support/topic-auth-sync
+│   ├── topic-auth-http.Dockerfile   # builds support/topic-auth-http
 │   └── dashboard.Dockerfile
 ├── rabbitmq/
 │   ├── rabbitmq.conf

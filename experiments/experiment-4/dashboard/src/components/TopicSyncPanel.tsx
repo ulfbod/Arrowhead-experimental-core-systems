@@ -1,5 +1,4 @@
-// Shows the actual RabbitMQ managed users and their topic permissions,
-// reflecting the state that topic-auth-sync has applied.
+// Shows the actual RabbitMQ managed users and their topic permissions.
 
 import { usePolling } from '../hooks/usePolling'
 import { fetchRabbitUsers, fetchTopicPermissions } from '../api'
@@ -35,14 +34,14 @@ export function TopicSyncPanel() {
         {stale && <span style={s.stale}> (stale)</span>}
       </h2>
       <p style={s.hint}>
-        Users tagged <code>arrowhead-managed</code> are provisioned by topic-auth-sync.
-        Their topic permissions enforce which routing keys they may bind.
+        Users tagged <code>arrowhead-managed</code> were provisioned by a previous sync run.
+        Authorization is now enforced live by topic-auth-http on every broker operation.
       </p>
 
       {error && !stale && <p style={s.err}>{error}</p>}
 
       {managedUsers.length === 0
-        ? <p style={s.dim}>No managed users yet — waiting for topic-auth-sync to run.</p>
+        ? <p style={s.dim}>No managed users — authorization is enforced live by topic-auth-http.</p>
         : (
           <table style={s.table}>
             <thead>

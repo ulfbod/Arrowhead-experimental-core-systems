@@ -49,36 +49,40 @@ The plugin supports separate backends for authentication (authn) and authorizati
 configurable in `rabbitmq.conf` as [2]:
 
 ```ini
-auth_backends.1.authn = rabbit_auth_backend_internal
-auth_backends.1.authz = rabbit_auth_backend_http
+auth_backends.1 = rabbit_auth_backend_http
 ```
 
-Experiment-4 uses this split model. The internal backend validates passwords; the HTTP
-backend (served by `topic-auth-http`) handles all authorization decisions by querying CA live.
+Experiment-4 uses the HTTP backend as the sole auth backend
+(`auth_backends.1 = rabbit_auth_backend_http`). The HTTP backend handles both
+authentication (user credentials) and authorization (vhost, resource, topic).
+`topic-auth-http` recognises the RabbitMQ admin user by its configured credentials and
+returns the `administrator management` tags required for management UI access, so no
+internal backend fallback is needed.
 
 ---
 
 ## 3. Implementation: topic-auth-http
 
-`topic-auth-http` is a Go service at `support/topic-auth-http/` that:
+`topic-auth-http` is a Go service at `support/topic-auth-http/` that serves the
+RabbitMQ HTTP authz backend API — handles `/auth/user`, `/auth/vhost`,
+`/auth/resource`, and `/auth/topic` endpoints. Each handler fetches the current
+CA rule set and makes an allow/deny decision for the requesting user.
 
-1. **Serves the RabbitMQ HTTP authz backend API** — handles `/auth/vhost`,
-   `/auth/resource`, and `/auth/topic` endpoints. Each handler fetches the current
-   CA rule set and makes an allow/deny decision for the requesting user.
-
-2. **Runs a background reconciliation sync** — at `SYNC_INTERVAL` (default 60 s),
-   creates and deletes RabbitMQ internal users to match the current CA rule set.
-   This is the safety net: it ensures that internal-backend authentication continues
-   to work for valid consumers and that stale users are eventually cleaned up.
+There is no background sync loop. With `auth_backends.1 = rabbit_auth_backend_http`,
+RabbitMQ's internal user store is not in the authentication chain; user lifecycle
+management in RabbitMQ is therefore unnecessary. Removing the sync also eliminates
+the circular dependency that would otherwise arise: sync calls the RabbitMQ management
+API using admin credentials, which RabbitMQ validates by calling back to
+`/auth/user` — requiring the HTTP server to already be listening.
 
 ### Revocation behaviour
 
 | Event | Mechanism | Timing |
 |---|---|---|
-| Consumer reconnects after revocation | Vhost authz check → CA returns no grant → deny | Immediate (sub-second) |
-| Publisher publishes after revocation of its grant | Topic authz check on each publish → deny | Within next publish cycle |
-| Active subscriber (connection never drops) | Reconciliation sync deletes user | Within SYNC_INTERVAL (60 s) |
-| Consumer reconnects after user deletion | Internal authn fails (user gone) | Immediate |
+| Consumer reconnects after revocation | `/auth/user` → CA returns no grant → deny | Immediate (sub-second) |
+| Consumer bind/subscribe on active connection after revocation | `/auth/topic` → CA returns no grant → deny on next bind | Within next bind attempt |
+| Publisher publishes after revocation of its grant | `/auth/topic` → deny on each publish | Within next publish cycle |
+| Active idle subscriber (no reconnect, no new binds) | No mechanism currently implemented | Unbounded (open issue) |
 
 The primary improvement over polling-only: a revoked consumer that attempts to
 reconnect is denied immediately by the vhost check, without waiting for the next
@@ -168,10 +172,11 @@ EMQX is a closer out-of-the-box match for the experiment-4 governance requiremen
 
 - **Active subscriber termination without reconnect.** An active subscriber whose
   grant is revoked will not be cut off by the HTTP authz backend until they attempt
-  an operation that triggers a topic or vhost check. The reconciliation sync (at
-  SYNC_INTERVAL) is the backstop, but this window is longer than the near-instant
-  revocation for reconnect attempts. A force-connection-close API call to RabbitMQ
-  management after CA revocation would eliminate this residual window.
+  an operation that triggers a topic or vhost check (e.g. a new bind or publish).
+  An idle subscriber holding an open AMQP channel receives no further denials and
+  continues to receive messages until it reconnects or re-binds. Eliminating this
+  window requires a proactive force-connection-close call to the RabbitMQ management
+  API after CA revocation — this is not currently implemented.
 
 - **CA availability as a hard dependency for authz.** When authn=internal and
   authz=HTTP, a CA outage causes all topic and vhost checks to fail (the handler

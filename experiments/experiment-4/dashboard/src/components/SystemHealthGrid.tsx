@@ -18,7 +18,7 @@ const SYSTEMS: SystemDef[] = [
     layer: 'support',
   },
   // ── Experiment ─────────────────────────────────────────────────────────────
-  { id: 'topic-auth-sync', label: 'TopicAuthSync', healthPath: '/api/topic-auth-sync', layer: 'experiment' },
+  { id: 'topic-auth-http', label: 'TopicAuthHTTP', healthPath: '/api/topic-auth-http', layer: 'experiment' },
   { id: 'robot-fleet',     label: 'RobotFleet',    healthPath: '/api/robot-fleet',     layer: 'experiment' },
   { id: 'consumer-1',      label: 'Consumer-1',    healthPath: '/api/consumer-1',      layer: 'experiment' },
   { id: 'consumer-2',      label: 'Consumer-2',    healthPath: '/api/consumer-2',      layer: 'experiment' },

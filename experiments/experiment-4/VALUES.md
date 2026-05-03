@@ -91,7 +91,7 @@ truth.
 
 **Enforcement points** are components that make access-control decisions. In
 experiment-4 there are two: DynamicOrchestration (Layer 1) and RabbitMQ via
-`topic-auth-sync` (Layer 2). Neither enforcement point holds an independent
+`topic-auth-http` (Layer 2). Neither enforcement point holds an independent
 policy. Each maintains only a *derived projection* of the CA rule set — a
 representation suited to its own access-control model (orchestration result
 filtering and broker topic permissions, respectively). When CA changes, every
@@ -177,16 +177,13 @@ Experiment-4 provides two independently enforced revocation effects:
   set by the consumer retry interval). The consumer cannot obtain a broker
   address regardless of what credentials it holds.
 
-- **Layer 2 — Data plane (live HTTP authz backend + reconciliation safety net).**
+- **Layer 2 — Data plane (live HTTP authz backend).**
   `topic-auth-http` serves the RabbitMQ HTTP authorization backend API. RabbitMQ
-  is configured with a split authn/authz model:
-
-  - **authn**: `rabbit_auth_backend_internal` — password validated against the
-    internal user store provisioned by the reconciliation sync.
-  - **authz**: `rabbit_auth_backend_http` — every vhost access, resource
-    operation, and topic routing-key check is delegated to `topic-auth-http`,
-    which queries CA live. A revoked grant causes the next broker operation by
-    that consumer to be denied immediately — there is no polling delay.
+  delegates all authentication and authorization to `topic-auth-http`
+  (`auth_backends.1 = rabbit_auth_backend_http`). Every vhost access, resource
+  operation, and topic routing-key check is evaluated against CA live. A revoked
+  grant causes the next broker operation by that consumer to be denied immediately
+  — there is no polling delay.
 
   **Revocation timing by scenario:**
 
@@ -194,8 +191,7 @@ Experiment-4 provides two independently enforced revocation effects:
   |---|---|---|
   | Consumer reconnects after revocation | Vhost authz check → CA no grant → deny connection | Immediate (sub-second) |
   | Publisher publish after revocation | Topic authz check on each basic.publish → deny | Within next publish cycle |
-  | Active subscriber (connection never drops) | Reconciliation sync deletes user | Within SYNC_INTERVAL (60 s) |
-  | Consumer reconnects after user deletion | Internal authn fails (user gone) | Immediate |
+  | Active idle subscriber (connection never drops) | No current mechanism | Unbounded (open issue) |
 
   **Cache TTL.** `topic-auth-http` caches CA responses for `CACHE_TTL`
   (default `0s` — no caching). Zero TTL means every authorization check hits CA
@@ -203,18 +199,11 @@ Experiment-4 provides two independently enforced revocation effects:
   short TTL (e.g., `1s`–`5s`) to reduce CA load; the revocation window for
   reconnect scenarios then extends by at most one TTL period.
 
-  **CA availability.** With authz delegated to the HTTP backend, a CA outage
+  **CA availability.** With all auth delegated to the HTTP backend, a CA outage
   causes authorization checks to fail with `deny` (safe default). New consumer
   connections and publish operations will be refused until CA is reachable again.
   This is the correct behaviour for a security-critical system but must be
   accounted for in the CA availability SLA.
-
-  **Residual window for active subscribers.** An AMQP consumer that is already
-  subscribed to a queue will not be checked again until it attempts a new bind or
-  reconnects. The reconciliation sync (every 60 s) is the backstop: it deletes
-  the user, which terminates the connection. A targeted force-close of the user's
-  AMQP connection via the RabbitMQ management API would eliminate this residual
-  window, but is not implemented in this experiment.
 
   The conditional-bound caveat from the polling-only architecture still applies:
   if `topic-auth-http` cannot reach CA, authz checks return `deny` by default,
@@ -231,7 +220,7 @@ independently:
 | Consumer calls DO after revocation | DO denies (CA checked) | DO denies (immediate) |
 | Consumer reconnects to broker after revocation | Succeeds if credentials are valid | Denied at vhost check (immediate) |
 | Publisher publishes after its grant is revoked | Continues until ACL updated | Denied on next publish (sub-second) |
-| Active subscriber (connection never drops) | Still subscribed indefinitely | Disconnected within SYNC_INTERVAL (60 s) |
+| Active subscriber (connection never drops) | Still subscribed indefinitely | No mechanism (open issue — see below) |
 | Consumer reconnects via DO after grant revoked | DO denies | DO denies (immediate) |
 
 ### 6. No broker configuration knowledge required by consumers or operators
@@ -274,9 +263,9 @@ broker.
 | **Policy management** | One place (CA) | Two places (CA + broker ACLs) | One place (CA) |
 | **Audit trail** | Centralized in CA | Split across CA and broker logs | Centralized in CA |
 | **Revocation — control plane** | Immediate at DO | Immediate at DO | Immediate at DO |
-| **Revocation — data plane** | n/a (no persistent connection after request) | Unbounded (active connections persist) | Immediate on reconnect/publish (HTTP authz); ≤ SYNC_INTERVAL (60 s) for active idle subscribers |
+| **Revocation — data plane** | n/a (no persistent connection after request) | Unbounded (active connections persist) | Immediate on reconnect/publish (HTTP authz); unbounded for active idle subscribers (open issue) |
 | **Provider load** | Scales with N consumers | One outbound connection to broker | One outbound connection to broker |
-| **Adding a consumer** | Add CA grant | Configure broker ACLs + distribute credentials | Add CA grant; topic-auth-http provisions broker user within SYNC_INTERVAL |
+| **Adding a consumer** | Add CA grant | Configure broker ACLs + distribute credentials | Add CA grant; RabbitMQ user is not required (HTTP auth backend handles auth live) |
 | **Consumer knows provider address** | Yes (direct connection) | No (connects to broker) | No (connects to broker) |
 | **Temporal coupling** | Provider and consumer must be online together | Broker queues buffer messages | Broker queues buffer messages |
 | **Consumer configuration** | Provider address from DO | Broker address, exchange, credentials required | Identity credentials and orchestration URL only |
@@ -296,10 +285,10 @@ broker.
   cross-cloud grant scoping is left for future work.
 - **Active subscriber termination without reconnect.** An active AMQP consumer
   that never disconnects will not be denied by the HTTP authz backend until it
-  attempts a new operation (bind or reconnect). The reconciliation sync (every
-  60 s by default) is the backstop via user deletion. A targeted force-close of
-  the AMQP connection via the RabbitMQ management API after CA revocation would
-  close this residual window but is not yet implemented.
+  attempts a new operation (bind or reconnect). There is currently no backstop
+  mechanism: no periodic sync, no force-close. A targeted force-close of the AMQP
+  connection via the RabbitMQ management API after CA revocation would close this
+  residual window but is not yet implemented.
 
 ---
 

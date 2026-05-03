@@ -7,7 +7,7 @@ import react from '@vitejs/plugin-react'
 // Service host ports when running experiment-3 via docker compose:
 //   consumerauth:   8082
 //   rabbitmq mgmt:  15673  (mapped from container 15672)
-//   topic-auth-sync: 9090  (add ports: ["9090:9090"] to docker-compose for dev)
+//   topic-auth-http: 9090  (add ports: ["9090:9090"] to docker-compose for dev)
 //   robot-fleet:    9103   (mapped from container 9003)
 //   consumer-1:     9002
 //   consumer-2:     9004
@@ -28,9 +28,9 @@ export default defineConfig({
         rewrite: path => path.replace(/^\/api\/rabbitmq/, ''),
         changeOrigin: true,
       },
-      '/api/topic-auth-sync': {
+      '/api/topic-auth-http': {
         target: 'http://localhost:9090',
-        rewrite: path => path.replace(/^\/api\/topic-auth-sync/, ''),
+        rewrite: path => path.replace(/^\/api\/topic-auth-http/, ''),
         changeOrigin: true,
       },
       '/api/robot-fleet': {

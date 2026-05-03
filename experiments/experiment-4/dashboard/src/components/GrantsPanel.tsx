@@ -6,7 +6,7 @@ import { usePolling } from '../hooks/usePolling'
 import { fetchAuthRules, addGrant, revokeGrant } from '../api'
 import type { AuthRule } from '../types'
 
-// Derive the RabbitMQ topic read pattern that topic-auth-sync will compute
+// Derive the RabbitMQ topic read pattern that topic-auth-http will evaluate
 // for a consumer, given their set of serviceDefinitions.
 function buildPattern(services: string[]): string {
   const sorted = [...new Set(services)].sort()
@@ -136,7 +136,7 @@ export function GrantsPanel() {
           </button>
         </div>
         {addState === 'error' && <p style={s.err}>{addError}</p>}
-        <p style={s.hint}>topic-auth-sync will provision the RabbitMQ user within ~10 s</p>
+        <p style={s.hint}>topic-auth-http enforces the grant live — no provisioning delay</p>
       </section>
 
       {/* ── Derived patterns ─────────────────────────────────────────────── */}
