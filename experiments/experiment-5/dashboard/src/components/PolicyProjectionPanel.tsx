@@ -4,7 +4,6 @@
 
 import { usePolling } from '../hooks/usePolling'
 import { fetchPolicySyncStatus, fetchKafkaAuthzStatus } from '../api'
-import type { PolicySyncStatus, KafkaAuthzStatus } from '../types'
 
 function formatTime(iso: string): string {
   if (!iso) return '—'

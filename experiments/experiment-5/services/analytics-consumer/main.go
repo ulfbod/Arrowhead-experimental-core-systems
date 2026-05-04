@@ -150,17 +150,44 @@ func main() {
 		}
 	}()
 
-	// Retry loop with exponential back-off.
-	backoff := 5 * time.Second
+	// Retry loop.
+	//
+	// Backoff strategy:
+	//  - If the connection was held long enough to receive at least one message,
+	//    reset backoff to 1 s (the stream closed cleanly; reconnect quickly).
+	//  - If the connection failed immediately (connect error, 403, 503, or zero
+	//    messages received), apply exponential back-off up to 30 s.
+	//  - On revocation, back off fully before retrying (grant may be absent).
+	const (
+		minBackoff  = 1 * time.Second
+		maxBackoff  = 30 * time.Second
+		fastBackoff = 1 * time.Second
+	)
+	backoff := minBackoff
 	for {
+		prevCount := st.msgCount.Load()
 		err := subscribe(kafkaAuthzURL, name, service, st)
-		if err == errRevoked {
-			log.Printf("[%s] revoked — retrying in %s", name, backoff)
-		} else if err != nil {
+		receivedSome := st.msgCount.Load() > prevCount
+
+		switch {
+		case err == errRevoked:
+			log.Printf("[%s] access revoked — retrying in %s", name, backoff)
+		case err != nil && !receivedSome:
+			// Fast failure (connect error, 403, 503, Kafka error before first msg).
+			// Back off to avoid hammering a temporarily unavailable service.
 			log.Printf("[%s] error: %v — retrying in %s", name, err, backoff)
+		case err != nil && receivedSome:
+			// Had a healthy session; stream closed unexpectedly. Reconnect fast.
+			log.Printf("[%s] stream closed after %d msg(s): %v — reconnecting in %s",
+				name, st.msgCount.Load(), err, fastBackoff)
+			backoff = fastBackoff
 		}
+
 		time.Sleep(backoff)
-		if backoff < 60*time.Second {
+
+		if receivedSome && err != errRevoked {
+			backoff = minBackoff // reset after a successful session
+		} else if backoff < maxBackoff {
 			backoff *= 2
 		}
 	}

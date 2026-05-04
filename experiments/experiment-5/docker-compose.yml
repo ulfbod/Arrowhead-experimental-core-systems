@@ -39,14 +39,16 @@ services:
       retries: 10
 
   authzforce:
-    image: authzforce/authzforce-ce-server:10.1.0
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-5/dockerfiles/authzforce-server.Dockerfile
     ports:
       - "8180:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/authzforce-ce/domains || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   kafka:
     image: confluentinc/cp-kafka:7.6.1
@@ -176,7 +178,8 @@ services:
         curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-1","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
         curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
         curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"analytics-consumer","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists'
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"analytics-consumer","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"test-probe","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists'
 
   # ── Policy Engine ────────────────────────────────────────────────────────────────
 
@@ -283,7 +286,8 @@ services:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9003/health || exit 1"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
+      start_period: 10s
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -367,6 +371,8 @@ services:
       HEALTH_PORT: "9004"
     depends_on:
       kafka-authz:
+        condition: service_healthy
+      robot-fleet:
         condition: service_healthy
 
   # ── Dashboard ────────────────────────────────────────────────────────────────────

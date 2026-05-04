@@ -231,3 +231,5 @@ support/
 ├── topic-auth-xacml/                  # Go: RabbitMQ HTTP authz backend → AuthzForce
 └── kafka-authz/                       # Go: Kafka SSE proxy → AuthzForce
 ```
+
+See [DIAGRAMS.md](DIAGRAMS.md) for Mermaid component and sequence diagrams.

@@ -182,6 +182,18 @@ func main() {
 		hz = 10
 	}
 
+	// Start health server immediately so Docker health checks pass during
+	// the initialization phase (AMQP + Kafka connection retries can take
+	// up to 60 s, which exceeds the healthcheck grace period).
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/config", handleConfig)
+	mux.HandleFunc("/stats", handleStats)
+	go func() {
+		log.Printf("[robot-fleet] HTTP server on :%s", port)
+		log.Fatal(http.ListenAndServe(":"+port, mux))
+	}()
+
 	// Authenticate.
 	if authURL != "" {
 		if _, err := login(authURL, systemName, sysCreds); err != nil {
@@ -220,37 +232,18 @@ func main() {
 	}
 	defer b.Close()
 
-	// Connect to Kafka (with retries — Kafka may not be immediately ready).
-	var kw *kafka.Writer
-	for attempt := 1; attempt <= 20; attempt++ {
-		kw = &kafka.Writer{
-			Addr:         kafka.TCP(kafkaBrokers...),
-			Topic:        kafkaTopic,
-			Balancer:     &kafka.LeastBytes{},
-			BatchSize:    1,
-			BatchTimeout: 10 * time.Millisecond,
-		}
-		// Test the connection by writing a probe message.
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		testErr := kw.WriteMessages(ctx, kafka.Message{
-			Key:   []byte("probe"),
-			Value: []byte(`{"probe":true}`),
-		})
-		cancel()
-		if testErr == nil {
-			log.Printf("[robot-fleet] connected to Kafka topic=%s", kafkaTopic)
-			break
-		}
-		kw.Close()
-		kw = nil
-		log.Printf("[robot-fleet] Kafka connect attempt %d/20: %v — retrying in 3s", attempt, testErr)
-		time.Sleep(3 * time.Second)
+	// Create Kafka writer. kafka-go reconnects internally on transient errors,
+	// so there is no need for a probe write — writes that fail while Kafka is
+	// still bootstrapping are simply logged and skipped by the publishFn.
+	kw := &kafka.Writer{
+		Addr:         kafka.TCP(kafkaBrokers...),
+		Topic:        kafkaTopic,
+		Balancer:     &kafka.LeastBytes{},
+		BatchSize:    1,
+		BatchTimeout: 10 * time.Millisecond,
 	}
-	if kw == nil {
-		log.Printf("[robot-fleet] WARNING: could not connect to Kafka after 20 attempts — continuing AMQP-only")
-	} else {
-		defer kw.Close()
-	}
+	defer kw.Close()
+	log.Printf("[robot-fleet] Kafka writer created for topic=%s brokers=%v", kafkaTopic, kafkaBrokers)
 
 	// Build fleet config.
 	robots := make([]RobotConfig, count)
@@ -294,13 +287,8 @@ func main() {
 		}()
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", handleHealth)
-	mux.HandleFunc("/config", handleConfig)
-	mux.HandleFunc("/stats", handleStats)
-
-	log.Printf("[robot-fleet] HTTP server on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	// HTTP server already started above; block forever.
+	select {}
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
