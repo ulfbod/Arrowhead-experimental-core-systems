@@ -157,7 +157,20 @@
       "Bash(node:*)",
       "Bash(curl -s -w \"HTTP %{http_code}\" http://localhost:3002/ -o /dev/null)",
       "Bash(pdftotext AH_Global_Servitization.pdf -)",
-      "Bash(docker compose:*)"
+      "Bash(docker compose:*)",
+      "Bash(sudo apt-get:*)",
+      "WebFetch(domain:www.rabbitmq.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.openpolicyagent.org)",
+      "WebFetch(domain:developer.hashicorp.com)",
+      "Bash(sudo docker:*)",
+      "Bash(bash test-system.sh)",
+      "Bash(go run:*)",
+      "Bash(curl -s -X POST http://localhost:8082/authorization/grant -H 'Content-Type: application/json' -d '{\"consumerSystemName\":\"demo-consumer-1\",\"providerSystemName\":\"robot-fleet\",\"serviceDefinition\":\"telemetry\"}')",
+      "Bash(PORT=18082 go run ./cmd/consumerauth)",
+      "Bash(curl -s -X POST http://localhost:18082/authorization/grant -H 'Content-Type: application/json' -d '{\"consumerSystemName\":\"demo-consumer-1\",\"providerSystemName\":\"robot-fleet\",\"serviceDefinition\":\"telemetry\"}')",
+      "Bash(kill %1)",
+      "Bash(grep -v '^$')"
     ]
   }
 }

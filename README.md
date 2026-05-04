@@ -148,31 +148,33 @@ Self-contained scenarios that demonstrate the core systems in realistic settings
 | [experiment-1](experiments/experiment-1/) | Interactive browser demo: register services, grant authorization, orchestrate |
 | [experiment-2](experiments/experiment-2/) | Virtual local cloud with AMQP data plane: robot → RabbitMQ → edge-adapter → orchestrated consumer |
 | [experiment-3](experiments/experiment-3/) | Direct AMQP subscriptions with broker-level topic authorization sourced from ConsumerAuth |
+| [experiment-4](experiments/experiment-4/) | Geo-distributed consumers over AMQP: dual-layer authorization via topic-auth-http (live CA checks) + RabbitMQ user lifecycle management |
+| [experiment-5](experiments/experiment-5/) | Unified XACML/ABAC policy projection across AMQP and Kafka: one AuthzForce PDP governs both transports; revocation propagates to all PEPs within one sync cycle |
 
-### Experiment 2 quick start
+### Experiment 4 quick start
 
 ```bash
-cd experiments/experiment-2
+cd experiments/experiment-4
 docker compose up --build
 ```
 
-Watch `consumer` logs for orchestrated telemetry readings from `robot-simulator` via the `edge-adapter`.  Full details in [experiments/experiment-2/README.md](experiments/experiment-2/README.md).
+Three AMQP consumers connect via full AHC orchestration flow. `topic-auth-http` enforces RabbitMQ topic authorization using live ConsumerAuth checks and manages the RabbitMQ user lifecycle. Full details in [experiments/experiment-4/README.md](experiments/experiment-4/README.md).
 
-### Experiment 3 quick start
+### Experiment 5 quick start
 
 ```bash
-cd experiments/experiment-3
+cd experiments/experiment-5
 docker compose up --build
 ```
 
-Consumers subscribe directly to RabbitMQ using per-consumer credentials provisioned by `topic-auth-sync` from ConsumerAuth policies. Unauthorized bind attempts are rejected at the broker.  Full details in [experiments/experiment-3/README.md](experiments/experiment-3/README.md).
+`robot-fleet` publishes telemetry to both RabbitMQ (AMQP) and Kafka simultaneously. `policy-sync` compiles ConsumerAuth grants into a XACML 3.0 PolicySet and uploads it to AuthzForce. Both `topic-auth-xacml` (AMQP PEP) and `kafka-authz` (Kafka SSE PEP) evaluate the same policy — revoking a grant propagates to all transports within one sync cycle. Open the dashboard at **http://localhost:3005**. Full details in [experiments/experiment-5/README.md](experiments/experiment-5/README.md).
 
 ---
 
 ## Reference
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — structural overview and inter-system communication
-- [DIAGRAMS.md](DIAGRAMS.md) — Mermaid architecture and sequence diagrams
+- [core/DIAGRAMS.md](core/DIAGRAMS.md) — Mermaid architecture and sequence diagrams
 - [core/SPEC.md](core/SPEC.md) — complete API specification for all six systems
 - [core/TEST_PLAN.md](core/TEST_PLAN.md) — test scenarios and coverage per system
 - [core/TESTING.md](core/TESTING.md) — how to run tests, key techniques, known limitations

@@ -20,8 +20,14 @@ type config struct {
 }
 
 type syncer struct {
-	cfg config
-	rmq *rmqClient
+	cfg       config
+	rmq       *rmqClient
+	authToken string
+}
+
+// setToken stores the Bearer token to be used on ConsumerAuth API calls.
+func (s *syncer) setToken(token string) {
+	s.authToken = token
 }
 
 func newSyncer(cfg config) *syncer {
@@ -96,8 +102,16 @@ func (s *syncer) sync() error {
 }
 
 // fetchRules calls GET {consumerAuthURL}/authorization/lookup and returns the rules.
+// If an authToken is set (Phase 2), it is attached as a Bearer header.
 func (s *syncer) fetchRules() ([]AuthRule, error) {
-	resp, err := http.Get(s.cfg.consumerAuthURL + "/authorization/lookup")
+	req, err := http.NewRequest(http.MethodGet, s.cfg.consumerAuthURL+"/authorization/lookup", nil)
+	if err != nil {
+		return nil, err
+	}
+	if s.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+s.authToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

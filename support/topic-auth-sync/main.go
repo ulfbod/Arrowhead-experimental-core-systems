@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -38,6 +40,38 @@ func main() {
 	port := envOr("PORT", "9090")
 
 	s := newSyncer(cfg)
+
+	// Phase 2: Authenticate if AUTH_URL is configured.
+	// Fail-soft: log and proceed without token if auth is unreachable.
+	// ConsumerAuth does not currently enforce tokens, so this future-proofs the calls.
+	if authURL := envOr("AUTH_URL", ""); authURL != "" {
+		type loginReq struct {
+			SystemName  string `json:"systemName"`
+			Credentials string `json:"credentials"`
+		}
+		type loginResp struct {
+			Token string `json:"token"`
+		}
+		sysName  := envOr("SYSTEM_NAME", "topic-auth-sync")
+		sysCreds := envOr("SYSTEM_CREDENTIALS", "sync-secret")
+		body, _ := json.Marshal(loginReq{SystemName: sysName, Credentials: sysCreds})
+		resp, err := http.Post(authURL+"/authentication/identity/login", "application/json", bytes.NewReader(body))
+		if err != nil {
+			log.Printf("[main] auth login failed: %v — proceeding without token", err)
+		} else {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusCreated {
+				var lr loginResp
+				if decErr := json.NewDecoder(resp.Body).Decode(&lr); decErr == nil && lr.Token != "" {
+					s.setToken(lr.Token)
+					log.Printf("[main] authenticated as %q", sysName)
+				}
+			} else {
+				b, _ := io.ReadAll(resp.Body)
+				log.Printf("[main] auth login returned %d: %s — proceeding without token", resp.StatusCode, string(b))
+			}
+		}
+	}
 
 	var mu gosync.Mutex
 	ready := false

@@ -2,6 +2,7 @@
 package repository
 
 import (
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -49,5 +50,6 @@ func (r *MemoryRepository) All() []model.AuthRule {
 	for _, rule := range r.rules {
 		out = append(out, rule)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }

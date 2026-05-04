@@ -1,6 +1,6 @@
 # Architecture
 
-See [DIAGRAMS.md](DIAGRAMS.md) for Mermaid architecture and sequence diagrams.
+See [core/DIAGRAMS.md](core/DIAGRAMS.md) for Mermaid architecture and sequence diagrams.
 
 This repository is divided into two clearly separated areas.
 
@@ -122,8 +122,13 @@ Reusable modules shared across experiments. Each module is a standalone Go modul
 
 | Module | Path | Description |
 |---|---|---|
-| `message-broker` | `support/message-broker/` | AMQP publish/subscribe wrapper (used by experiment-2 and experiment-3) |
-| `topic-auth-sync` | `support/topic-auth-sync/` | Syncs Arrowhead ConsumerAuth policies to RabbitMQ topic permissions (used by experiment-3) |
+| `message-broker` | `support/message-broker/` | AMQP publish/subscribe wrapper (used by experiments 2–5) |
+| `topic-auth-sync` | `support/topic-auth-sync/` | Syncs ConsumerAuth policies to RabbitMQ topic permissions (experiment-3) |
+| `topic-auth-http` | `support/topic-auth-http/` | RabbitMQ HTTP authz backend — live CA checks + user lifecycle management (experiment-4) |
+| `authzforce` | `support/authzforce/` | AuthzForce REST client + XACML 3.0 PolicySet builder (experiments 5+) |
+| `policy-sync` | `support/policy-sync/` | Compiles ConsumerAuth grants into a XACML PolicySet and uploads to AuthzForce (experiment-5) |
+| `topic-auth-xacml` | `support/topic-auth-xacml/` | RabbitMQ HTTP authz backend — delegates all decisions to AuthzForce PDP (experiment-5) |
+| `kafka-authz` | `support/kafka-authz/` | Kafka SSE proxy PEP — authenticates streams against AuthzForce and sends `event: revoked` on policy change (experiment-5) |
 
 ---
 
@@ -142,6 +147,8 @@ Exploratory code built on top of the core. May include additional frontends, sim
 | [experiment-1](experiments/experiment-1/) | Interactive browser demo: register services, grant authorization, orchestrate |
 | [experiment-2](experiments/experiment-2/) | Virtual local cloud with AMQP data plane: robot-fleet → RabbitMQ → edge-adapter → orchestrated consumers |
 | [experiment-3](experiments/experiment-3/) | Direct AMQP subscriptions with broker-level topic authorization sourced from ConsumerAuth |
+| [experiment-4](experiments/experiment-4/) | Geo-distributed consumers over AMQP: dual-layer authorization via `topic-auth-http` (live CA checks) + RabbitMQ user lifecycle management |
+| [experiment-5](experiments/experiment-5/) | Unified XACML/ABAC policy projection across AMQP and Kafka: `policy-sync` compiles CA grants into a XACML PolicySet; one AuthzForce PDP governs both `topic-auth-xacml` (AMQP) and `kafka-authz` (Kafka SSE) |
 
 See [`experiments/CLAUDE_EXPERIMENTS.md`](experiments/CLAUDE_EXPERIMENTS.md) for rules.
 
@@ -231,12 +238,12 @@ No code in `experiments/` or `dashboard/` may import packages from `core/interna
 │
 ├── support/
 │   ├── message-broker/              # AMQP publish/subscribe library
-│   └── topic-auth-sync/             # ConsumerAuth → RabbitMQ topic-permission sync
-│       ├── go.mod
-│       ├── main.go                  # env config, health server, run loop
-│       ├── policy.go                # ConsumerAuth rules → RabbitMQ permission patterns
-│       ├── rmqapi.go                # RabbitMQ Management API client
-│       └── sync.go                  # reconciliation logic
+│   ├── topic-auth-sync/             # ConsumerAuth → RabbitMQ topic-permission sync (experiment-3)
+│   ├── topic-auth-http/             # RabbitMQ HTTP authz backend, live CA checks (experiment-4)
+│   ├── authzforce/                  # AuthzForce REST client + XACML PolicySet builder
+│   ├── policy-sync/                 # CA → XACML → AuthzForce compiler (experiment-5)
+│   ├── topic-auth-xacml/            # RabbitMQ HTTP authz backend → AuthzForce PDP (experiment-5)
+│   └── kafka-authz/                 # Kafka SSE proxy PEP → AuthzForce PDP (experiment-5)
 │
 └── experiments/
     ├── CLAUDE_EXPERIMENTS.md
@@ -250,10 +257,26 @@ No code in `experiments/` or `dashboard/` may import packages from `core/interna
     │   │   └── consumer/
     │   ├── dashboard/               # React dashboard (nginx-served in Docker)
     │   └── tests/
-    └── experiment-3/
+    ├── experiment-3/
+    │   ├── docker-compose.yml
+    │   ├── dockerfiles/
+    │   ├── rabbitmq/                # rabbitmq.conf + enabled_plugins
+    │   └── services/
+    │       └── consumer-direct/     # direct AMQP subscriber
+    ├── experiment-4/
+    │   ├── docker-compose.yml
+    │   ├── dockerfiles/
+    │   ├── rabbitmq/
+    │   └── services/
+    │       ├── robot-fleet/         # AMQP publisher + SR registration
+    │       └── consumer-direct/     # AMQP consumer via AHC orchestration flow
+    └── experiment-5/
         ├── docker-compose.yml
         ├── dockerfiles/
-        ├── rabbitmq/                # rabbitmq.conf + enabled_plugins
+        ├── rabbitmq/
+        ├── authzforce/              # AuthzForce config
         └── services/
-            └── consumer-direct/     # direct AMQP subscriber
+            ├── robot-fleet/         # dual-publish AMQP + Kafka
+            ├── consumer-direct/     # AMQP consumer via AHC orchestration flow
+            └── analytics-consumer/  # Kafka SSE consumer via kafka-authz
 ```
