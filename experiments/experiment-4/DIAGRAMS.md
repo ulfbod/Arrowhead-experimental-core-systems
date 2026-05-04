@@ -11,12 +11,12 @@ graph TD
         AUTH["Authentication :8081\n─────────────\nissues and verifies\nBearer tokens"]
         CA_auth["ConsumerAuth :8082\n─────────────\nstores authorization\ngrants in memory"]
         DO["DynamicOrch :8083\n─────────────\nverify identity\nquery SR + CA\nreturn endpoint"]
-        CA_cert["CertAuth :8086\n─────────────\nissues X.509 certs\n(Phase 5 — not yet wired)"]
+        CA_cert["CertAuth :8086\n─────────────\nissues X.509 certs\n(placeholder — not wired)"]
     end
 
     subgraph support["Support Services"]
-        TAH["topic-auth-http :9090\n─────────────\nserves RabbitMQ HTTP\nauthz backend API\n+ background reconciliation\n(user lifecycle)"]
-        RMQ["RabbitMQ :5672 / :15674\n─────────────\ntopic exchange: arrowhead\nauthn=internal\nauthz=HTTP backend"]
+        TAH["topic-auth-http :9090\n─────────────\nRabbitMQ HTTP auth backend\n(single backend — all auth)\nlive CA check per operation"]
+        RMQ["RabbitMQ :5672 / :15674\n─────────────\ntopic exchange: arrowhead\nauth_backends.1 = rabbit_auth_backend_http"]
     end
 
     subgraph experiment["Experiment Services"]
@@ -31,10 +31,10 @@ graph TD
     RF  -->|"POST /serviceregistry/register\nat startup"| SR
     RF  -->|"POST /authentication/identity/login\nat startup"| AUTH
 
-    TAH -->|"GET /authorization/lookup\nlive per-request + background sync\n[Bearer token]"| CA_auth
-    TAH -->|"Management API\nPUT users (background sync)\nDELETE stale users"| RMQ
+    TAH -->|"GET /authorization/lookup\nlive per-request [Bearer token]"| CA_auth
     TAH -->|"POST /authentication/identity/login\nat startup"| AUTH
 
+    RMQ -->|"POST /auth/user\non every new connection"| TAH
     RMQ -->|"POST /auth/vhost\non every new connection"| TAH
     RMQ -->|"POST /auth/resource\non exchange/queue ops"| TAH
     RMQ -->|"POST /auth/topic\non every publish + bind"| TAH
@@ -72,9 +72,10 @@ graph TD
 
 ## Sequence Diagram 1 — Startup
 
-`setup` seeds grants, `topic-auth-http` authenticates and runs its first
-reconciliation (creating RabbitMQ users), then `robot-fleet` and consumers start.
-RabbitMQ calls `topic-auth-http` for every vhost and topic authz check.
+`setup` seeds grants, `topic-auth-http` authenticates (optional Bearer token for CA
+calls) and becomes healthy immediately. `robot-fleet` and consumers start once
+`topic-auth-http` is healthy. RabbitMQ delegates ALL auth decisions to
+`topic-auth-http` — user credentials, vhost access, and topic routing-key checks.
 
 ```mermaid
 sequenceDiagram
@@ -98,22 +99,17 @@ sequenceDiagram
 
     TAH->>Auth: POST /authentication/identity/login {topic-auth-http}
     Auth-->>TAH: {token: "…"}
+    TAH-->>TAH: /health returns 200 immediately
 
-    loop first reconciliation (user lifecycle sync)
-        TAH->>CA: GET /authorization/lookup  [Bearer token]
-        CA-->>TAH: [{consumer-1,telemetry}, {consumer-2,telemetry}, {consumer-3,telemetry}]
-        TAH->>RMQ: PUT /api/users/robot-fleet + permissions (management API)
-        TAH->>RMQ: PUT /api/users/demo-consumer-{1,2,3} + permissions (management API)
-        TAH-->>TAH: ready=true → /health returns 200
-    end
-
-    Note over RMQ,TAH: RabbitMQ HTTP authz backend now active —<br/>all authz decisions delegated to topic-auth-http
+    Note over RMQ,TAH: RabbitMQ HTTP auth backend active —<br/>all auth decisions delegated to topic-auth-http
 
     RF->>Auth: POST /authentication/identity/login {robot-fleet}
     Auth-->>RF: {token: "…"}
     RF->>SR: POST /serviceregistry/register {telemetry, rabbitmq:5672, arrowhead exchange}
     SR-->>RF: 201 Created
     RF->>RMQ: AMQP connect (robot-fleet : fleet-secret)
+    RMQ->>TAH: POST /auth/user  {username: robot-fleet, password: fleet-secret}
+    TAH-->>RMQ: allow  (publisher credentials match)
     RMQ->>TAH: POST /auth/vhost  {username: robot-fleet, vhost: /}
     TAH-->>RMQ: allow  (publisher always allowed)
     RF->>RMQ: Exchange.Declare / queue setup
@@ -132,6 +128,10 @@ sequenceDiagram
     C->>CA: POST /authorization/token/generate
     CA-->>C: {token: "…"}
     C->>RMQ: AMQP connect (demo-consumer-N : consumer-secret)
+    RMQ->>TAH: POST /auth/user  {username: demo-consumer-N, password: consumer-secret}
+    TAH->>CA: GET /authorization/lookup  (live check)
+    CA-->>TAH: [{consumer-N, telemetry}]
+    TAH-->>RMQ: allow  (password correct + grant exists)
     RMQ->>TAH: POST /auth/vhost  {username: demo-consumer-N, vhost: /}
     TAH->>CA: GET /authorization/lookup  (live check)
     CA-->>TAH: [{consumer-N, telemetry}]
@@ -176,8 +176,7 @@ sequenceDiagram
 
 Revoking a grant is effective immediately at the orchestration layer (DO returns
 empty) and immediately at the broker layer when the consumer reconnects
-(vhost authz check via topic-auth-http denies). An active idle subscriber is
-disconnected within SYNC_INTERVAL (60 s) when the reconciliation sync deletes the user.
+(`/auth/user` live CA check denies). No sync delay — all decisions are live.
 
 ```mermaid
 sequenceDiagram
@@ -200,35 +199,28 @@ sequenceDiagram
     DO-->>C2: {response: []}  (empty — no authorized providers)
     Note over C2: "no authorized providers" → wait 5 s, retry
 
-    Note over C2,RMQ: consumer-2 attempts to reconnect to broker directly (e.g., after AMQP drop)
+    Note over C2,RMQ: consumer-2 attempts to reconnect to broker
     C2->>RMQ: AMQP connect (demo-consumer-2 : consumer-secret)
-    Note over RMQ: authn: internal backend — user still exists → PASS
-    RMQ->>TAH: POST /auth/vhost  {username: demo-consumer-2, vhost: /}
+    RMQ->>TAH: POST /auth/user  {username: demo-consumer-2, password: consumer-secret}
     TAH->>CA: GET /authorization/lookup  (live check)
     CA-->>TAH: []  (no grant for consumer-2)
     TAH-->>RMQ: deny
     RMQ-->>C2: Connection refused (ACCESS_REFUSED)
-    Note over C2: immediate denial — no sync delay
-
-    Note over TAH,RMQ: background reconciliation sync (≤ 60 s)
-    TAH->>CA: GET /authorization/lookup
-    Note over TAH: demo-consumer-2 absent → stale user
-    TAH->>RMQ: DELETE /api/users/demo-consumer-2 (management API)
-    Note over RMQ: active AMQP connection terminated (if still open)
+    Note over C2: denied immediately — no sync delay
 
     Operator->>CA: POST /authorization/grant {consumer-2, robot-fleet, telemetry}
     CA-->>Operator: 201 Created
-
-    Note over TAH,RMQ: next reconciliation sync (≤ 60 s) re-creates user
-    TAH->>CA: GET /authorization/lookup
-    TAH->>RMQ: PUT /api/users/demo-consumer-2 + permissions (management API)
 
     C2->>DO: POST /orchestration/dynamic  [Bearer token]
     DO->>CA: POST /authorization/verify {consumer-2, robot-fleet, telemetry}
     CA-->>DO: {authorized: true}
     DO-->>C2: {provider: rabbitmq:5672, …}
     C2->>CA: POST /authorization/token/generate
-    C2->>RMQ: AMQP connect → authn: internal PASS
+    C2->>RMQ: AMQP connect (demo-consumer-2 : consumer-secret)
+    RMQ->>TAH: POST /auth/user  {username: demo-consumer-2, password: consumer-secret}
+    TAH->>CA: GET /authorization/lookup  (live check)
+    CA-->>TAH: [{consumer-2, telemetry}]
+    TAH-->>RMQ: allow
     RMQ->>TAH: POST /auth/vhost  {username: demo-consumer-2}
     TAH->>CA: GET /authorization/lookup  (live check)
     CA-->>TAH: [{consumer-2, telemetry}]

@@ -2,14 +2,12 @@
 #
 # Authorization enforced at two independent layers:
 #   1. DynamicOrchestration gate (refuses endpoint if grant absent or identity invalid)
-#   2. RabbitMQ HTTP authz backend (live CA check on every publish and bind; no sync delay)
+#   2. RabbitMQ HTTP authz backend (live CA check on every broker operation; no sync delay)
 #
-# RabbitMQ uses a split authn/authz model:
-#   authn = rabbit_auth_backend_internal  (password validation)
-#   authz = rabbit_auth_backend_http      (live CA query via topic-auth-http)
-#
-# topic-auth-http also runs a background reconciliation sync (default 60s) as a
-# safety net for user lifecycle management (creation and stale-user cleanup).
+# RabbitMQ uses a single HTTP auth backend:
+#   auth_backends.1 = rabbit_auth_backend_http
+#   topic-auth-http handles ALL auth decisions (user credentials, vhost, resource, topic).
+#   No internal RabbitMQ users — authentication is delegated entirely to topic-auth-http.
 #
 # Ports exposed to host:
 #   Dashboard:               http://localhost:3004
@@ -136,6 +134,8 @@ services:
       retries: 10
 
   # Seeds authorization grants for the 3 direct consumers.
+  # grant() retries up to 5 times with a 2 s back-off so a transient CA hiccup
+  # (or a re-run after a previously failed container) never leaves setup stuck.
   setup:
     image: curlimages/curl:8.7.1
     depends_on:
@@ -146,15 +146,25 @@ services:
       - sh
       - -c
       - |-
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-1","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists'
+        grant() {
+          n=0
+          until curl -sf -X POST http://consumerauth:8082/authorization/grant \
+            -H 'Content-Type: application/json' -d "$1" \
+            | grep -qE '"id":|already exists'; do
+            n=$((n+1)); [ $n -lt 5 ] || return 1; sleep 2
+          done
+        }
+        grant '{"consumerSystemName":"demo-consumer-1","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' &&
+        grant '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}' &&
+        grant '{"consumerSystemName":"demo-consumer-3","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}'
 
   # ── Topic Auth HTTP ────────────────────────────────────────────────────────────────
   #
-  # Serves the RabbitMQ HTTP auth backend API (/auth/vhost, /auth/resource,
-  # /auth/topic) and runs a background reconciliation sync for user lifecycle.
-  # Replaces the polling-only topic-auth-sync service.
+  # Single HTTP auth backend for RabbitMQ. Handles all auth decisions live:
+  #   /auth/user   — validates credentials (admin, publisher, or consumer with CA grant)
+  #   /auth/vhost  — checks CA grant for consumers; always allows admin + publisher
+  #   /auth/resource — allows all (fine-grained control at topic level)
+  #   /auth/topic  — checks CA grant on every publish (write) and bind (read)
 
   topic-auth-http:
     build:
