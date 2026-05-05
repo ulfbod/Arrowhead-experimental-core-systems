@@ -71,7 +71,7 @@ graph TD
     C2  -->|"same AHC flow"| DO
     C3  -->|"same AHC flow"| DO
 
-    DB  -.->|"POST /config\n{syncInterval:\"Ns\"}"| PS
+    DB  -.->|"POST /config\n{syncInterval: Ns}"| PS
     DB  -.->|health + stats| RC
     DB  -.->|health + stats| DP
     DB  -.->|health + status| RA

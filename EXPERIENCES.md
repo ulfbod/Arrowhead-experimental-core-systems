@@ -211,6 +211,140 @@ Specific checks:
 
 ---
 
+## EXP-004 — grep `^` line anchor fails on SSE output stored in a bash variable (experiment-6, 2026-05-05)
+
+### Symptom
+
+Section 10 of `test-system.sh` (kafka-authz SSE stream) showed:
+
+```
+  first 300 chars: data: {"robotId":"robot-2",...}
+
+data: {"robotId":"robot-3",...
+  PASS  SSE test-probe: not denied (403)
+  FAIL  SSE test-probe: data lines received from Kafka
+         expected: data: {...}
+         actual:   data: {"robotId":"robot-2",...}
+```
+
+The `actual` field in the FAIL message clearly shows `data: {` at the start of the output, yet
+the check using `echo "$sse" | grep -q '^data:'` returned false.
+
+### Root Cause
+
+When SSE output is captured into a bash variable with `sse=$(timeout 4 curl -sN ...)` and then
+piped back through `echo "$sse" | grep`, line-ending differences between the HTTP layer and the
+shell variable can cause the `^` (start-of-line) anchor to fail.  HTTP responses over a Go
+`net/http` server may carry CRLF (`\r\n`) chunk boundaries that survive into the shell variable
+in environments such as WSL2; grep splits on `\n` but the `^` anchor then sees lines like
+`data: {...}\r` — which start with `d` — yet the `^` interaction with `\r` can be
+implementation-specific.  Anchor-free patterns such as `'not authorized'` work correctly
+because they do not depend on line-start positioning.
+
+The key observation: a grep pattern without `^` (e.g. `grep -q 'not authorized'`) succeeded on
+the same `$sse` variable while `grep -q '^data:'` failed, even though the preview confirmed the
+content started with `data:`.
+
+### Fix
+
+Replace the anchored pattern with a content-specific substring match:
+
+```bash
+# BEFORE (fails in some environments):
+if echo "$sse" | grep -q '^data:'; then
+
+# AFTER (reliable):
+if echo "$sse" | grep -q 'data: {'; then
+```
+
+Using `'data: {'` (no `^`, includes the space and opening brace) is more specific than
+bare `'^data:'` and not susceptible to line-anchor ambiguity.  It correctly matches SSE
+lines of the form `data: {"robotId":...}`.
+
+### Guidance for Future Iterations
+
+**When grepping multi-line content captured in a bash variable via `$(...)`, avoid the `^`
+and `$` anchors — use content-specific substrings instead.**
+
+Common patterns for SSE / streaming test checks:
+
+```bash
+# Good — content-specific substring, no anchoring:
+echo "$sse" | grep -q 'data: {'
+
+# Good — bash built-in glob, checks the whole variable:
+[[ "$sse" == *'data: {'* ]]
+
+# Risky — ^ anchor may not work reliably with CRLF in piped shell variables:
+echo "$sse" | grep -q '^data:'
+```
+
+The anchor-free `grep -q 'not authorized'` pattern used elsewhere in the test
+file (for error detection) is a safe model to follow.
+
+---
+
+## EXP-005 — Escaped double quotes inside Mermaid edge label strings (experiment-6, 2026-05-05)
+
+### Symptom
+
+The Component Diagram in `experiments/experiment-6/DIAGRAMS.md` failed to render in
+GitHub / VS Code with a parse error:
+
+```
+Parse error on line 66:
+...{syncInterval:\"Ns\"}"| PS
+...got 'STR'
+```
+
+The diagram source contained the following edge label:
+
+```
+DB  -.->|"POST /config\n{syncInterval:\"Ns\"}"| PS
+```
+
+### Root Cause
+
+Mermaid does not support `\"` (backslash-escaped double quotes) inside double-quoted
+`|"..."|` edge label strings.  The parser interprets the `\"` as an unexpected token
+and aborts with a `STR` error.
+
+### Fix
+
+Remove the inner quotes entirely, using a bare value instead:
+
+```
+# BEFORE (broken):
+DB  -.->|"POST /config\n{syncInterval:\"Ns\"}"| PS
+
+# AFTER (fixed):
+DB  -.->|"POST /config\n{syncInterval: Ns}"| PS
+```
+
+If the literal double-quote character is needed in a label, restructure the edge to
+use a node label instead, or omit the quotes from the value.
+
+### Guidance for Future Iterations
+
+**Mermaid edge labels (`|"..."|`) do not support `\"` escape sequences — avoid nested
+double quotes inside edge label strings entirely.**
+
+Specific checks before committing diagrams:
+
+1. **Search for `\"` in all `.md` files containing Mermaid blocks:**
+   ```bash
+   grep -r '\\"' experiments/ support/ --include="*.md"
+   ```
+   Any match inside a Mermaid code fence is a likely parse error.
+
+2. **Validate diagrams render locally** (VS Code Mermaid preview or `mmdc` CLI)
+   before committing, especially after editing edge labels.
+
+3. **Prefer plain ASCII labels** — avoid `{}`, `"`, `'`, or special characters in
+   Mermaid edge labels unless you have verified they render correctly.
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -222,4 +356,6 @@ Use this before marking an experiment implementation complete:
 - [ ] Revocation test waits at least `SYNC_INTERVAL + poll_interval` before asserting Deny
 - [ ] Run `docker compose up --build -d` (with `--build`) before running `test-system.sh`
 - [ ] policy-sync `/status` shows correct `domainExternalId` for this experiment before investigating auth failures
+- [ ] SSE / streaming checks in `test-system.sh` use content-specific substrings (e.g. `'data: {'`), not `^` line anchors
 - [ ] `support/README.md` and `support/DIAGRAMS.md` updated for any new or modified support service
+- [ ] All Mermaid diagrams render without parse errors (no `\"` inside `|"..."|` edge label strings)
