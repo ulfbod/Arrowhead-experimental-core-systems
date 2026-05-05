@@ -245,42 +245,192 @@ The key observation: a grep pattern without `^` (e.g. `grep -q 'not authorized'`
 the same `$sse` variable while `grep -q '^data:'` failed, even though the preview confirmed the
 content started with `data:`.
 
-### Fix
+### Fix (first attempt — still unreliable, see EXP-006)
 
-Replace the anchored pattern with a content-specific substring match:
+Replaced the anchored pattern with an anchor-free substring:
 
 ```bash
-# BEFORE (fails in some environments):
+# BEFORE:
 if echo "$sse" | grep -q '^data:'; then
 
-# AFTER (reliable):
+# FIRST FIX (still failed — see EXP-006):
 if echo "$sse" | grep -q 'data: {'; then
 ```
-
-Using `'data: {'` (no `^`, includes the space and opening brace) is more specific than
-bare `'^data:'` and not susceptible to line-anchor ambiguity.  It correctly matches SSE
-lines of the form `data: {"robotId":...}`.
 
 ### Guidance for Future Iterations
 
 **When grepping multi-line content captured in a bash variable via `$(...)`, avoid the `^`
-and `$` anchors — use content-specific substrings instead.**
+and `$` anchors — use content-specific substrings instead.  Prefer bash `[[ ... ]]`
+over `echo | grep` — see EXP-006 for why `echo ... | grep` is itself unreliable for
+SSE variables.**
 
-Common patterns for SSE / streaming test checks:
+---
+
+## EXP-006 — `echo "$var" | grep -q` unreliable for SSE bash variables (experiment-6, 2026-05-05)
+
+### Symptom
+
+After the EXP-004 fix changed `grep -q '^data:'` to the anchor-free `grep -q 'data: {'`,
+section 10 of `test-system.sh` still reported **FAIL**, even though the `actual:` field in
+the failure message — and the preview `${sse:0:300}` — clearly showed `data: {` present in
+`$sse`:
+
+```
+  first 300 chars: data: {"robotId":"robot-1",...}
+
+data: {"robotId":"robot-2",...
+  PASS  SSE test-probe: not denied (403)
+  FAIL  SSE test-probe: data lines received from Kafka
+         expected: data: {...}
+         actual:   data: {"robotId":"robot-1",...}
+```
+
+The EXP-004 fix that removed the `^` anchor was not sufficient.
+
+### Root Cause
+
+`echo "$sse" | grep -q 'data: {'` is unreliable for SSE output captured via `$(...)` even
+without line anchors.  The exact mechanism could not be determined analytically; plausible
+contributors include:
+
+- `echo` interpreting or dropping certain byte sequences in the variable value
+- Buffering or piping behaviour differences in bash on WSL2 / Linux containers
+- Interaction between the shell built-in `echo` and the grep process when the variable
+  contains CRLF, embedded null bytes, or other non-printable characters from the SSE stream
+
+Critically: `[[ "$var" == *"pattern"* ]]` uses bash's built-in string matching and never
+invokes an external process, so it is immune to all piping and echo-interpretation issues.
+It also avoids spawning a subshell.
+
+### Fix
+
+Replace `echo "$sse" | grep -q '...'` with bash's built-in glob test:
 
 ```bash
-# Good — content-specific substring, no anchoring:
+# BEFORE (unreliable — EXP-004 first attempt):
+if echo "$sse" | grep -q 'data: {'; then
+
+# AFTER (reliable):
+if [[ "$sse" == *"data: {"* ]]; then
+```
+
+Applied to section 10 of `experiments/experiment-6/test-system.sh`.
+
+### Guidance for Future Iterations
+
+**For substring checks on bash variables containing SSE or streaming output, always use
+`[[ "$var" == *"substring"* ]]` instead of `echo "$var" | grep -q`.**
+
+Pattern summary:
+
+```bash
+# Best — bash built-in, no subprocess, immune to echo/pipe issues:
+[[ "$sse" == *"data: {"* ]]
+
+# Acceptable for error-string checks (short, ASCII, no special chars):
+echo "$sse" | grep -q 'not authorized'
+
+# Unreliable for SSE variable content (EXP-004 + EXP-006):
 echo "$sse" | grep -q 'data: {'
-
-# Good — bash built-in glob, checks the whole variable:
-[[ "$sse" == *'data: {'* ]]
-
-# Risky — ^ anchor may not work reliably with CRLF in piped shell variables:
 echo "$sse" | grep -q '^data:'
 ```
 
-The anchor-free `grep -q 'not authorized'` pattern used elsewhere in the test
-file (for error detection) is a safe model to follow.
+---
+
+## EXP-007 — kafka-go consumer group reader fails silently when topic does not exist at startup (experiment-6, 2026-05-05)
+
+### Symptom
+
+Section 6 of `test-system.sh` (REST data access via rest-authz) polled
+`http://localhost:9093/telemetry/latest` 12 times (60 s total) and received `null` every
+time:
+
+```
+  telemetry/latest (first 200 chars): null
+  FAIL  GET /telemetry/latest via rest-authz → data received
+         expected: non-null JSON without error
+         actual:   null
+```
+
+This happened despite robot-fleet publishing to Kafka at 30 messages/s (confirmed by
+section 10 SSE stream showing live telemetry data) and rest-authz correctly returning
+403 for unauthorized requests (confirming the auth path worked).  data-provider's
+`/telemetry/latest` returns the literal string `null` when no Kafka message has been
+stored, indicating its Kafka consumer received zero messages.
+
+### Root Cause
+
+`data-provider` used a `kafka-go` consumer group reader:
+
+```go
+r := kafka.NewReader(kafka.ReaderConfig{
+    Brokers:        brokers,
+    Topic:          topic,
+    GroupID:        "data-provider",
+    StartOffset:    kafka.LastOffset,
+    ...
+})
+```
+
+`data-provider` starts before `robot-fleet` (it only depends on Kafka being healthy, not
+on robot-fleet).  When the topic `arrowhead.telemetry` does not yet exist at the time
+the consumer group reader initialises, the Kafka group coordinator may fail to assign
+the partition, leaving the reader in a state where it never receives messages — even
+after the topic is subsequently created and robot-fleet begins publishing.
+
+`kafka-authz`, which also consumes `arrowhead.telemetry` and works correctly, uses a
+**partition-level reader** (no `GroupID`) that bypasses the group coordinator entirely.
+
+### Fix
+
+Switch `data-provider` from a consumer group reader to a partition reader (same pattern
+as `kafka-authz`):
+
+```go
+// BEFORE:
+r := kafka.NewReader(kafka.ReaderConfig{
+    Brokers:        brokers,
+    Topic:          topic,
+    GroupID:        "data-provider",
+    CommitInterval: time.Second,
+    StartOffset:    kafka.LastOffset,
+    ...
+})
+
+// AFTER:
+r := kafka.NewReader(kafka.ReaderConfig{
+    Brokers:     brokers,
+    Topic:       topic,
+    Partition:   0,
+    MaxWait:     500 * time.Millisecond,
+    StartOffset: kafka.LastOffset,
+    ...
+})
+```
+
+Applied to `experiments/experiment-6/services/data-provider/main.go`.
+
+### Guidance for Future Iterations
+
+**Use a partition-level reader (no `GroupID`) for any Kafka consumer that starts before
+the producing service and needs to read from a single-partition topic.**
+
+Consumer group readers add coordination overhead that can fail silently when the topic
+does not yet exist.  Partition readers start cleanly even on a non-existent topic and
+recover automatically once the topic is created.
+
+Specific checks:
+
+1. If a new Kafka consumer service does NOT need cross-instance coordination (i.e., it is
+   a single-instance reader maintaining a latest-state cache), prefer `Partition: 0` over
+   `GroupID`.
+
+2. If a consumer group is required (e.g., for horizontal scaling), ensure the producing
+   service starts and publishes at least one message before the consumer's healthcheck
+   passes — use `depends_on: robot-fleet: condition: service_healthy`.
+
+3. Smoke-test data-provider directly (before section 6): `curl http://localhost:9094/stats`
+   should show `"msgCount": N > 0` if Kafka is delivering messages.
 
 ---
 
@@ -356,6 +506,8 @@ Use this before marking an experiment implementation complete:
 - [ ] Revocation test waits at least `SYNC_INTERVAL + poll_interval` before asserting Deny
 - [ ] Run `docker compose up --build -d` (with `--build`) before running `test-system.sh`
 - [ ] policy-sync `/status` shows correct `domainExternalId` for this experiment before investigating auth failures
-- [ ] SSE / streaming checks in `test-system.sh` use content-specific substrings (e.g. `'data: {'`), not `^` line anchors
+- [ ] SSE / streaming checks in `test-system.sh` use `[[ "$var" == *"pattern"* ]]`, not `echo | grep` (EXP-004, EXP-006)
+- [ ] Any Kafka consumer that starts before the producing service uses a partition reader (`Partition: 0`), not a consumer group reader (`GroupID`) (EXP-007)
+- [ ] Smoke-check data-provider `/stats` directly (`msgCount > 0`) before investigating rest-authz failures
 - [ ] `support/README.md` and `support/DIAGRAMS.md` updated for any new or modified support service
 - [ ] All Mermaid diagrams render without parse errors (no `\"` inside `|"..."|` edge label strings)

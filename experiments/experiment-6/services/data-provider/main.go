@@ -104,14 +104,20 @@ func (s *telemetryStore) stats() map[string]interface{} {
 // ── Kafka consumer ────────────────────────────────────────────────────────────
 
 func consumeKafka(brokers []string, topic string, store *telemetryStore) {
+	// Use a partition-level reader (no consumer group) for the same reason as
+	// kafka-authz: consumer group coordination can fail silently when the topic
+	// does not yet exist at startup time (data-provider starts before
+	// robot-fleet creates the topic).  A partition reader is simpler, has no
+	// rebalancing overhead, and recovers correctly when the topic is created
+	// after the reader starts.
 	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:        brokers,
-		Topic:          topic,
-		GroupID:        "data-provider",
-		MinBytes:       1,
-		MaxBytes:       1e6,
-		CommitInterval: time.Second,
-		StartOffset:    kafka.LastOffset,
+		Brokers:     brokers,
+		Topic:       topic,
+		Partition:   0,
+		MinBytes:    1,
+		MaxBytes:    1e6,
+		MaxWait:     500 * time.Millisecond,
+		StartOffset: kafka.LastOffset,
 	})
 	defer r.Close()
 

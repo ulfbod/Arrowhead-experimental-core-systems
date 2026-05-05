@@ -330,7 +330,7 @@ else
   pass "SSE test-probe: not denied (403)"
 fi
 
-if echo "$sse" | grep -q 'data: {'; then
+if [[ "$sse" == *"data: {"* ]]; then
   pass "SSE test-probe: data lines received from Kafka"
 else
   fail "SSE test-probe: data lines received from Kafka" "data: {...}" "$preview"
