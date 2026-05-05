@@ -9,20 +9,17 @@ import (
 
 // authServer handles RabbitMQ HTTP auth backend requests.
 //
-// RabbitMQ is configured with a split authn/authz model:
+// RabbitMQ is configured with a single HTTP auth backend:
 //
-//	auth_backends.1.authn = rabbit_auth_backend_internal
-//	auth_backends.1.authz = rabbit_auth_backend_http
+//	auth_backends.1 = rabbit_auth_backend_http
 //
-// The internal backend validates usernames and passwords; this server handles
-// all authorization decisions (vhost, resource, topic). Because authorization
-// is evaluated live against ConsumerAuthorization on every broker operation,
-// a revoked grant takes effect within the next publish or bind — eliminating
-// the T_sync delay of the polling-only architecture.
-//
-// The /auth/user endpoint is also implemented for completeness: it is not
-// called by RabbitMQ when authn=internal, but enables testing the full flow
-// and supports configurations where authn is also delegated to this server.
+// This server is the sole authority for all authentication and authorization
+// decisions: user credentials (/auth/user), vhost access (/auth/vhost),
+// resource operations (/auth/resource), and topic routing-key checks
+// (/auth/topic). Because all decisions are evaluated live against
+// ConsumerAuthorization on every broker operation, a revoked grant takes
+// effect within the next publish or bind — eliminating the T_sync delay of
+// the polling-only architecture.
 type authServer struct {
 	cfg        config
 	fetchRules func(ctx context.Context) ([]AuthRule, error)

@@ -1,0 +1,185 @@
+<mxfile host="Electron" agent="Claude Code">
+  <diagram id="exp4-component" name="Experiment 4 — Component Diagram">
+    <mxGraphModel dx="1911" dy="1002" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="10" parent="1" style="swimlane;fontStyle=1;fontSize=13;fillColor=#dae8fc;strokeColor=#6c8ebf;startSize=30;perimeterSpacing=5;arcSize=4;" value="Arrowhead Core" vertex="1">
+          <mxGeometry height="460" width="290" x="440" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="11" parent="10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;arcSize=8;" value="&lt;b&gt;ServiceRegistry :8080&lt;/b&gt;&lt;hr size=&quot;1&quot;/&gt;stores service&lt;br/&gt;registrations" vertex="1">
+          <mxGeometry height="65" width="240" x="25" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="12" parent="10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;arcSize=8;" value="&lt;b&gt;Authentication :8081&lt;/b&gt;&lt;hr size=&quot;1&quot;/&gt;issues and verifies&lt;br/&gt;Bearer tokens" vertex="1">
+          <mxGeometry height="65" width="240" x="25" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="13" parent="10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;arcSize=8;" value="&lt;b&gt;ConsumerAuth :8082&lt;/b&gt;&lt;hr size=&quot;1&quot;/&gt;stores authorization&lt;br/&gt;grants in memory" vertex="1">
+          <mxGeometry height="65" width="240" x="25" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="14" parent="10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;arcSize=8;" value="&lt;b&gt;DynamicOrch :8083&lt;/b&gt;&lt;hr size=&quot;1&quot;/&gt;verify identity · query SR + CA&lt;br/&gt;return endpoint" vertex="1">
+          <mxGeometry height="65" width="240" x="25" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="15" parent="10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f9fafb;strokeColor=#e5e7eb;fontSize=11;arcSize=8;" value="&lt;font color=&quot;#9ca3af&quot;&gt;&lt;b&gt;CertAuth :8086&lt;/b&gt;&lt;hr size=&quot;1&quot;/&gt;issues X.509 certs&lt;br/&gt;(placeholder — not wired)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="65" width="240" x="25" y="370" as="geometry" />
+        </mxCell>
+        <mxCell id="20" parent="1" style="swimlane;fontStyle=1;fontSize=13;fillColor=#d5e8d4;strokeColor=#82b366;startSize=30;perimeterSpacing=5;arcSize=4;" value="Support Services" vertex="1">
+          <mxGeometry height="260" width="290" x="440" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="21" parent="20" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;arcSize=8;" value="&lt;b&gt;topic-auth-http :9090&lt;/b&gt;&lt;hr size=&quot;1&quot;/&gt;RabbitMQ HTTP auth backend&lt;br/&gt;single backend — all auth&lt;br/&gt;live CA check per operation" vertex="1">
+          <mxGeometry height="85" width="240" x="25" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="22" parent="20" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;arcSize=8;" value="&lt;b&gt;RabbitMQ :5672 / :15674&lt;/b&gt;&lt;hr size=&quot;1&quot;/&gt;topic exchange: arrowhead&lt;br/&gt;auth_backends.1 =&lt;br/&gt;rabbit_auth_backend_http" vertex="1">
+          <mxGeometry height="85" width="240" x="25" y="155" as="geometry" />
+        </mxCell>
+        <mxCell id="30" parent="1" style="swimlane;fontStyle=1;fontSize=13;fillColor=#ffe6cc;strokeColor=#d6b656;startSize=30;perimeterSpacing=5;arcSize=4;" value="Experiment Services" vertex="1">
+          <mxGeometry height="460" width="290" x="850" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="31" parent="30" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d6b656;fontSize=11;arcSize=8;" value="&lt;b&gt;robot-fleet :9003&lt;/b&gt;&lt;hr size=&quot;1&quot;/&gt;publishes synthetic telemetry&lt;br/&gt;to AMQP · registers in SR" vertex="1">
+          <mxGeometry height="75" width="240" x="25" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="32" parent="30" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d6b656;fontSize=11;arcSize=8;" value="&lt;b&gt;consumer-1&lt;/b&gt;" vertex="1">
+          <mxGeometry height="55" width="240" x="25" y="145" as="geometry" />
+        </mxCell>
+        <mxCell id="33" parent="30" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d6b656;fontSize=11;arcSize=8;" value="&lt;b&gt;consumer-2&lt;/b&gt;" vertex="1">
+          <mxGeometry height="55" width="240" x="25" y="215" as="geometry" />
+        </mxCell>
+        <mxCell id="34" parent="30" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d6b656;fontSize=11;arcSize=8;" value="&lt;b&gt;consumer-3&lt;/b&gt;" vertex="1">
+          <mxGeometry height="55" width="240" x="25" y="285" as="geometry" />
+        </mxCell>
+        <mxCell id="50" edge="1" parent="1" source="31" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;exitX=0;exitY=0.3;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="11" value="POST /serviceregistry/register&lt;br/&gt;at startup">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="51" edge="1" parent="1" source="31" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;exitX=0;exitY=0.7;exitDx=0;exitDy=0;entryX=1;entryY=0.25;entryDx=0;entryDy=0;" target="12" value="POST /authentication/identity/login&lt;br/&gt;at startup">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="790" y="173" />
+              <mxPoint x="790" y="216" />
+              <mxPoint x="705" y="216" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="52" edge="1" parent="1" source="31" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" target="22" value="AMQP publish&lt;br/&gt;routing key: telemetry.{robotId}">
+          <mxGeometry relative="1" x="0.2634" y="2" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="1190" y="158" />
+              <mxPoint x="1190" y="808" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="53" edge="1" parent="1" source="21" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" target="12" value="POST /authentication/identity/login&lt;br/&gt;at startup">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="350" y="640" />
+              <mxPoint x="350" y="233" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="54" edge="1" parent="1" source="21" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" target="13" value="GET /authorization/lookup&lt;br/&gt;live per-request [Bearer token]">
+          <mxGeometry relative="1" x="-0.1485" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="390" y="620" />
+              <mxPoint x="390" y="312" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="55" edge="1" parent="1" source="22" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" target="21" value="POST /auth/user&lt;br/&gt;on every new connection">
+          <mxGeometry relative="1" x="-0.012" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="760" y="758" />
+              <mxPoint x="760" y="660" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="65" edge="1" parent="1" source="22" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" target="21" value="POST /auth/vhost&lt;br/&gt;on every new connection">
+          <mxGeometry relative="1" x="0.2002" y="-10" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="390" y="758" />
+              <mxPoint x="390" y="670" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="66" edge="1" parent="1" source="22" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" target="21" value="POST /auth/resource&lt;br/&gt;on exchange/queue ops">
+          <mxGeometry relative="1" x="-0.2147" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="350" y="780" />
+              <mxPoint x="350" y="650" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="67" edge="1" parent="1" source="22" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" target="21" value="POST /auth/topic&lt;br/&gt;on every publish + bind">
+          <mxGeometry relative="1" x="0.3087" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="790" y="770" />
+              <mxPoint x="790" y="642" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="56" edge="1" parent="1" source="32" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;exitX=0;exitY=0.3;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="12" value="POST /authentication/identity/login">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="57" edge="1" parent="1" source="32" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="14" value="POST /orchestration/dynamic&lt;br/&gt;[Bearer token]">
+          <mxGeometry relative="1" x="0.3063" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="790" y="253" />
+              <mxPoint x="790" y="393" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="58" edge="1" parent="1" source="32" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;exitX=0;exitY=0.7;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="13" value="POST /authorization/token/generate">
+          <mxGeometry relative="1" x="-0.1644" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="810" y="264" />
+              <mxPoint x="810" y="313" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="59" edge="1" parent="1" source="32" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" target="22" value="AMQP subscribe&lt;br/&gt;binding key from SR metadata">
+          <mxGeometry relative="1" x="0.6501" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="1170" y="253" />
+              <mxPoint x="1170" y="790" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="62" edge="1" parent="1" source="14" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" target="12" value="GET /authentication/identity/verify">
+          <mxGeometry relative="1" x="0.2552" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="370" y="410" />
+              <mxPoint x="370" y="220" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="63" edge="1" parent="1" source="14" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" target="11" value="POST /serviceregistry/query">
+          <mxGeometry relative="1" x="0.4735" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="410" y="393" />
+              <mxPoint x="410" y="153" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="64" edge="1" parent="1" source="14" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" target="13" value="POST /authorization/verify">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_KWO4wY5zq5r62ltAFB-80" edge="1" parent="1" source="15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="21" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="760" y="502" />
+              <mxPoint x="760" y="620" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
