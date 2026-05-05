@@ -47,8 +47,8 @@ func newSyncer(client *az.Client, caURL string) *syncer {
 func (s *syncer) setToken(tok string) { s.authToken = tok }
 
 // init creates or looks up the AuthzForce domain and performs the first sync.
-func (s *syncer) init() error {
-	id, err := s.client.EnsureDomain("arrowhead-exp5")
+func (s *syncer) init(domainExtID string) error {
+	id, err := s.client.EnsureDomain(domainExtID)
 	if err != nil {
 		return fmt.Errorf("EnsureDomain: %w", err)
 	}

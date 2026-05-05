@@ -26,16 +26,22 @@ graph TD
         KA["kafka-authz :9091\n─────────────\nKafka SSE proxy\nAuthorizes via AuthzForce"]
     end
 
+    subgraph rest["REST Enforcement"]
+        RA["rest-authz :9093\n─────────────\nHTTP reverse proxy PEP\nX-Consumer-Name header\nAuthorizes via AuthzForce"]
+    end
+
     TAH -->|"GET /authorization/lookup\n[live per request]"| CA_ext["ConsumerAuth :8082\n(core)"]
     TAS -->|"GET /authorization/lookup\n[every SYNC_INTERVAL]"| CA_ext
     PS  -->|"GET /authorization/lookup\n[every SYNC_INTERVAL]"| CA_ext
 
     TAX -->|"POST /pdp"| AZS
     KA  -->|"POST /pdp"| AZS
+    RA  -->|"POST /pdp"| AZS
     PS  -->|"PUT PolicySet"| AZS
 
     TAX -.->|imports| AZL
     KA  -.->|imports| AZL
+    RA  -.->|imports| AZL
     PS  -.->|imports| AZL
 
     style TAS fill:#f9fafb,stroke:#e5e7eb,color:#9ca3af
@@ -104,6 +110,42 @@ graph TD
     AMQP_CON -->|"AMQP connect + subscribe"| RMQ
     PUB -->|"AMQP publish"| RMQ
     PUB -->|"Kafka produce"| KFK
+```
+
+---
+
+## Experiment-6 Context — Triple-Transport Policy Projection
+
+Experiment-6 extends experiment-5 with a third PEP (`rest-authz`) for the REST/HTTP
+transport, and adds runtime SYNC_INTERVAL control via `POST /config`.
+
+```mermaid
+graph TD
+    CA["ConsumerAuth :8082"]
+    AZ["authzforce-server :8080\n─────────────\nXACML PDP/PAP"]
+
+    PS["policy-sync :9095\n─────────────\nCA → XACML PolicySet\nSYNC_INTERVAL (configurable)\nPOST /config to update"]
+
+    TAX["topic-auth-xacml :9090\n─────────────\nRabbitMQ PEP"]
+    KA["kafka-authz :9091\n─────────────\nKafka SSE PEP"]
+    RA["rest-authz :9093\n─────────────\nHTTP reverse proxy PEP\nX-Consumer-Name header\nSync-delay caveat"]
+
+    RMQ["RabbitMQ :5672"]
+    KFK["Kafka :9092"]
+    DP["data-provider :9094\n─────────────\nKafka consumer + REST API\n(upstream of rest-authz)"]
+
+    PS  -->|"GET /authorization/lookup"| CA
+    PS  -->|"PUT PolicySet (XACML 3.0)"| AZ
+
+    RMQ -->|"POST /auth/*\n(every operation)"| TAX
+    TAX -->|"POST /pdp (XACML decide)"| AZ
+
+    KA  -->|"POST /pdp (XACML decide)"| AZ
+    KA  -->|"subscribe arrowhead.telemetry"| KFK
+
+    RA  -->|"POST /pdp (XACML decide)"| AZ
+    RA  -->|"proxy to upstream (Permit)"| DP
+    DP  -->|"Kafka consumer group"| KFK
 ```
 
 ---

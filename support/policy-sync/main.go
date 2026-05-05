@@ -9,12 +9,13 @@
 // enforcement adapters (topic-auth-xacml, kafka-authz).
 //
 // Environment variables:
-//   AUTHZFORCE_URL   AuthzForce base URL (default: http://authzforce:8080/authzforce-ce)
-//   CONSUMERAUTH_URL ConsumerAuthorization base URL (default: http://consumerauth:8082)
-//   SYNC_INTERVAL    Sync period (default: 30s)
-//   PORT             HTTP health/status port (default: 9095)
-//   AUTH_URL         Authentication URL for Bearer token (optional)
-//   SYSTEM_NAME      System name for authentication (default: policy-sync)
+//   AUTHZFORCE_URL    AuthzForce base URL (default: http://authzforce:8080/authzforce-ce)
+//   AUTHZFORCE_DOMAIN AuthzForce domain externalId (default: arrowhead-exp5)
+//   CONSUMERAUTH_URL  ConsumerAuthorization base URL (default: http://consumerauth:8082)
+//   SYNC_INTERVAL     Sync period (default: 30s)
+//   PORT              HTTP health/status port (default: 9095)
+//   AUTH_URL          Authentication URL for Bearer token (optional)
+//   SYSTEM_NAME       System name for authentication (default: policy-sync)
 //   SYSTEM_CREDENTIALS Credentials for authentication (default: sync-secret)
 package main
 
@@ -40,10 +41,11 @@ func envOr(key, def string) string {
 }
 
 func main() {
-	azURL   := envOr("AUTHZFORCE_URL", "http://authzforce:8080/authzforce-ce")
-	caURL   := envOr("CONSUMERAUTH_URL", "http://consumerauth:8082")
-	port    := envOr("PORT", "9095")
-	authURL := os.Getenv("AUTH_URL")
+	azURL        := envOr("AUTHZFORCE_URL", "http://authzforce:8080/authzforce-ce")
+	azDomainExt  := envOr("AUTHZFORCE_DOMAIN", "arrowhead-exp5")
+	caURL        := envOr("CONSUMERAUTH_URL", "http://consumerauth:8082")
+	port         := envOr("PORT", "9095")
+	authURL      := os.Getenv("AUTH_URL")
 
 	syncInterval, err := time.ParseDuration(envOr("SYNC_INTERVAL", "30s"))
 	if err != nil {
@@ -70,6 +72,11 @@ func main() {
 	// Track whether the first sync has completed.
 	var synced atomic.Bool
 
+	// currentIntervalNs holds the sync interval in nanoseconds and can be
+	// updated at runtime via POST /config.  atomic.Int64 is safe without a mutex.
+	var currentIntervalNs atomic.Int64
+	currentIntervalNs.Store(syncInterval.Nanoseconds())
+
 	// Health/status endpoints.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +99,40 @@ func main() {
 			"domainId":     s.domainID,
 			"grants":       s.grantsCount,
 			"lastSyncedAt": lastAt,
+			"syncInterval": time.Duration(currentIntervalNs.Load()).String(),
+		})
+	})
+
+	// /config allows changing SYNC_INTERVAL at runtime (GET or POST).
+	// POST body: {"syncInterval":"15s"}.  Minimum 1s.
+	// Note: the change takes effect at the start of the next sleep, so the
+	// current sleep is not interrupted.
+	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			var req struct {
+				SyncInterval string `json:"syncInterval"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid JSON", http.StatusBadRequest)
+				return
+			}
+			d, err := time.ParseDuration(req.SyncInterval)
+			if err != nil || d < time.Second {
+				http.Error(w, "syncInterval must be a valid duration ≥ 1s", http.StatusBadRequest)
+				return
+			}
+			currentIntervalNs.Store(d.Nanoseconds())
+			log.Printf("[policy-sync] SYNC_INTERVAL updated to %s", d)
+		case http.MethodGet:
+			// fall through to response
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"syncInterval": time.Duration(currentIntervalNs.Load()).String(),
 		})
 	})
 
@@ -103,9 +144,9 @@ func main() {
 	}()
 
 	// Initialize: create domain + first sync.
-	log.Printf("[policy-sync] initializing domain in AuthzForce (%s)", azURL)
+	log.Printf("[policy-sync] initializing domain %q in AuthzForce (%s)", azDomainExt, azURL)
 	for attempt := 1; ; attempt++ {
-		if err := s.init(); err != nil {
+		if err := s.init(azDomainExt); err != nil {
 			log.Printf("[policy-sync] init attempt %d failed: %v — retrying in 5s", attempt, err)
 			time.Sleep(5 * time.Second)
 			continue
@@ -115,9 +156,10 @@ func main() {
 		break
 	}
 
-	// Periodic sync loop.
+	// Periodic sync loop.  Uses currentIntervalNs so that /config changes
+	// take effect on the next iteration without restarting the process.
 	for {
-		time.Sleep(syncInterval)
+		time.Sleep(time.Duration(currentIntervalNs.Load()))
 		if err := s.sync(); err != nil {
 			log.Printf("[policy-sync] sync error: %v", err)
 		} else {

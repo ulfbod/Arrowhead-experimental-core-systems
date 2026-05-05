@@ -11,14 +11,15 @@ depend on.
 
 | Module | Kind | Port | Used in |
 |---|---|---|---|
-| `authzforce` | Go library | — | topic-auth-xacml · kafka-authz · policy-sync |
-| `authzforce-server` | Service | 8080 | experiment-5 |
-| `kafka-authz` | Service | 9091 | experiment-5 |
+| `authzforce` | Go library | — | topic-auth-xacml · kafka-authz · policy-sync · rest-authz |
+| `authzforce-server` | Service | 8080 | experiment-5 · experiment-6 |
+| `kafka-authz` | Service | 9091 | experiment-5 · experiment-6 |
 | `message-broker` | Go library | — | experiment services (robot-fleet · consumers) |
-| `policy-sync` | Service | 9095 | experiment-5 |
+| `policy-sync` | Service | 9095 | experiment-5 · experiment-6 |
+| `rest-authz` | Service | 9093 | experiment-6 |
 | `topic-auth-http` | Service | 9090 | experiment-4 |
 | `topic-auth-sync` | Service | 9090 | — (alternative design, not wired) |
-| `topic-auth-xacml` | Service | 9090 | experiment-5 |
+| `topic-auth-xacml` | Service | 9090 | experiment-5 · experiment-6 |
 
 ---
 
@@ -199,19 +200,73 @@ pushes it to the AuthzForce PAP. A background loop re-syncs every
 versions are traceable.
 
 Health endpoint (`/health`) returns 200 only after the first successful sync,
-making it safe to use as a Docker healthcheck dependency for `topic-auth-xacml`
-and `kafka-authz`. A `/status` endpoint reports domain ID, version, grant
-count, and last sync timestamp.
+making it safe to use as a Docker healthcheck dependency for `topic-auth-xacml`,
+`kafka-authz`, and `rest-authz`. A `/status` endpoint reports domain ID, version,
+grant count, last sync timestamp, and current `syncInterval`.
+
+A `/config` endpoint allows runtime-configurable `SYNC_INTERVAL` without restart
+(used by the experiment-6 dashboard Config tab):
+
+```
+POST /config  {"syncInterval":"15s"}   → {"syncInterval":"15s"}
+GET  /config                           → {"syncInterval":"15s"}
+```
+
+Minimum interval is 1 s. The new interval takes effect at the start of the next
+sleep; the current sleep is not interrupted. Uses `atomic.Int64` for thread safety.
 
 Key environment variables:
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `AUTHZFORCE_URL` | `http://authzforce:8080/authzforce-ce` | AuthzForce base URL |
+| `AUTHZFORCE_DOMAIN` | `arrowhead-exp5` | AuthzForce domain externalId — **must match the domain used by all PEPs** |
 | `CONSUMERAUTH_URL` | `http://consumerauth:8082` | ConsumerAuth base URL |
-| `SYNC_INTERVAL` | `30s` | Reconciliation period |
+| `SYNC_INTERVAL` | `30s` | Initial reconciliation period (runtime-configurable via /config) |
 | `AUTH_URL` | — | If set, logs in and carries Bearer token on CA calls |
 | `PORT` | `9095` | Health/status HTTP port |
+
+---
+
+## REST enforcement
+
+### `rest-authz`
+
+HTTP reverse proxy Policy Enforcement Point backed by AuthzForce XACML — used in experiment-6.
+
+Acts as a transparent reverse proxy. Every proxied request must carry an `X-Consumer-Name`
+header (or `?consumer=` query parameter). `rest-authz` queries AuthzForce for the triple
+`(consumer, service, "invoke")`; if the decision is Permit it forwards the request to
+`UPSTREAM_URL`, otherwise it returns 403 Forbidden.
+
+This is the third PEP in the unified policy projection model of experiment-6: it shares
+the same AuthzForce domain with `topic-auth-xacml` (AMQP) and `kafka-authz` (Kafka), so
+a single grant in ConsumerAuthorization simultaneously authorises a consumer on all three
+transports.
+
+**Sync-delay caveat:** REST enforcement lags ConsumerAuthorization by up to `SYNC_INTERVAL`
+(the policy-sync period). A revoked grant continues to produce Permit decisions until
+policy-sync uploads the next PolicySet version to AuthzForce.
+
+Endpoints:
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/health` | GET | Liveness probe |
+| `/status` | GET | Request counters (total, permitted, denied) |
+| `/auth/check` | POST | Explicit AuthzForce decision for `{"consumer":"…","service":"…"}` |
+| `/*` | ALL | PEP: check AuthzForce, proxy to upstream if Permit |
+
+Key environment variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUTHZFORCE_URL` | `http://authzforce:8080/authzforce-ce` | AuthzForce base URL |
+| `AUTHZFORCE_DOMAIN` | `arrowhead-exp6` | AuthzForce domain external ID |
+| `UPSTREAM_URL` | (required) | Upstream service base URL, no trailing slash |
+| `DEFAULT_SERVICE` | `telemetry-rest` | Service name when `X-Service-Name` is absent |
+| `CACHE_TTL` | `0s` | Decision cache TTL; 0 = no caching |
+| `PORT` | `9093` | HTTP port |
 
 ---
 
