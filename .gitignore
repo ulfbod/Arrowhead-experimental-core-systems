@@ -58,5 +58,14 @@ Thumbs.db
 # Docker
 docker-compose.override.yml
 
+# Compiled experiment service binaries
+experiments/*/services/*/robot-fleet
+experiments/*/services/*/consumer-direct
+experiments/*/services/*/analytics-consumer
+experiments/*/services/*/edge-adapter
+experiments/*/services/*/robot-simulator
+experiments/*/services/*/data-provider
+experiments/*/services/*/rest-consumer
+
 # Draft paper (work in progress — not for version control)
 draft-paper/

@@ -1,0 +1,44 @@
+go 1.25.0
+
+use (
+	// Core systems
+	./core
+
+	// Experiment 1
+	./experiments/experiment-1/example-client
+	./experiments/experiment-1/service
+
+	// Experiment 2
+	./experiments/experiment-2/services/consumer
+	./experiments/experiment-2/services/edge-adapter
+	./experiments/experiment-2/services/robot-fleet
+	./experiments/experiment-2/services/robot-simulator
+	./experiments/experiment-2/tests
+
+	// Experiment 3
+	./experiments/experiment-3/services/consumer-direct
+
+	// Experiment 4
+	./experiments/experiment-4/services/consumer-direct
+	./experiments/experiment-4/services/robot-fleet
+
+	// Experiment 5
+	./experiments/experiment-5/services/analytics-consumer
+	./experiments/experiment-5/services/consumer-direct
+	./experiments/experiment-5/services/robot-fleet
+
+	// Experiment 6
+	./experiments/experiment-6/services/data-provider
+	./experiments/experiment-6/services/rest-consumer
+
+	// Support modules
+	./support/authzforce
+	./support/authzforce-server
+	./support/kafka-authz
+	./support/message-broker
+	./support/policy-sync
+	./support/rest-authz
+	./support/topic-auth-http
+	./support/topic-auth-sync
+	./support/topic-auth-xacml
+)

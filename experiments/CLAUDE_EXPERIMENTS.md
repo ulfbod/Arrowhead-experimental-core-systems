@@ -84,3 +84,46 @@ Do not hardcode addresses.
 
 Code here may be incomplete, in-progress, or abandoned.
 It will not be held to the correctness standard of `core/`.
+
+---
+
+## Canonical experiment structure
+
+A new experiment directory should follow this layout:
+
+```
+experiments/experiment-N/
+├── README.md                  ← required: what the experiment demonstrates
+├── docker-compose.yml         ← required: full stack definition
+├── dockerfiles/               ← one Dockerfile per service
+├── rabbitmq/                  ← broker config (if AMQP is used)
+├── services/                  ← experiment-local Go services (own go.mod each)
+└── dashboard/                 ← React + Vite UI (own package.json)
+```
+
+Support services (shared across experiments) live in `support/`. Before adding a new service
+locally, check whether an equivalent already exists there.
+
+Add each new Go service module to `go.work` at the repo root.
+
+---
+
+## Files shared across experiments — mirror changes manually
+
+The following files are **duplicated** across experiments and must be kept in sync by hand:
+
+| File | Shared between |
+|---|---|
+| `experiment-5/dashboard/src/` | experiment-5, experiment-6 (identical source) |
+| `experiment-6/dashboard/src/` | experiment-5, experiment-6 (identical source) |
+
+If you change dashboard logic in one of these experiments, apply the same change to the other.
+There is currently no automated check for divergence.
+
+---
+
+## Pre-flight checklist
+
+Before starting implementation in any experiment, read the pre-flight checklist in
+[`/EXPERIENCES.md`](../EXPERIENCES.md). It documents seven recurring failure modes with
+root causes and fixes.

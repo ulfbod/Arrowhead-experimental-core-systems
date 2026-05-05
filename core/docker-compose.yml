@@ -1,3 +1,5 @@
+# Minimal compose for ServiceRegistry only.
+# For complete multi-service stacks, see experiments/experiment-N/docker-compose.yml.
 version: "3.9"
 
 networks:

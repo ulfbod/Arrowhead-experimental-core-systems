@@ -233,3 +233,9 @@ support/
 ```
 
 See [DIAGRAMS.md](DIAGRAMS.md) for Mermaid component and sequence diagrams.
+
+---
+
+> **Note:** The dashboard source (`dashboard/src/`) is identical to
+> `../experiment-6/dashboard/src/`. Changes to dashboard logic must be
+> mirrored manually to the other experiment.

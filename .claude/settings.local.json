@@ -171,7 +171,12 @@
       "Bash(curl -s -X POST http://localhost:18082/authorization/grant -H 'Content-Type: application/json' -d '{\"consumerSystemName\":\"demo-consumer-1\",\"providerSystemName\":\"robot-fleet\",\"serviceDefinition\":\"telemetry\"}')",
       "Bash(kill %1)",
       "Bash(grep -v '^$')",
-      "Bash(docker info:*)"
+      "Bash(docker info:*)",
+      "Bash(xargs -I{} sh -c 'echo \"=== {} ===\"; cat {}')",
+      "Bash(xargs -I{} sh -c 'echo \"=== {} ===\"; head -5 {}')",
+      "Bash(xargs -I{} sh -c 'echo \"=== {} ===\"; head -4 {}')",
+      "Bash(go work:*)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }
