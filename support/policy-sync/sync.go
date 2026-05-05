@@ -31,13 +31,14 @@ type LookupResponse struct {
 // syncer holds the sync state: AuthzForce client, domain ID, current policy
 // version counter, and the last known rule count for change detection.
 type syncer struct {
-	client       *az.Client
-	caURL        string
-	authToken    string
-	domainID     string
-	version      int
-	grantsCount  int
-	lastSyncedAt time.Time
+	client          *az.Client
+	caURL           string
+	authToken       string
+	domainExtID     string // AuthzForce externalId (from AUTHZFORCE_DOMAIN env)
+	domainID        string
+	version         int
+	grantsCount     int
+	lastSyncedAt    time.Time
 }
 
 func newSyncer(client *az.Client, caURL string) *syncer {
@@ -52,6 +53,7 @@ func (s *syncer) init(domainExtID string) error {
 	if err != nil {
 		return fmt.Errorf("EnsureDomain: %w", err)
 	}
+	s.domainExtID = domainExtID
 	s.domainID = id
 	return s.sync()
 }

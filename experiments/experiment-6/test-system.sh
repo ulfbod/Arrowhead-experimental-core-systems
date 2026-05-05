@@ -87,6 +87,12 @@ else
   fail "syncInterval field present" '"syncInterval":"..."' "$status"
 fi
 
+if echo "$status" | grep -q '"domainExternalId":"arrowhead-exp6"'; then
+  pass "policy-sync using domain arrowhead-exp6"
+else
+  fail "policy-sync using domain arrowhead-exp6" '"domainExternalId":"arrowhead-exp6"' "$status"
+fi
+
 # ── Section 3: policy-sync /config (runtime SYNC_INTERVAL) ────────────────────
 echo
 echo "=== 3. policy-sync /config (runtime SYNC_INTERVAL update) ==="

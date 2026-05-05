@@ -137,6 +137,80 @@ error objects.
 
 ---
 
+## EXP-003 — Code fix not deployed: Docker image not rebuilt (experiment-6, 2026-05-05)
+
+### Symptom
+
+After applying the EXP-001 fix (making policy-sync read `AUTHZFORCE_DOMAIN` from the
+environment), re-running `bash test-system.sh` showed **identical auth failures** — all
+authorized consumers still returned Deny.  The policy-sync `/status` showed
+`synced:true, grants:7` but omitted the domain externalId, making it impossible to
+tell which domain was actually being used.
+
+```
+FAIL  demo-consumer-1 → Permit (Kafka)
+FAIL  rest-consumer → Permit (REST)
+FAIL  analytics-consumer msgCount > 0
+```
+
+### Root Cause
+
+The source-code fix was correct but the running Docker container still held the **old
+binary** (compiled before the fix).  `docker compose up -d` (without `--build`) leaves
+existing containers running unchanged.  The new `go` source was on disk but was never
+compiled into the image.
+
+The symptom is identical to the original EXP-001 bug because the old binary still
+hardcodes `"arrowhead-exp5"`, so policy-sync uploads grants to the wrong domain and
+all PDP decisions return Deny.
+
+### Fix
+
+1. Rebuild and restart: `docker compose up --build -d`
+2. Added `domainExternalId` to policy-sync `/status` so the running domain can be
+   verified without reading container logs:
+   ```json
+   {"domainExternalId":"arrowhead-exp6","grants":7,"synced":true,...}
+   ```
+3. Added a test check in section 2 of `test-system.sh`:
+   ```bash
+   grep -q '"domainExternalId":"arrowhead-exp6"'
+   ```
+   This check fails immediately with the old image, pinpointing the EXP-001/rebuild issue.
+
+### Guidance for Future Iterations
+
+**After any code change in `support/` Go modules, rebuild before testing:**
+
+```bash
+docker compose up --build -d
+```
+
+Never run `bash test-system.sh` immediately after editing Go source without first
+rebuilding — the symptoms of a stale image are indistinguishable from an unfixed bug.
+
+Specific checks:
+
+1. **Verify `domainExternalId` in policy-sync /status** before blaming auth failures on
+   XACML policy logic:
+   ```bash
+   curl -s http://localhost:3006/api/policy-sync/status | grep domainExternalId
+   ```
+   If the value is wrong (e.g. `arrowhead-exp5` instead of `arrowhead-exp6`), the
+   image needs to be rebuilt, not the logic debugged.
+
+2. **Use `--build` even when only one service changed** — Docker layer caching means
+   `docker compose up -d` silently skips rebuilding services whose images already exist.
+
+3. **Add `domainExternalId` to the `/status` endpoint** of any service that uses a
+   configurable external ID, so the running configuration is always observable.
+
+4. **Check the test section 2 output** (`policy-sync using domain arrowhead-exp6`)
+   before investigating later failures — if section 2 fails on the domain check, all
+   downstream auth failures are explained by that alone.
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -146,5 +220,6 @@ Use this before marking an experiment implementation complete:
 - [ ] `test-system.sh` includes explicit `/auth/check` tests for at least one Permit and one Deny case per PEP
 - [ ] Data-endpoint tests verify payload content, not just HTTP 200 / non-empty body
 - [ ] Revocation test waits at least `SYNC_INTERVAL + poll_interval` before asserting Deny
-- [ ] All new Dockerfiles tested with `docker compose build` before running the test script
+- [ ] Run `docker compose up --build -d` (with `--build`) before running `test-system.sh`
+- [ ] policy-sync `/status` shows correct `domainExternalId` for this experiment before investigating auth failures
 - [ ] `support/README.md` and `support/DIAGRAMS.md` updated for any new or modified support service

@@ -170,7 +170,8 @@
       "Bash(PORT=18082 go run ./cmd/consumerauth)",
       "Bash(curl -s -X POST http://localhost:18082/authorization/grant -H 'Content-Type: application/json' -d '{\"consumerSystemName\":\"demo-consumer-1\",\"providerSystemName\":\"robot-fleet\",\"serviceDefinition\":\"telemetry\"}')",
       "Bash(kill %1)",
-      "Bash(grep -v '^$')"
+      "Bash(grep -v '^$')",
+      "Bash(docker info:*)"
     ]
   }
 }

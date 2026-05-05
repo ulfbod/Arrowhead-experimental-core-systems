@@ -94,12 +94,13 @@ func main() {
 			lastAt = s.lastSyncedAt.UTC().Format(time.RFC3339)
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"synced":       synced.Load(),
-			"version":      s.version,
-			"domainId":     s.domainID,
-			"grants":       s.grantsCount,
-			"lastSyncedAt": lastAt,
-			"syncInterval": time.Duration(currentIntervalNs.Load()).String(),
+			"synced":          synced.Load(),
+			"version":         s.version,
+			"domainId":        s.domainID,
+			"domainExternalId": s.domainExtID,
+			"grants":          s.grantsCount,
+			"lastSyncedAt":    lastAt,
+			"syncInterval":    time.Duration(currentIntervalNs.Load()).String(),
 		})
 	})
 
