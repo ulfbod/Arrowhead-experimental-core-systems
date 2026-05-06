@@ -79,6 +79,22 @@ export function PolicyProjectionPanel() {
                 <span style={s.rowLabel}>cache TTL</span>
                 <span style={s.rowValue}>0s (live AuthzForce query)</span>
               </div>
+              <div style={s.divider} />
+              <div style={s.row}>
+                <span style={s.rowLabel}>management UI</span>
+                <a
+                  href="http://localhost:15676"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={s.link}
+                >
+                  localhost:15676 ↗
+                </a>
+              </div>
+              <div style={s.row}>
+                <span style={s.rowLabel}>credentials</span>
+                <span style={s.rowValue}>admin / admin</span>
+              </div>
             </div>
           </div>
 
@@ -105,6 +121,14 @@ export function PolicyProjectionPanel() {
               <div style={s.row}>
                 <span style={s.rowLabel}>total served</span>
                 <span style={s.rowValue}>{kafkaStatus?.totalServed ?? '…'}</span>
+              </div>
+              <div style={s.divider} />
+              <div style={s.row}>
+                <span style={s.rowLabel}>browser UI</span>
+                <span style={{ ...s.rowValue, color: '#7c3aed' }}>→ Kafka tab</span>
+              </div>
+              <div style={{ fontSize: '0.7rem', color: '#aaa', marginTop: 2 }}>
+                No external UI — live checks in Kafka tab
               </div>
             </div>
           </div>
@@ -191,6 +215,8 @@ const s: Record<string, React.CSSProperties> = {
     flex: '1 1 240px', background: '#fff', border: '1px solid #c4b5fd',
     borderRadius: 6, padding: '12px 16px',
   },
+  divider: { borderTop: '1px solid #eee', margin: '8px 0' },
+  link:    { color: '#5b6af0', textDecoration: 'none', fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 'bold' },
   transportTitle: { fontWeight: 'bold', fontSize: '0.85rem', marginBottom: 10, color: '#1a1a2e' },
   transportBody: {},
   row:           { display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4, fontSize: '0.78rem' },

@@ -72,6 +72,24 @@ docker compose up --build
 The `core/docker-compose.yml` starts **ServiceRegistry only** — it is not the full stack.
 Full multi-service stacks are in each experiment directory.
 
+### System tests
+
+Each area has a `test-system.sh` script that runs a self-contained test suite and prints a PASS/FAIL summary:
+
+| Script | Requires Docker | What it covers |
+|---|---|---|
+| `core/test-system.sh` | No | build + vet + unit/integration tests for all core systems |
+| `experiments/experiment-2/test-system.sh` | Yes (`docker compose up -d`) | service health, RabbitMQ, edge-adapter, consumer messages |
+| `experiments/experiment-3/test-system.sh` | Yes (`docker compose up -d`) | service health, topic-auth-sync, grant seeding, revocation flow |
+
+Run a system test from its experiment directory with the stack already up:
+
+```bash
+cd experiments/experiment-2
+docker compose up -d --build
+bash test-system.sh
+```
+
 ---
 
 ## Source of truth hierarchy (core/ work)

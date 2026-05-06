@@ -4,15 +4,19 @@ import { HealthView }  from './views/HealthView'
 import { GrantsView }  from './views/GrantsView'
 import { PolicyView }  from './views/PolicyView'
 import { LiveDataView } from './views/LiveDataView'
+import { KafkaView }   from './views/KafkaView'
+import { RestView }    from './views/RestView'
 import { ConfigView }  from './views/ConfigView'
 
-type Tab = 'health' | 'grants' | 'policy' | 'live' | 'config'
+type Tab = 'health' | 'grants' | 'policy' | 'live' | 'kafka' | 'rest' | 'config'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'health', label: 'Health' },
   { id: 'grants', label: 'Grants' },
   { id: 'policy', label: 'Policy Projection' },
   { id: 'live',   label: 'Live Data' },
+  { id: 'kafka',  label: 'Kafka' },
+  { id: 'rest',   label: 'REST / HTTP' },
   { id: 'config', label: 'Config' },
 ]
 
@@ -48,6 +52,8 @@ function AppContent() {
         {tab === 'grants' && <GrantsView />}
         {tab === 'policy' && <PolicyView />}
         {tab === 'live'   && <LiveDataView />}
+        {tab === 'kafka'  && <KafkaView />}
+        {tab === 'rest'   && <RestView />}
         {tab === 'config' && <ConfigView />}
       </main>
     </div>

@@ -16,6 +16,9 @@ import type {
   PolicySyncStatus,
   KafkaAuthzStatus,
   RestAuthzStatus,
+  KafkaAuthCheckResult,
+  DataProviderStats,
+  ServiceQueryResponse,
 } from './types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -154,4 +157,66 @@ export function fetchKafkaAuthzStatus(signal?: AbortSignal): Promise<KafkaAuthzS
 
 export function fetchRestAuthzStatus(signal?: AbortSignal): Promise<RestAuthzStatus> {
   return get<RestAuthzStatus>('/api/rest-authz/status', { signal })
+}
+
+// ── Kafka authorization check ─────────────────────────────────────────────────
+
+export async function checkKafkaAuthz(
+  consumer: string,
+  service: string,
+  signal?: AbortSignal,
+): Promise<KafkaAuthCheckResult> {
+  const resp = await fetch('/api/kafka-authz/auth/check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ consumer, service }),
+    signal,
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(`HTTP ${resp.status}: ${text}`)
+  }
+  return resp.json() as Promise<KafkaAuthCheckResult>
+}
+
+// ── data-provider ─────────────────────────────────────────────────────────────
+
+export function fetchDataProviderStats(signal?: AbortSignal): Promise<DataProviderStats> {
+  return get<DataProviderStats>('/api/data-provider/stats', { signal })
+}
+
+// ── ServiceRegistry query ─────────────────────────────────────────────────────
+
+export async function queryServiceRegistry(
+  serviceDefinition: string,
+  signal?: AbortSignal,
+): Promise<ServiceQueryResponse> {
+  const resp = await fetch('/api/serviceregistry/serviceregistry/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ serviceDefinition }),
+    signal,
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(`HTTP ${resp.status}: ${text}`)
+  }
+  return resp.json() as Promise<ServiceQueryResponse>
+}
+
+// ── REST authz live probe ─────────────────────────────────────────────────────
+
+// Sends a request through rest-authz as the given consumer.
+// Returns the HTTP status and raw response body so the caller can display
+// both the authorization outcome (200 vs 403) and the telemetry payload.
+export async function fetchThroughRestAuthz(
+  consumerName: string,
+  signal?: AbortSignal,
+): Promise<{ status: number; body: string }> {
+  const resp = await fetch('/api/rest-authz/telemetry/latest', {
+    headers: { 'X-Consumer-Name': consumerName },
+    signal,
+  })
+  const body = await resp.text()
+  return { status: resp.status, body }
 }

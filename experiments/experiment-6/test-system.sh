@@ -336,6 +336,94 @@ else
   fail "SSE test-probe: data lines received from Kafka" "data: {...}" "$preview"
 fi
 
+# ── Section 11: Dashboard proxy — Kafka and REST tab endpoints ────────────────
+echo
+echo "=== 11. Dashboard proxy — Kafka and REST tab API endpoints (localhost:3006) ==="
+
+# kafka-authz /status via nginx
+kstatus=$(http_body http://localhost:3006/api/kafka-authz/status)
+echo "  kafka-authz /status: $kstatus"
+if echo "$kstatus" | grep -q '"activeStreams"'; then
+  pass "GET /api/kafka-authz/status via nginx → activeStreams field"
+else
+  fail "GET /api/kafka-authz/status via nginx" '"activeStreams":N' "$kstatus"
+fi
+if echo "$kstatus" | grep -q '"totalServed"'; then
+  pass "GET /api/kafka-authz/status via nginx → totalServed field"
+else
+  fail "GET /api/kafka-authz/status via nginx" '"totalServed":N' "$kstatus"
+fi
+
+# kafka-authz /auth/check via nginx
+kcheck=$(http_body -X POST http://localhost:3006/api/kafka-authz/auth/check \
+  -H 'Content-Type: application/json' \
+  -d '{"consumer":"analytics-consumer","service":"telemetry"}')
+echo "  kafka-authz /auth/check (analytics-consumer): $kcheck"
+if echo "$kcheck" | grep -q '"decision":"Permit"'; then
+  pass "POST /api/kafka-authz/auth/check via nginx → analytics-consumer Permit"
+else
+  fail "POST /api/kafka-authz/auth/check via nginx" '"decision":"Permit"' "$kcheck"
+fi
+
+kcheck_deny=$(http_body -X POST http://localhost:3006/api/kafka-authz/auth/check \
+  -H 'Content-Type: application/json' \
+  -d '{"consumer":"unknown-consumer","service":"telemetry"}')
+echo "  kafka-authz /auth/check (unknown-consumer): $kcheck_deny"
+if echo "$kcheck_deny" | grep -q '"decision":"Deny"'; then
+  pass "POST /api/kafka-authz/auth/check via nginx → unknown-consumer Deny"
+else
+  fail "POST /api/kafka-authz/auth/check via nginx" '"decision":"Deny"' "$kcheck_deny"
+fi
+
+# data-provider /stats via nginx
+dpstats=$(http_body http://localhost:3006/api/data-provider/stats)
+echo "  data-provider /stats: $dpstats"
+if echo "$dpstats" | grep -q '"msgCount"'; then
+  pass "GET /api/data-provider/stats via nginx → msgCount field"
+else
+  fail "GET /api/data-provider/stats via nginx" '"msgCount":N' "$dpstats"
+fi
+if echo "$dpstats" | grep -q '"robotCount"'; then
+  pass "GET /api/data-provider/stats via nginx → robotCount field"
+else
+  fail "GET /api/data-provider/stats via nginx" '"robotCount":N' "$dpstats"
+fi
+
+# rest-authz /status via nginx
+rastatus=$(http_body http://localhost:3006/api/rest-authz/status)
+echo "  rest-authz /status: $rastatus"
+if echo "$rastatus" | grep -q '"requestsTotal"'; then
+  pass "GET /api/rest-authz/status via nginx → requestsTotal field"
+else
+  fail "GET /api/rest-authz/status via nginx" '"requestsTotal":N' "$rastatus"
+fi
+if echo "$rastatus" | grep -q '"permitted"'; then
+  pass "GET /api/rest-authz/status via nginx → permitted field"
+else
+  fail "GET /api/rest-authz/status via nginx" '"permitted":N' "$rastatus"
+fi
+
+# ServiceRegistry query for telemetry-rest via nginx
+srquery=$(http_body -X POST http://localhost:3006/api/serviceregistry/serviceregistry/query \
+  -H 'Content-Type: application/json' \
+  -d '{"serviceDefinition":"telemetry-rest"}')
+echo "  SR query for telemetry-rest (first 200 chars): ${srquery:0:200}"
+if echo "$srquery" | grep -q '"serviceInstances"'; then
+  pass "POST /api/serviceregistry/query telemetry-rest via nginx → serviceInstances field"
+else
+  fail "POST /api/serviceregistry/query via nginx" '"serviceInstances":[...]' "$srquery"
+fi
+
+# REST data access via nginx proxy (authorized)
+rest_auth_code=$(http_code -H 'X-Consumer-Name: test-probe' \
+  http://localhost:3006/api/rest-authz/telemetry/latest)
+check_eq "GET /api/rest-authz/telemetry/latest via nginx (test-probe) → 200" "200" "$rest_auth_code"
+
+# REST data access via nginx proxy (unauthorized)
+rest_deny_code=$(http_code -H 'X-Consumer-Name: unauthorized' \
+  http://localhost:3006/api/rest-authz/telemetry/latest)
+check_eq "GET /api/rest-authz/telemetry/latest via nginx (unauthorized) → 403" "403" "$rest_deny_code"
+
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo
 echo "══════════════════════════════════════"

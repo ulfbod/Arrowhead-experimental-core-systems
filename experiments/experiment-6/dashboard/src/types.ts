@@ -105,3 +105,42 @@ export interface RestAuthzStatus {
   permitted:     number
   denied:        number
 }
+
+// ── kafka-authz authorization check ──────────────────────────────────────────
+
+export interface KafkaAuthCheckResult {
+  consumer: string
+  service:  string
+  permit:   boolean
+  decision: string
+}
+
+// ── data-provider ─────────────────────────────────────────────────────────────
+
+export interface DataProviderStats {
+  msgCount:       number
+  robotCount:     number
+  lastReceivedAt: string
+}
+
+// ── ServiceRegistry query ─────────────────────────────────────────────────────
+
+export interface ServiceRegistryProvider {
+  systemName: string
+  address:    string
+  port:       number
+}
+
+export interface ServiceInstance {
+  id:                number
+  serviceDefinition: string
+  providerSystem:    ServiceRegistryProvider
+  serviceUri:        string
+  interfaces:        string[]
+  version:           number
+}
+
+export interface ServiceQueryResponse {
+  serviceInstances: ServiceInstance[]
+  count:            number
+}

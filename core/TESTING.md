@@ -9,6 +9,14 @@ go test ./...
 
 All tests are self-contained. No database, no running servers, no environment variables required.
 
+For a scripted run that also covers build and vet:
+
+```bash
+bash core/test-system.sh
+```
+
+`test-system.sh` runs `go build ./...`, `go vet ./...`, and `go test -count=1 -race ./...` in sequence and prints a PASS/FAIL summary. No Docker required.
+
 ---
 
 ## Test Layout
@@ -170,6 +178,29 @@ TestE2EDuplicateGrantRejected
 ```
 
 No process boundaries are crossed. All HTTP calls go through `httptest.NewServer`; there are no real ports allocated.
+
+---
+
+## System Test Coverage
+
+`core/test-system.sh` exercises the same code paths as `go test ./...` but adds the
+build and vet gates and produces a human-readable summary:
+
+```
+=== Core system test ===
+--- 1. go build ./... ---
+  PASS  go build ./...
+--- 2. go vet ./... ---
+  PASS  go vet ./...
+--- 3. go test ./... (includes E2E integration test) ---
+  PASS  go test ./... (all systems, including E2E)
+==============================
+  PASS: 3  FAIL: 0
+==============================
+```
+
+For experiment system tests (Docker-based), see the equivalent `test-system.sh` in each
+`experiments/experiment-N/` directory.
 
 ---
 

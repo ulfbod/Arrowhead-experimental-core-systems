@@ -78,6 +78,39 @@ Do not hardcode addresses.
 - Each experiment is responsible for its own build and tests
 - Broken experiments MUST NOT prevent `core/` from building or testing
 
+### Test-first approach
+
+When adding new API functions, UI components, or service handlers, **write the tests before the implementation** and iterate until all tests pass:
+
+1. Write tests that specify the expected contract (URLs, request bodies, response shapes, rendered elements, error handling).
+2. Implement the feature.
+3. Run the tests; fix either the implementation or the tests (if the spec was wrong) until all pass.
+
+This applies clearly to: API functions, pure logic, component structure, and HTTP handler behaviour.
+It applies partially to: interactive component behaviour where element structure is decided during implementation — write the structural assertions first, add interaction assertions as the design stabilises.
+It applies less to: free-form content such as architecture diagrams, whose exact wording is chosen while writing.
+
+### Unit tests
+
+Each Go service with meaningful logic should have a `_test.go` file alongside it. Run from the service directory:
+
+```bash
+cd experiments/experiment-N/services/<service>
+go test ./...
+```
+
+### System tests
+
+Experiments that have a running Docker stack provide a `test-system.sh` script. Run it from the experiment directory with the stack already up:
+
+```bash
+cd experiments/experiment-N
+docker compose up -d --build
+bash test-system.sh
+```
+
+The script prints a PASS/FAIL summary for each check and exits 1 if any check fails.
+
 ---
 
 ## Stability expectation
@@ -119,6 +152,15 @@ The following files are **duplicated** across experiments and must be kept in sy
 
 If you change dashboard logic in one of these experiments, apply the same change to the other.
 There is currently no automated check for divergence.
+
+---
+
+## Before starting work on a specific experiment
+
+1. Read that experiment's `README.md` — it contains the service table, port assignments,
+   startup order, and architecture specific to that experiment.
+2. If the experiment uses support modules, read [`support/README.md`](../support/README.md)
+   for environment variable defaults and endpoint references.
 
 ---
 

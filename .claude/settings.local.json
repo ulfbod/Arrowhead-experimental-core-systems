@@ -176,7 +176,10 @@
       "Bash(xargs -I{} sh -c 'echo \"=== {} ===\"; head -5 {}')",
       "Bash(xargs -I{} sh -c 'echo \"=== {} ===\"; head -4 {}')",
       "Bash(go work:*)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(npx vite:*)",
+      "Bash(npx vitest:*)",
+      "Bash(bash -n /home/uffe/projects/ArrowheadCore/experiments/experiment-6/test-system.sh)"
     ]
   }
 }

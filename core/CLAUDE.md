@@ -189,7 +189,7 @@ npm run build
 
 1. Read `SPEC.md` fully before making any change
 2. Implement or update models
-3. Implement or update logic
-4. Write or update tests
+3. **Write or update tests first** — specify the expected behaviour (status codes, response shapes, error cases) before writing the implementation
+4. Implement or update logic until all tests pass
 5. Verify `go build ./...` and `go test ./...`
 6. Remove dead code

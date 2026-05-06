@@ -79,6 +79,23 @@ go build ./...
 go test ./...
 ```
 
+### Test coverage
+
+| Module | Test file(s) | What is covered |
+|---|---|---|
+| `authzforce-server` | `server_test.go` | `parseGrants`, `parseXACMLRequest`, `parseExternalID`; HTTP handlers: list domains, put policy, PDP (Permit/Deny), /health |
+| `rest-authz` | `cache_test.go`, `server_test.go` | TTL cache behaviour; /health, /auth/check (permit/deny/missing fields), proxy (forward/403/401), stats counters |
+
+When adding a new support module, add a corresponding `_test.go` covering its exported functions and HTTP handlers.
+
+---
+
+## Environment Variables Reference
+
+[`support/README.md`](README.md) documents every environment variable, default value, and endpoint
+for each support service. Read it before writing or modifying any `docker-compose.yml`,
+Dockerfile, or service configuration that wires a support module.
+
 ---
 
 ## Adding a New Support Module
