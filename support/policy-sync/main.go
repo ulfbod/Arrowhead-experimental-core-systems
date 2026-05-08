@@ -53,7 +53,7 @@ func main() {
 	}
 
 	client := az.New(azURL)
-	s := newSyncer(client, caURL)
+	s := newSyncer(client, caURL, buildHTTPClient())
 
 	// Optional Bearer token for ConsumerAuth.
 	if authURL != "" {

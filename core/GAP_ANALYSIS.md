@@ -39,7 +39,17 @@ Authentication tokens are generated as `hex(time.Now().UnixNano())`. ConsumerAut
 
 ### G4 — No mutual TLS
 
-AH5 production deployments use certificate-based mutual authentication on all inter-system HTTP calls. All connections in this implementation are plain HTTP. The `authenticationInfo` and `secure` fields on service instances are stored and returned but have no effect on transport security.
+AH5 production deployments use certificate-based mutual authentication on all inter-system HTTP calls. All connections in this implementation are plain HTTP by default. The `authenticationInfo` and `secure` fields on service instances are stored and returned but have no effect on transport security.
+
+**Partial closure in experiment-7:** The four mandatory core systems (ServiceRegistry :8080/:8480,
+Authentication :8081/:8481, ConsumerAuthorization :8082/:8482, DynamicOrchestration :8083/:8483)
+now support optional mutual TLS on a configurable `TLS_PORT`. When `TLS_CERT_FILE`, `TLS_KEY_FILE`,
+and `TLS_CA_FILE` environment variables are set, the service starts an HTTPS listener with
+`tls.RequireAndVerifyClientCert` alongside the existing plain HTTP listener (retained for
+healthchecks and bootstrap). In experiment-7, all inter-system service calls use the TLS ports;
+only the Docker healthchecks and the one-shot seed container use plain HTTP. The CA remains on
+plain HTTP (bootstrapping constraint: services must reach it to get their own certificates).
+See `experiments/experiment-7/DIAGRAMS.md` for full coverage details.
 
 ---
 

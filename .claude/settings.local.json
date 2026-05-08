@@ -216,7 +216,9 @@
       "Bash(ln -sf ../../../../support/dashboard-shared/hooks/usePolling.ts hooks/usePolling.ts)",
       "Bash(ln -sf ../../../../support/dashboard-shared/config/context.tsx config/context.tsx)",
       "Bash(ln -sf ../../../../support/dashboard-shared/config/defaults.ts config/defaults.ts)",
-      "Bash(ln -sf ../../../../support/dashboard-shared/config/types.ts config/types.ts)"
+      "Bash(ln -sf ../../../../support/dashboard-shared/config/types.ts config/types.ts)",
+      "Bash(cat /home/uffe/projects/ArrowheadCore/support/policy-sync/*.go)",
+      "Bash(cat:*)"
     ]
   }
 }

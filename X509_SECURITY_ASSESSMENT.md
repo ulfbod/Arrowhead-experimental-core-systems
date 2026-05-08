@@ -251,8 +251,13 @@ are in `core/` and `experiments/experiment-7/`.
 | **4.4** No CRL/OCSP | `CAService` now tracks revoked certificates in an in-memory list. `Revoke()` validates that the cert was issued by this CA before accepting the revocation. `CRL()` generates a CA-signed PEM CRL. `VerifyCert()` checks the revocation list after chain validation. New endpoints: `POST /ca/certificate/revoke`, `GET /ca/crl`. Tests added in `ca_test.go` and `handler_test.go`. SPEC.md updated. Note: revocation state is in-memory (GAP_ANALYSIS G5); it resets on CA restart. |
 | **4.8** nginx `proxy_ssl_verify off` | The `cert-provisioner` already writes `ca.crt` to the shared `/certs` Docker volume. The dashboard service now mounts this volume (`certs:/certs:ro`) with a `depends_on: cert-provisioner: condition: service_completed_successfully` guard. `nginx.conf` replaced `proxy_ssl_verify off` with `proxy_ssl_verify on; proxy_ssl_trusted_certificate /certs/ca.crt; proxy_ssl_verify_depth 2`. No new containers or entrypoint scripts required. |
 
-Gaps **4.1**, **4.5**, **4.6**, and **4.7** remain documented-only. They are intentional
-architectural choices or out-of-scope for this experiment (see `core/GAP_ANALYSIS.md`).
+Gap **4.1** (mTLS not systemic) was subsequently addressed (see below). Gaps **4.5**, **4.6**,
+and **4.7** remain documented-only. They are intentional architectural choices or out-of-scope
+for this experiment (see `core/GAP_ANALYSIS.md`).
+
+| Gap | Action taken |
+|---|---|
+| **4.1** mTLS on core systems | Four core systems now support optional mTLS via a configurable `TLS_PORT`. When `TLS_CERT_FILE`+`TLS_KEY_FILE`+`TLS_CA_FILE` are set, an HTTPS listener starts alongside the plain HTTP listener (`tls.RequireAndVerifyClientCert`). In experiment-7: `cert-provisioner` provisions certs for all four core systems, policy-sync, and infrastructure; dynamicorch uses a TLS-capable `*http.Client` for outbound calls; policy-sync, robot-fleet-tls, and consumer-direct-tls all use mTLS clients for their core service calls. Plain HTTP is retained on `PORT` for healthchecks and Docker bootstrap. See `experiments/experiment-7/DIAGRAMS.md`. |
 
 ---
 
@@ -271,6 +276,6 @@ architectural choices or out-of-scope for this experiment (see `core/GAP_ANALYSI
 | AH5 hierarchical cert naming | **Supported (fixed)** | `cloudName`+`operatorName` fields in `IssueRequest` — see §5 |
 | Certificate revocation (CRL/OCSP) | **Partial (fixed)** | In-memory CRL via `POST /ca/certificate/revoke` + `GET /ca/crl` — see §5 |
 | `InsecureSkipVerify` in Go service code | No | Absent from all Go service code |
-| mTLS on core system communication | No | `core/GAP_ANALYSIS.md G4` — documented gap |
+| mTLS on core system communication | **Partial (fixed in exp-7)** | `TLS_PORT` on all 4 core systems; experiment-7 callers use mTLS clients — see §5 |
 | AH5 JWT bearer token authorization | No | XACML/AuthzForce used instead |
 | Hierarchical PKI (Master→Org→Cloud CA) | No | Flat single self-signed CA |

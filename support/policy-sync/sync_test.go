@@ -81,8 +81,8 @@ func TestSync_noRules_emptyPolicy(t *testing.T) {
 	ca := mockCA(nil)
 	defer ca.Close()
 
-	s := newSyncer(az.New(azSrv.URL), ca.URL)
-	if err := s.init(); err != nil {
+	s := newSyncer(az.New(azSrv.URL), ca.URL, http.DefaultClient)
+	if err := s.init("test-ext-id"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	if len(m.policyUploads) == 0 {
@@ -108,8 +108,8 @@ func TestSync_threeRules_threePolicies(t *testing.T) {
 	ca := mockCA(rules)
 	defer ca.Close()
 
-	s := newSyncer(az.New(azSrv.URL), ca.URL)
-	if err := s.init(); err != nil {
+	s := newSyncer(az.New(azSrv.URL), ca.URL, http.DefaultClient)
+	if err := s.init("test-ext-id"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -129,8 +129,8 @@ func TestSync_versionIncrements(t *testing.T) {
 	ca := mockCA(nil)
 	defer ca.Close()
 
-	s := newSyncer(az.New(azSrv.URL), ca.URL)
-	if err := s.init(); err != nil {
+	s := newSyncer(az.New(azSrv.URL), ca.URL, http.DefaultClient)
+	if err := s.init("test-ext-id"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	ver1 := s.version
@@ -151,8 +151,8 @@ func TestSync_rootPolicyRefUpdated(t *testing.T) {
 	ca := mockCA(nil)
 	defer ca.Close()
 
-	s := newSyncer(az.New(azSrv.URL), ca.URL)
-	if err := s.init(); err != nil {
+	s := newSyncer(az.New(azSrv.URL), ca.URL, http.DefaultClient)
+	if err := s.init("test-ext-id"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	if len(m.rootPolicySet) == 0 {

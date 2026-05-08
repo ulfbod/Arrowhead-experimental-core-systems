@@ -50,6 +50,16 @@ type caInfoResponse struct {
 	Certificate string `json:"certificate"`
 }
 
+type caIssueCertRequest struct {
+	SystemName string `json:"systemName"`
+}
+
+type caIssueCertResponse struct {
+	SystemName  string `json:"systemName"`
+	Certificate string `json:"certificate"`
+	PrivateKey  string `json:"privateKey"`
+}
+
 // fetchCACertPool retrieves the CA certificate and returns an x509.CertPool.
 func fetchCACertPool(caURL string) (*x509.CertPool, error) {
 	resp, err := http.Get(caURL + "/ca/info")
@@ -72,6 +82,37 @@ func fetchCACertPool(caURL string) (*x509.CertPool, error) {
 		return nil, fmt.Errorf("parse CA cert PEM")
 	}
 	return pool, nil
+}
+
+// buildMTLSClient issues a certificate from the CA for systemName and returns
+// an *http.Client that presents the cert in TLS handshakes.  The client verifies
+// server certificates against caPool.
+func buildMTLSClient(caURL, systemName string, caPool *x509.CertPool) (*http.Client, error) {
+	body, _ := json.Marshal(caIssueCertRequest{SystemName: systemName})
+	resp, err := http.Post(caURL+"/ca/certificate/issue", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("POST /ca/certificate/issue: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("POST /ca/certificate/issue returned %d", resp.StatusCode)
+	}
+	var issued caIssueCertResponse
+	if err := json.NewDecoder(resp.Body).Decode(&issued); err != nil {
+		return nil, fmt.Errorf("decode issue cert response: %w", err)
+	}
+	cert, err := tls.X509KeyPair([]byte(issued.Certificate), []byte(issued.PrivateKey))
+	if err != nil {
+		return nil, fmt.Errorf("parse issued cert/key: %w", err)
+	}
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      caPool,
+		MinVersion:   tls.VersionTLS12,
+	}
+	return &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}, nil
 }
 
 // ── Stats tracker ─────────────────────────────────────────────────────────────
@@ -160,9 +201,9 @@ type tokenResponse struct {
 
 // ── AHC calls ─────────────────────────────────────────────────────────────────
 
-func authLogin(authURL, systemName, credentials string) (string, error) {
+func authLogin(client *http.Client, authURL, systemName, credentials string) (string, error) {
 	body, _ := json.Marshal(authLoginRequest{SystemName: systemName, Credentials: credentials})
-	resp, err := http.Post(authURL+"/authentication/identity/login", "application/json", bytes.NewReader(body))
+	resp, err := client.Post(authURL+"/authentication/identity/login", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("auth login: %w", err)
 	}
@@ -178,7 +219,7 @@ func authLogin(authURL, systemName, credentials string) (string, error) {
 	return lr.Token, nil
 }
 
-func orchestrate(orchURL, systemName, token string) (orchResult, error) {
+func orchestrate(client *http.Client, orchURL, systemName, token string) (orchResult, error) {
 	req := orchRequest{
 		RequesterSystem: orchSystem{SystemName: systemName, Address: systemName, Port: 0},
 		RequestedService: orchServiceFilter{
@@ -195,7 +236,7 @@ func orchestrate(orchURL, systemName, token string) (orchResult, error) {
 	if token != "" {
 		r.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := http.DefaultClient.Do(r)
+	resp, err := client.Do(r)
 	if err != nil {
 		return orchResult{}, fmt.Errorf("orchestration request: %w", err)
 	}
@@ -255,14 +296,14 @@ func routingKeyPattern(metadata map[string]string) string {
 
 // ── Main flow ─────────────────────────────────────────────────────────────────
 
-func run(name, sysCreds, consumerPass, authURL, orchURL, consumerAuthURL string, caPool *x509.CertPool, st *statsTracker) error {
-	token, err := authLogin(authURL, name, sysCreds)
+func run(name, sysCreds, consumerPass, authURL, orchURL, consumerAuthURL string, caPool *x509.CertPool, coreClient *http.Client, st *statsTracker) error {
+	token, err := authLogin(coreClient, authURL, name, sysCreds)
 	if err != nil {
 		return fmt.Errorf("authentication: %w", err)
 	}
 	log.Printf("[%s] authenticated", name)
 
-	result, err := orchestrate(orchURL, name, token)
+	result, err := orchestrate(coreClient, orchURL, name, token)
 	if err != nil {
 		return fmt.Errorf("orchestration: %w", err)
 	}
@@ -357,8 +398,27 @@ func main() {
 		}
 	}()
 
+	// Build mTLS client for calls to core services (auth, orchestration).
+	// Issue own cert from CA so the server can verify our identity.
+	log.Printf("[%s] issuing own certificate from CA", name)
+	var coreClient *http.Client
+	for attempt := 1; attempt <= 10; attempt++ {
+		c, err := buildMTLSClient(caURL, name, caPool)
+		if err != nil {
+			if attempt < 10 {
+				log.Printf("[%s] cert issuance attempt %d/10: %v — retrying in 3s", name, attempt, err)
+				time.Sleep(3 * time.Second)
+				continue
+			}
+			log.Fatalf("[%s] cert issuance failed after 10 attempts: %v", name, err)
+		}
+		coreClient = c
+		log.Printf("[%s] issued own certificate — mTLS client ready", name)
+		break
+	}
+
 	for {
-		if err := run(name, sysCreds, consumerPass, authURL, orchURL, consumerAuthURL, caPool, st); err != nil {
+		if err := run(name, sysCreds, consumerPass, authURL, orchURL, consumerAuthURL, caPool, coreClient, st); err != nil {
 			log.Printf("[%s] error: %v — retrying in 5s", name, err)
 			time.Sleep(5 * time.Second)
 		}

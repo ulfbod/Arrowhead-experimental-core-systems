@@ -143,11 +143,16 @@ func TestWriteCerts_success(t *testing.T) {
 		t.Fatalf("writeCerts: %v", err)
 	}
 
-	// Verify all expected files exist.
+	// Verify all expected files exist (infrastructure + core + support).
 	expectedFiles := []string{
 		"ca.crt",
 		"kafka.crt", "kafka.key", "kafka-combined.pem",
 		"rabbitmq.crt", "rabbitmq.key", "rabbitmq-combined.pem",
+		"serviceregistry.crt", "serviceregistry.key",
+		"authentication.crt", "authentication.key",
+		"consumerauth.crt", "consumerauth.key",
+		"dynamicorch.crt", "dynamicorch.key",
+		"policy-sync.crt", "policy-sync.key",
 	}
 	for _, name := range expectedFiles {
 		path := filepath.Join(certsDir, name)

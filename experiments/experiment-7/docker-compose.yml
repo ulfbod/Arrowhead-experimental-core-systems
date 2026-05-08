@@ -2,7 +2,8 @@
 #
 # Architecture:
 #   Single root CA (core CertificateAuthority) issues all service certificates.
-#   cert-provisioner fetches certs for infrastructure (Kafka, RabbitMQ) at startup.
+#   cert-provisioner fetches certs for infrastructure (Kafka, RabbitMQ), core
+#   systems, and policy-sync at startup.
 #   Go services fetch their own certs at runtime via the CA HTTP API.
 #
 # TLS coverage:
@@ -14,9 +15,16 @@
 #   kafka-authz → Kafka                  (SSL, CA cert verified)
 #   data-provider-tls → Kafka            (SSL, CA cert verified)
 #
-# Plain HTTP (documented limitations):
-#   Core systems: serviceregistry, authentication, consumerauth, dynamicorch
-#   AuthzForce: Java service in HTTP mode (complex TLS config)
+# mTLS on core systems (G4 closure):
+#   serviceregistry, authentication, consumerauth: mTLS on TLS_PORT
+#   dynamicorch: mTLS on TLS_PORT, mTLS outbound client to SR/CA/Auth
+#   policy-sync → consumerauth: mTLS via TLS_PORT
+#   robot-fleet-tls → SR, auth: mTLS via runtime-issued cert
+#   consumer-direct-tls → auth, orch: mTLS via runtime-issued cert
+#
+# Plain HTTP retained for:
+#   Core systems: PORT (plain HTTP for healthchecks and Docker-internal bootstrap)
+#   AuthzForce: Java service in HTTP mode (complex TLS config, out of scope)
 #   policy-sync → AuthzForce: HTTP (AuthzForce is HTTP)
 #   analytics-consumer → kafka-authz: HTTP SSE (TLS on Kafka layer, not SSE)
 #   topic-auth-xacml → RabbitMQ management: HTTP management API
@@ -149,8 +157,18 @@ services:
         CMD: serviceregistry
     environment:
       PORT: "8080"
+      TLS_PORT: "8480"
+      TLS_CERT_FILE: "/certs/serviceregistry.crt"
+      TLS_KEY_FILE:  "/certs/serviceregistry.key"
+      TLS_CA_FILE:   "/certs/ca.crt"
     ports:
       - "8080:8080"
+      - "8480:8480"
+    volumes:
+      - certs:/certs:ro
+    depends_on:
+      cert-provisioner:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
       interval: 5s
@@ -165,8 +183,18 @@ services:
         CMD: authentication
     environment:
       PORT: "8081"
+      TLS_PORT: "8481"
+      TLS_CERT_FILE: "/certs/authentication.crt"
+      TLS_KEY_FILE:  "/certs/authentication.key"
+      TLS_CA_FILE:   "/certs/ca.crt"
     ports:
       - "8081:8081"
+      - "8481:8481"
+    volumes:
+      - certs:/certs:ro
+    depends_on:
+      cert-provisioner:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
       interval: 5s
@@ -181,8 +209,18 @@ services:
         CMD: consumerauth
     environment:
       PORT: "8082"
+      TLS_PORT: "8482"
+      TLS_CERT_FILE: "/certs/consumerauth.crt"
+      TLS_KEY_FILE:  "/certs/consumerauth.key"
+      TLS_CA_FILE:   "/certs/ca.crt"
     ports:
       - "8082:8082"
+      - "8482:8482"
+    volumes:
+      - certs:/certs:ro
+    depends_on:
+      cert-provisioner:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health || exit 1"]
       interval: 5s
@@ -197,19 +235,29 @@ services:
         CMD: dynamicorch
     environment:
       PORT: "8083"
-      SERVICE_REGISTRY_URL: "http://serviceregistry:8080"
-      CONSUMER_AUTH_URL: "http://consumerauth:8082"
-      AUTH_SYSTEM_URL: "http://authentication:8081"
+      TLS_PORT: "8483"
+      TLS_CERT_FILE: "/certs/dynamicorch.crt"
+      TLS_KEY_FILE:  "/certs/dynamicorch.key"
+      TLS_CA_FILE:   "/certs/ca.crt"
+      # Outbound calls use the TLS ports of the upstream core services.
+      SERVICE_REGISTRY_URL: "https://serviceregistry:8480"
+      CONSUMER_AUTH_URL: "https://consumerauth:8482"
+      AUTH_SYSTEM_URL: "https://authentication:8481"
       ENABLE_AUTH: "true"
       ENABLE_IDENTITY_CHECK: "true"
     ports:
       - "8083:8083"
+      - "8483:8483"
+    volumes:
+      - certs:/certs:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8083/health || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
     depends_on:
+      cert-provisioner:
+        condition: service_completed_successfully
       serviceregistry:
         condition: service_healthy
       consumerauth:
@@ -243,14 +291,22 @@ services:
       context: ../../
       dockerfile: experiments/experiment-7/dockerfiles/policy-sync.Dockerfile
     environment:
-      CONSUMERAUTH_URL: "http://consumerauth:8082"
+      # Use the mTLS port for ConsumerAuthorization.
+      CONSUMERAUTH_URL: "https://consumerauth:8482"
       AUTHZFORCE_URL: "http://authzforce:8080/authzforce-ce"
       AUTHZFORCE_DOMAIN: "arrowhead-exp7"
       SYNC_INTERVAL: "10s"
       PORT: "9095"
+      TLS_CERT_FILE: "/certs/policy-sync.crt"
+      TLS_KEY_FILE:  "/certs/policy-sync.key"
+      TLS_CA_FILE:   "/certs/ca.crt"
     ports:
       - "9095:9095"
+    volumes:
+      - certs:/certs:ro
     depends_on:
+      cert-provisioner:
+        condition: service_completed_successfully
       authzforce:
         condition: service_healthy
       consumerauth:
@@ -404,10 +460,11 @@ services:
       PAYLOAD_HZ: "10"
       NETWORK_PRESET: "5g_good"
       FLEET_PORT: "9003"
-      SR_URL: "http://serviceregistry:8080"
+      # Use mTLS ports for core system calls.
+      SR_URL: "https://serviceregistry:8480"
       SYSTEM_NAME: "robot-fleet-tls"
       SYSTEM_CREDENTIALS: "fleet-secret"
-      AUTH_URL: "http://authentication:8081"
+      AUTH_URL: "https://authentication:8481"
       CA_URL: "http://ca:8086"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9003/health || exit 1"]
@@ -437,9 +494,10 @@ services:
       CONSUMER_NAME: "demo-consumer-1"
       SYSTEM_CREDENTIALS: "consumer-secret"
       CONSUMER_PASSWORD: "consumer-secret"
-      AUTH_URL: "http://authentication:8081"
-      ORCHESTRATION_URL: "http://dynamicorch:8083"
-      CONSUMERAUTH_URL: "http://consumerauth:8082"
+      # Use mTLS ports for core system calls.
+      AUTH_URL: "https://authentication:8481"
+      ORCHESTRATION_URL: "https://dynamicorch:8483"
+      CONSUMERAUTH_URL: "https://consumerauth:8482"
       HEALTH_PORT: "9002"
       CA_URL: "http://ca:8086"
     depends_on:
@@ -458,9 +516,9 @@ services:
       CONSUMER_NAME: "demo-consumer-2"
       SYSTEM_CREDENTIALS: "consumer-secret"
       CONSUMER_PASSWORD: "consumer-secret"
-      AUTH_URL: "http://authentication:8081"
-      ORCHESTRATION_URL: "http://dynamicorch:8083"
-      CONSUMERAUTH_URL: "http://consumerauth:8082"
+      AUTH_URL: "https://authentication:8481"
+      ORCHESTRATION_URL: "https://dynamicorch:8483"
+      CONSUMERAUTH_URL: "https://consumerauth:8482"
       HEALTH_PORT: "9002"
       CA_URL: "http://ca:8086"
     depends_on:
@@ -479,9 +537,9 @@ services:
       CONSUMER_NAME: "demo-consumer-3"
       SYSTEM_CREDENTIALS: "consumer-secret"
       CONSUMER_PASSWORD: "consumer-secret"
-      AUTH_URL: "http://authentication:8081"
-      ORCHESTRATION_URL: "http://dynamicorch:8083"
-      CONSUMERAUTH_URL: "http://consumerauth:8082"
+      AUTH_URL: "https://authentication:8481"
+      ORCHESTRATION_URL: "https://dynamicorch:8483"
+      CONSUMERAUTH_URL: "https://consumerauth:8482"
       HEALTH_PORT: "9002"
       CA_URL: "http://ca:8086"
     depends_on:

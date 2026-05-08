@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -34,6 +37,7 @@ type syncer struct {
 	client          *az.Client
 	caURL           string
 	authToken       string
+	httpClient      *http.Client
 	domainExtID     string // AuthzForce externalId (from AUTHZFORCE_DOMAIN env)
 	domainID        string
 	version         int
@@ -41,8 +45,8 @@ type syncer struct {
 	lastSyncedAt    time.Time
 }
 
-func newSyncer(client *az.Client, caURL string) *syncer {
-	return &syncer{client: client, caURL: caURL}
+func newSyncer(client *az.Client, caURL string, httpClient *http.Client) *syncer {
+	return &syncer{client: client, caURL: caURL, httpClient: httpClient}
 }
 
 func (s *syncer) setToken(tok string) { s.authToken = tok }
@@ -93,7 +97,7 @@ func (s *syncer) fetchRules() ([]AuthRule, error) {
 	if s.authToken != "" {
 		req.Header.Set("Authorization", "Bearer "+s.authToken)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -106,4 +110,48 @@ func (s *syncer) fetchRules() ([]AuthRule, error) {
 		return nil, err
 	}
 	return lr.Rules, nil
+}
+
+// buildHTTPClient returns an *http.Client. When TLS_CERT_FILE, TLS_KEY_FILE, and
+// TLS_CA_FILE environment variables are all set, the client uses mutual TLS so that
+// policy-sync can call a TLS-enabled ConsumerAuthorization service.
+// Falls back to a plain http.Client when any variable is absent (backward-compatible
+// with experiments that use plain HTTP ConsumerAuthorization).
+func buildHTTPClient() *http.Client {
+	certFile := os.Getenv("TLS_CERT_FILE")
+	keyFile  := os.Getenv("TLS_KEY_FILE")
+	caFile   := os.Getenv("TLS_CA_FILE")
+	if certFile == "" || keyFile == "" || caFile == "" {
+		return &http.Client{Timeout: 10 * time.Second}
+	}
+	tlsCfg, err := loadClientTLS(certFile, keyFile, caFile)
+	if err != nil {
+		// Log and fall back to plain HTTP rather than crashing.
+		fmt.Printf("[policy-sync] TLS client config error: %v — falling back to plain HTTP\n", err)
+		return &http.Client{Timeout: 10 * time.Second}
+	}
+	return &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		Timeout:   10 * time.Second,
+	}
+}
+
+func loadClientTLS(certFile, keyFile, caFile string) (*tls.Config, error) {
+	caData, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA file %q: %w", caFile, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caData) {
+		return nil, fmt.Errorf("parse CA PEM from %q", caFile)
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load key pair (%s, %s): %w", certFile, keyFile, err)
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      pool,
+		MinVersion:   tls.VersionTLS12,
+	}, nil
 }

@@ -332,6 +332,80 @@ echo "  first 300 chars: $preview"
 assert_not_contains "SSE test-probe: not denied (403)" "not authorized" "$sse"
 assert_contains     "SSE test-probe: data lines received from Kafka" "data: {" "$sse"
 
+# ── Section 13: G4 closure — core service mTLS ports ─────────────────────────
+echo
+echo "=== 13. G4 closure — core service mTLS ports (localhost 8480-8483) ==="
+
+# Fetch CA cert (plain HTTP) for TLS verification.
+g4_ca_pem=$(curl -s http://localhost:8086/ca/info \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["certificate"])' 2>/dev/null || echo "")
+
+if [ -z "$g4_ca_pem" ]; then
+  fail "G4: CA cert available for mTLS test" "PEM cert" "empty"
+else
+  echo "$g4_ca_pem" > /tmp/exp7-g4-ca.crt
+  pass "G4: CA cert fetched"
+
+  # Issue a cert for the test probe.
+  g4_resp=$(curl -s -X POST http://localhost:8086/ca/certificate/issue \
+    -H 'Content-Type: application/json' -d '{"systemName":"test-probe"}')
+  g4_cert=$(echo "$g4_resp" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["certificate"])' 2>/dev/null || echo "")
+  g4_key=$(echo "$g4_resp"  | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["privateKey"])'  2>/dev/null || echo "")
+
+  if [ -z "$g4_cert" ] || [ -z "$g4_key" ]; then
+    fail "G4: test-probe cert issued" "PEM cert+key" "parse failed"
+  else
+    echo "$g4_cert" > /tmp/exp7-g4-probe.crt
+    echo "$g4_key"  > /tmp/exp7-g4-probe.key
+    pass "G4: test-probe cert issued for mTLS tests"
+
+    # ServiceRegistry TLS port (8480) — mTLS client cert → 200.
+    code=$(curl -s -o /dev/null -w "%{http_code}" \
+      --cert /tmp/exp7-g4-probe.crt --key /tmp/exp7-g4-probe.key \
+      --cacert /tmp/exp7-g4-ca.crt \
+      --resolve "serviceregistry:8480:127.0.0.1" \
+      https://serviceregistry:8480/health 2>/dev/null; echo -n "")
+    check_eq "G4: ServiceRegistry TLS port /health (mTLS) → 200" "200" "$code"
+
+    # ServiceRegistry TLS port — no client cert → rejected (000 or 400).
+    nocc=$(curl -s -o /dev/null -w "%{http_code}" \
+      --cacert /tmp/exp7-g4-ca.crt \
+      --resolve "serviceregistry:8480:127.0.0.1" \
+      https://serviceregistry:8480/health 2>/dev/null; echo -n "")
+    if [ "$nocc" = "000" ] || [ "$nocc" = "400" ] || [ "$nocc" = "403" ]; then
+      pass "G4: ServiceRegistry TLS port rejects request without client cert (got $nocc)"
+    else
+      fail "G4: ServiceRegistry TLS port rejects request without client cert" "000 or 400" "$nocc"
+    fi
+
+    # ConsumerAuthorization TLS port (8482) — mTLS client cert → 200.
+    code=$(curl -s -o /dev/null -w "%{http_code}" \
+      --cert /tmp/exp7-g4-probe.crt --key /tmp/exp7-g4-probe.key \
+      --cacert /tmp/exp7-g4-ca.crt \
+      --resolve "consumerauth:8482:127.0.0.1" \
+      https://consumerauth:8482/health 2>/dev/null; echo -n "")
+    check_eq "G4: ConsumerAuthorization TLS port /health (mTLS) → 200" "200" "$code"
+
+    # Authentication TLS port (8481) — mTLS client cert → 200.
+    code=$(curl -s -o /dev/null -w "%{http_code}" \
+      --cert /tmp/exp7-g4-probe.crt --key /tmp/exp7-g4-probe.key \
+      --cacert /tmp/exp7-g4-ca.crt \
+      --resolve "authentication:8481:127.0.0.1" \
+      https://authentication:8481/health 2>/dev/null; echo -n "")
+    check_eq "G4: Authentication TLS port /health (mTLS) → 200" "200" "$code"
+
+    # DynamicOrchestration TLS port (8483) — mTLS client cert → 200.
+    code=$(curl -s -o /dev/null -w "%{http_code}" \
+      --cert /tmp/exp7-g4-probe.crt --key /tmp/exp7-g4-probe.key \
+      --cacert /tmp/exp7-g4-ca.crt \
+      --resolve "dynamicorch:8483:127.0.0.1" \
+      https://dynamicorch:8483/health 2>/dev/null; echo -n "")
+    check_eq "G4: DynamicOrchestration TLS port /health (mTLS) → 200" "200" "$code"
+
+    rm -f /tmp/exp7-g4-ca.crt /tmp/exp7-g4-probe.crt /tmp/exp7-g4-probe.key 2>/dev/null || true
+  fi
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo
 echo "══════════════════════════════════════"

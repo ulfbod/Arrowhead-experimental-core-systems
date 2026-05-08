@@ -131,8 +131,13 @@ func issueCert(caURL, systemName string, client *http.Client, maxAttempts int, r
 	return issueCertResponse{}, fmt.Errorf("issue cert %q after %d attempts: %w", systemName, maxAttempts, lastErr)
 }
 
-// writeCerts fetches the CA cert and issues certs for kafka and rabbitmq,
-// then writes all certificate files to certsDir.
+// writeCerts fetches the CA cert and issues certs for all services that need
+// file-based certificates (infrastructure + core systems + policy-sync).
+// Cert files are written to certsDir and mounted into each service container.
+//
+// Infrastructure: kafka, rabbitmq
+// Core systems:   serviceregistry, authentication, consumerauth, dynamicorch
+// Support:        policy-sync
 func writeCerts(caURL, certsDir string, client *http.Client) error {
 	const maxAttempts = 10
 	const retryDelay = 3 * time.Second
@@ -146,34 +151,33 @@ func writeCerts(caURL, certsDir string, client *http.Client) error {
 		return err
 	}
 
-	// Issue and write kafka cert.
-	kafkaCert, err := issueCert(caURL, "kafka", client, maxAttempts, retryDelay)
-	if err != nil {
-		return fmt.Errorf("issue kafka cert: %w", err)
+	// Services requiring file-based certs (name → filename prefix).
+	services := []string{
+		"kafka",
+		"rabbitmq",
+		"serviceregistry",
+		"authentication",
+		"consumerauth",
+		"dynamicorch",
+		"policy-sync",
 	}
-	if err := writeFile(filepath.Join(certsDir, "kafka.crt"), kafkaCert.Certificate); err != nil {
-		return err
-	}
-	if err := writeFile(filepath.Join(certsDir, "kafka.key"), kafkaCert.PrivateKey); err != nil {
-		return err
-	}
-	if err := writeFile(filepath.Join(certsDir, "kafka-combined.pem"), kafkaCert.Certificate+kafkaCert.PrivateKey); err != nil {
-		return err
-	}
-
-	// Issue and write rabbitmq cert.
-	rabbitCert, err := issueCert(caURL, "rabbitmq", client, maxAttempts, retryDelay)
-	if err != nil {
-		return fmt.Errorf("issue rabbitmq cert: %w", err)
-	}
-	if err := writeFile(filepath.Join(certsDir, "rabbitmq.crt"), rabbitCert.Certificate); err != nil {
-		return err
-	}
-	if err := writeFile(filepath.Join(certsDir, "rabbitmq.key"), rabbitCert.PrivateKey); err != nil {
-		return err
-	}
-	if err := writeFile(filepath.Join(certsDir, "rabbitmq-combined.pem"), rabbitCert.Certificate+rabbitCert.PrivateKey); err != nil {
-		return err
+	for _, name := range services {
+		cert, err := issueCert(caURL, name, client, maxAttempts, retryDelay)
+		if err != nil {
+			return fmt.Errorf("issue %s cert: %w", name, err)
+		}
+		if err := writeFile(filepath.Join(certsDir, name+".crt"), cert.Certificate); err != nil {
+			return err
+		}
+		if err := writeFile(filepath.Join(certsDir, name+".key"), cert.PrivateKey); err != nil {
+			return err
+		}
+		// kafka and rabbitmq also need combined PEM for their bootstrap scripts.
+		if name == "kafka" || name == "rabbitmq" {
+			if err := writeFile(filepath.Join(certsDir, name+"-combined.pem"), cert.Certificate+cert.PrivateKey); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil

@@ -94,6 +94,46 @@ type caInfoResponse struct {
 	Certificate string `json:"certificate"`
 }
 
+type caIssueCertRequest struct {
+	SystemName string `json:"systemName"`
+}
+
+type caIssueCertResponse struct {
+	SystemName  string `json:"systemName"`
+	Certificate string `json:"certificate"`
+	PrivateKey  string `json:"privateKey"`
+}
+
+// buildMTLSClient issues a certificate from the CA for systemName and returns
+// an *http.Client that presents the cert in TLS handshakes.
+func buildMTLSClient(caURL, systemName string, caPool *x509.CertPool) (*http.Client, error) {
+	body, _ := json.Marshal(caIssueCertRequest{SystemName: systemName})
+	resp, err := http.Post(caURL+"/ca/certificate/issue", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("POST /ca/certificate/issue: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("POST /ca/certificate/issue returned %d", resp.StatusCode)
+	}
+	var issued caIssueCertResponse
+	if err := json.NewDecoder(resp.Body).Decode(&issued); err != nil {
+		return nil, fmt.Errorf("decode issue cert response: %w", err)
+	}
+	cert, err := tls.X509KeyPair([]byte(issued.Certificate), []byte(issued.PrivateKey))
+	if err != nil {
+		return nil, fmt.Errorf("parse issued cert/key: %w", err)
+	}
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      caPool,
+		MinVersion:   tls.VersionTLS12,
+	}
+	return &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}, nil
+}
+
 // fetchCACertPool fetches the CA certificate and returns an x509.CertPool.
 func fetchCACertPool(caURL string) (*x509.CertPool, error) {
 	resp, err := http.Get(caURL + "/ca/info")
@@ -118,12 +158,12 @@ func fetchCACertPool(caURL string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
-func login(authURL, systemName, credentials string) (string, error) {
+func login(client *http.Client, authURL, systemName, credentials string) (string, error) {
 	if authURL == "" {
 		return "", nil
 	}
 	body, _ := json.Marshal(authLoginRequest{SystemName: systemName, Credentials: credentials})
-	resp, err := http.Post(authURL+"/authentication/identity/login", "application/json", bytes.NewReader(body))
+	resp, err := client.Post(authURL+"/authentication/identity/login", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("auth login: %w", err)
 	}
@@ -139,7 +179,7 @@ func login(authURL, systemName, credentials string) (string, error) {
 	return lr.Token, nil
 }
 
-func registerServices(srURL, systemName, kafkaAuthzAddress string, kafkaAuthzPort int) error {
+func registerServices(client *http.Client, srURL, systemName, kafkaAuthzAddress string, kafkaAuthzPort int) error {
 	reqs := []srRegisterRequest{
 		{
 			ServiceDefinition: "telemetry",
@@ -160,7 +200,7 @@ func registerServices(srURL, systemName, kafkaAuthzAddress string, kafkaAuthzPor
 	}
 	for _, req := range reqs {
 		body, _ := json.Marshal(req)
-		resp, err := http.Post(srURL+"/serviceregistry/register", "application/json", bytes.NewReader(body))
+		resp, err := client.Post(srURL+"/serviceregistry/register", "application/json", bytes.NewReader(body))
 		if err != nil {
 			return fmt.Errorf("SR register %v: %w", req.Interfaces, err)
 		}
@@ -173,7 +213,7 @@ func registerServices(srURL, systemName, kafkaAuthzAddress string, kafkaAuthzPor
 	return nil
 }
 
-func unregisterServices(srURL, systemName string) {
+func unregisterServices(client *http.Client, srURL, systemName string) {
 	for _, iface := range []string{"AMQP-SECURE-JSON", "KAFKA-SECURE-JSON"} {
 		addr := "rabbitmq"
 		port := 5671
@@ -189,7 +229,7 @@ func unregisterServices(srURL, systemName string) {
 		body, _ := json.Marshal(req)
 		r, _ := http.NewRequest(http.MethodDelete, srURL+"/serviceregistry/unregister", bytes.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
-		http.DefaultClient.Do(r)
+		client.Do(r)
 	}
 	log.Printf("[robot-fleet-tls] unregistered services from ServiceRegistry")
 }
@@ -245,9 +285,27 @@ func main() {
 		break
 	}
 
+	// Build mTLS client for calls to core services (auth, service registry).
+	log.Printf("[robot-fleet-tls] issuing own certificate from CA")
+	var coreClient *http.Client
+	for attempt := 1; attempt <= 10; attempt++ {
+		c, err := buildMTLSClient(caURL, systemName, caPool)
+		if err != nil {
+			if attempt < 10 {
+				log.Printf("[robot-fleet-tls] cert issuance attempt %d/10: %v — retrying in 3s", attempt, err)
+				time.Sleep(3 * time.Second)
+				continue
+			}
+			log.Fatalf("[robot-fleet-tls] cert issuance failed after 10 attempts: %v", err)
+		}
+		coreClient = c
+		log.Printf("[robot-fleet-tls] issued own certificate — mTLS client ready")
+		break
+	}
+
 	// Authenticate.
 	if authURL != "" {
-		if _, err := login(authURL, systemName, sysCreds); err != nil {
+		if _, err := login(coreClient, authURL, systemName, sysCreds); err != nil {
 			log.Fatalf("[robot-fleet-tls] authentication failed: %v", err)
 		}
 		log.Printf("[robot-fleet-tls] authenticated as %q", systemName)
@@ -256,7 +314,7 @@ func main() {
 	// Register in ServiceRegistry.
 	if srURL != "" {
 		for attempt := 1; attempt <= 10; attempt++ {
-			if err := registerServices(srURL, systemName, "kafka-authz", 9091); err == nil {
+			if err := registerServices(coreClient, srURL, systemName, "kafka-authz", 9091); err == nil {
 				break
 			} else if attempt == 10 {
 				log.Fatalf("[robot-fleet-tls] SR registration failed after 10 attempts: %v", err)
@@ -347,7 +405,7 @@ func main() {
 		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 		go func() {
 			<-sigs
-			unregisterServices(srURL, systemName)
+			unregisterServices(coreClient, srURL, systemName)
 			os.Exit(0)
 		}()
 	}

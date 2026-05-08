@@ -29,7 +29,8 @@ Full description: [`README.md`](README.md)
 ## Stack topology
 
 ```
-ConsumerAuth :8082  GET /authorization/lookup (every SYNC_INTERVAL)
+ConsumerAuth :8082 (HTTP) / :8482 (HTTPS/mTLS)
+    GET /authorization/lookup (every SYNC_INTERVAL) ← policy-sync (mTLS)
     ↓
 policy-sync :9095   PUT PolicySet → AuthzForce (HTTP)
     ↓
@@ -39,10 +40,16 @@ AuthzForce :8186    ◄── single PDP for all three transports (HTTP)
     ├── kafka-authz :9091       →  Kafka :9092 (SSL)       → analytics-consumer
     └── cert-rest-authz :9098   →  data-provider-tls :9094 (HTTPS) → cert-consumer
 
-CoreCA :8086 (plain HTTP — trust anchor)
+CoreCA :8086 (plain HTTP — trust anchor, bootstrap endpoint)
     │
-    ├── cert-provisioner → /certs volume → Kafka, RabbitMQ
+    ├── cert-provisioner → /certs volume → Kafka, RabbitMQ, core systems, policy-sync
     └── (all Go services call CA at startup to get own cert)
+
+Core systems (each has both plain HTTP and HTTPS/mTLS port):
+    ServiceRegistry       :8080 (HTTP) / :8480 (HTTPS/mTLS)
+    Authentication        :8081 (HTTP) / :8481 (HTTPS/mTLS)
+    ConsumerAuthorization :8082 (HTTP) / :8482 (HTTPS/mTLS)
+    DynamicOrchestration  :8083 (HTTP) / :8483 (HTTPS/mTLS, mTLS outbound)
 ```
 
 ---
@@ -161,6 +168,26 @@ Same as experiment-5's robot-fleet plus:
 | `CA_URL` | `http://ca:8086` | Core CA base URL |
 | `AMQP_URL` | — | Must use `amqps://` scheme for TLS |
 | `KAFKA_BROKERS` | `kafka:9092` | Kafka SSL broker addresses |
+| `SR_URL` | — | Must use `https://` when mTLS is enabled (port 8480) |
+| `AUTH_URL` | — | Must use `https://` when mTLS is enabled (port 8481) |
+
+### Core systems (TLS)
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | system-specific | Plain HTTP port (healthchecks, bootstrap) |
+| `TLS_PORT` | — | HTTPS+mTLS port (when set, starts second listener) |
+| `TLS_CERT_FILE` | — | PEM certificate file (required with TLS_PORT) |
+| `TLS_KEY_FILE` | — | PEM private key file (required with TLS_PORT) |
+| `TLS_CA_FILE` | — | PEM CA file; when set, RequireAndVerifyClientCert |
+
+### policy-sync (TLS)
+
+| Variable | Default | Description |
+|---|---|---|
+| `TLS_CERT_FILE` | — | PEM certificate for mTLS to ConsumerAuthorization |
+| `TLS_KEY_FILE` | — | PEM private key |
+| `TLS_CA_FILE` | — | PEM CA file for server cert verification |
 
 ---
 
