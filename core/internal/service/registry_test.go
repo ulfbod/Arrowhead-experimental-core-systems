@@ -191,6 +191,74 @@ func TestUnregisterNotFound(t *testing.T) {
 	}
 }
 
+func TestUnregisterValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		req  model.UnregisterRequest
+	}{
+		{"missing serviceDefinition", model.UnregisterRequest{
+			ProviderSystem: &model.System{SystemName: "s", Address: "10.0.0.1", Port: 9000},
+			Version:        1,
+		}},
+		{"whitespace serviceDefinition", model.UnregisterRequest{
+			ServiceDefinition: "   ",
+			ProviderSystem:    &model.System{SystemName: "s", Address: "10.0.0.1", Port: 9000},
+			Version:           1,
+		}},
+		{"nil providerSystem", model.UnregisterRequest{
+			ServiceDefinition: "svc",
+			Version:           1,
+		}},
+		{"missing systemName", model.UnregisterRequest{
+			ServiceDefinition: "svc",
+			ProviderSystem:    &model.System{SystemName: "", Address: "10.0.0.1", Port: 9000},
+			Version:           1,
+		}},
+		{"missing address", model.UnregisterRequest{
+			ServiceDefinition: "svc",
+			ProviderSystem:    &model.System{SystemName: "s", Address: "", Port: 9000},
+			Version:           1,
+		}},
+		{"port zero", model.UnregisterRequest{
+			ServiceDefinition: "svc",
+			ProviderSystem:    &model.System{SystemName: "s", Address: "10.0.0.1", Port: 0},
+			Version:           1,
+		}},
+		{"port negative", model.UnregisterRequest{
+			ServiceDefinition: "svc",
+			ProviderSystem:    &model.System{SystemName: "s", Address: "10.0.0.1", Port: -1},
+			Version:           1,
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newService()
+			if err := svc.Unregister(tc.req); err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+		})
+	}
+}
+
+func TestUnregisterVersionDefaultsToOne(t *testing.T) {
+	svc := newService()
+	svc.Register(validRequest()) // registers version 1
+
+	// Unregister with version=0 should default to version 1 and succeed.
+	err := svc.Unregister(model.UnregisterRequest{
+		ServiceDefinition: "temperature-service",
+		ProviderSystem:    &model.System{SystemName: "sensor-1", Address: "192.168.0.10", Port: 8080},
+		Version:           0,
+	})
+	if err != nil {
+		t.Fatalf("expected success with version=0 defaulting to 1, got: %v", err)
+	}
+	resp := svc.Query(model.QueryRequest{ServiceDefinition: "temperature-service"})
+	if len(resp.ServiceQueryData) != 0 {
+		t.Errorf("expected 0 after unregister, got %d", len(resp.ServiceQueryData))
+	}
+}
+
 // ---- Query: serviceDefinition ----
 
 func TestQueryExactMatch(t *testing.T) {

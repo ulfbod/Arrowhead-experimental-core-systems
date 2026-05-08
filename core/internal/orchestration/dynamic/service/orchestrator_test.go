@@ -319,3 +319,71 @@ func TestOrchestrateIdentityDisabledNoTokenNeeded(t *testing.T) {
 		t.Errorf("expected 1 result when identity check disabled, got %d", len(resp.Response))
 	}
 }
+
+// ---- Malformed upstream responses ----
+
+func TestOrchestrateSRMalformedJSON(t *testing.T) {
+	// SR returns malformed JSON — querySR decode error should propagate as SR error.
+	sr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("{not valid json"))
+	}))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	_, err := orch.Orchestrate(validRequest(), "")
+	if err == nil {
+		t.Error("expected error when SR returns malformed JSON")
+	}
+}
+
+func TestOrchestrateIdentityAuthSysMalformedJSON(t *testing.T) {
+	// Auth system returns malformed JSON — decode error → fail-closed.
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+	authSys := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("{not valid json"))
+	}))
+	defer authSys.Close()
+
+	orch := service.NewDynamicOrchestrator(sr.URL, "", authSys.URL, false, true)
+	_, err := orch.Orchestrate(validRequest(), "some-token")
+	if err != service.ErrIdentityInvalid {
+		t.Errorf("expected ErrIdentityInvalid when auth sys returns malformed JSON, got %v", err)
+	}
+}
+
+func TestOrchestrateIdentityInvalidAuthURL(t *testing.T) {
+	// An authSysURL containing a control character causes http.NewRequest to fail.
+	// The orchestrator must still return ErrIdentityInvalid (fail-closed).
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+
+	orch := service.NewDynamicOrchestrator(sr.URL, "", "http://invalid\nurl", false, true)
+	_, err := orch.Orchestrate(validRequest(), "some-token")
+	if err != service.ErrIdentityInvalid {
+		t.Errorf("expected ErrIdentityInvalid for malformed authSysURL, got %v", err)
+	}
+}
+
+func TestOrchestrateCAMalformedJSONExcludesProvider(t *testing.T) {
+	// CA returns malformed JSON — checkAuthorized decode error should exclude provider (fail-closed, D4).
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+	ca := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("{not valid json"))
+	}))
+	defer ca.Close()
+
+	orch := newOrchestrator(sr.URL, ca.URL, true)
+	resp, err := orch.Orchestrate(validRequest(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Fail-closed: malformed CA response means provider is excluded.
+	if len(resp.Response) != 0 {
+		t.Errorf("expected 0 results when CA returns malformed JSON (fail-closed), got %d", len(resp.Response))
+	}
+}

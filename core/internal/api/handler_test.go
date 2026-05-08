@@ -211,6 +211,15 @@ func TestHandlerRegisterWrongMethod(t *testing.T) {
 	}
 }
 
+func TestHandlerQueryWrongMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/serviceregistry/query", nil)
+	w := httptest.NewRecorder()
+	newTestHandler().ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
 // ---- Unregister ----
 
 func TestHandlerUnregister(t *testing.T) {
@@ -408,5 +417,118 @@ func TestHandlerHealth(t *testing.T) {
 	newTestHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+// ---- Lookup: method and query params ----
+
+func TestHandlerLookupWrongMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/lookup", nil)
+	w := httptest.NewRecorder()
+	newTestHandler().ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandlerLookupWithServiceDefinitionParam(t *testing.T) {
+	h := newTestHandler()
+	postJSON(t, h, "/serviceregistry/register", fullRegisterBody)
+	// Register a second different service.
+	postJSON(t, h, "/serviceregistry/register", map[string]any{
+		"serviceDefinition": "pressure-service",
+		"providerSystem":    map[string]any{"systemName": "sensor-2", "address": "10.0.0.2", "port": 9000},
+		"serviceUri":        "/pressure",
+		"interfaces":        []string{"HTTP"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/serviceregistry/lookup?serviceDefinition=temperature-service", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	resp := decodeQuery(t, w)
+	if len(resp.ServiceQueryData) != 1 {
+		t.Errorf("expected 1 result filtered by serviceDefinition, got %d", len(resp.ServiceQueryData))
+	}
+	if resp.ServiceQueryData[0].ServiceDefinition != "temperature-service" {
+		t.Errorf("unexpected serviceDefinition: %q", resp.ServiceQueryData[0].ServiceDefinition)
+	}
+}
+
+func TestHandlerLookupWithVersionParam(t *testing.T) {
+	h := newTestHandler()
+	postJSON(t, h, "/serviceregistry/register", fullRegisterBody) // version 1
+	postJSON(t, h, "/serviceregistry/register", map[string]any{
+		"serviceDefinition": "temperature-service",
+		"providerSystem":    map[string]any{"systemName": "sensor-1", "address": "192.168.0.10", "port": 8080},
+		"serviceUri":        "/temperature",
+		"interfaces":        []string{"HTTP-SECURE-JSON"},
+		"version":           2,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/serviceregistry/lookup?version=1", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	resp := decodeQuery(t, w)
+	if len(resp.ServiceQueryData) != 1 {
+		t.Errorf("expected 1 result for version=1, got %d", len(resp.ServiceQueryData))
+	}
+	if resp.ServiceQueryData[0].Version != 1 {
+		t.Errorf("expected version 1, got %d", resp.ServiceQueryData[0].Version)
+	}
+}
+
+func TestHandlerLookupWithInvalidVersionParamIgnored(t *testing.T) {
+	h := newTestHandler()
+	postJSON(t, h, "/serviceregistry/register", fullRegisterBody)
+
+	// Non-numeric version param should be ignored (all results returned).
+	req := httptest.NewRequest(http.MethodGet, "/serviceregistry/lookup?version=notanumber", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	resp := decodeQuery(t, w)
+	if len(resp.ServiceQueryData) != 1 {
+		t.Errorf("expected 1 result (invalid version ignored), got %d", len(resp.ServiceQueryData))
+	}
+}
+
+// ---- Unregister: error paths ----
+
+func TestHandlerUnregisterInvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodDelete, "/serviceregistry/unregister",
+		bytes.NewBufferString("{bad json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	newTestHandler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandlerUnregisterNotFound(t *testing.T) {
+	req := httptest.NewRequest(http.MethodDelete, "/serviceregistry/unregister",
+		bytes.NewBufferString(`{"serviceDefinition":"nonexistent","providerSystem":{"systemName":"s","address":"10.0.0.1","port":9000},"version":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	newTestHandler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for not-found, got %d", w.Code)
+	}
+}
+
+func TestHandlerUnregisterWrongMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/serviceregistry/unregister", nil)
+	w := httptest.NewRecorder()
+	newTestHandler().ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
 	}
 }

@@ -237,6 +237,23 @@ func TestHandlerOrchestrateIdentityValidToken200(t *testing.T) {
 	}
 }
 
+func TestHandlerOrchestrateValidationError400(t *testing.T) {
+	// Missing serviceDefinition causes Orchestrate to return ErrMissingService,
+	// which is not an identity error and must map to 400 Bad Request.
+	sr := fakeSR("sensor-1")
+	defer sr.Close()
+
+	h := newTestHandler(sr.URL, "", false)
+	// Empty requestedService → ErrMissingService
+	w := postOrchestrate(t, h, map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{},
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing serviceDefinition, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestHandlerOrchestrateIdentityTokenOverridesSelfReportedName(t *testing.T) {
 	// Provider authorized for "real-consumer" only.
 	// Request body claims systemName "impersonator".
