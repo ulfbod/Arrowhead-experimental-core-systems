@@ -207,7 +207,11 @@
       "WebFetch(domain:arrowhead.eu)",
       "WebFetch(domain:arrowhead-client-python-library.readthedocs.io)",
       "WebFetch(domain:www.researchgate.net)",
-      "WebFetch(domain:ceur-ws.org)"
+      "WebFetch(domain:ceur-ws.org)",
+      "WebFetch(domain:fpvn.arrowhead.eu)",
+      "Bash(docker run:*)",
+      "Bash(KAFKA_OPTS=\"-Djavax.net.debug=ssl:trustmanager\" docker compose up --no-deps kafka)",
+      "Bash(KAFKA_OPTS=\"-Djavax.net.debug=ssl:trustmanager\" docker compose run --rm -e KAFKA_OPTS=\"-Djavax.net.debug=ssl:trustmanager\" kafka)"
     ]
   }
 }

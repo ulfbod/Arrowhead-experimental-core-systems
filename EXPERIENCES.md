@@ -866,6 +866,387 @@ Specific notes:
 
 ---
 
+## EXP-013 — `apt-get` used in Kafka TLS Dockerfile, but cp-kafka image is RHEL-based (experiment-7, 2026-05-08)
+
+### Symptom
+
+`docker compose up --build` for experiment-7 failed during the Kafka image build:
+
+```
+ > [kafka 2/4] RUN apt-get update -qq && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*:
+0.312 /bin/sh: apt-get: command not found
+------
+failed to solve: process "/bin/sh -c apt-get update -qq && apt-get install -y ..." did not complete successfully: exit code: 127
+```
+
+All other images built and pushed successfully; only the Kafka TLS image failed.
+
+### Root Cause
+
+`kafka-tls.Dockerfile` was written assuming a Debian-based base image and used
+`apt-get` to install `openssl`:
+
+```dockerfile
+FROM confluentinc/cp-kafka:7.6.1
+USER root
+RUN apt-get update -qq && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+```
+
+`confluentinc/cp-kafka:7.6.1` is based on **Red Hat Enterprise Linux 8** (RHEL 8),
+which uses `microdnf`/`dnf`/`yum` — not `apt-get`. Running `apt-get` produces
+`command not found` with exit code 127.
+
+The additional finding: `openssl` is **already present** at `/usr/bin/openssl` in
+the cp-kafka image. The install step was unnecessary as well as wrong.
+
+### Fix
+
+Remove the `RUN apt-get ...` layer entirely from `kafka-tls.Dockerfile`:
+
+```dockerfile
+# BEFORE:
+FROM confluentinc/cp-kafka:7.6.1
+USER root
+RUN apt-get update -qq && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+COPY experiments/experiment-7/dockerfiles/kafka-tls-entrypoint.sh /kafka-tls-entrypoint.sh
+RUN chmod +x /kafka-tls-entrypoint.sh
+USER 1001
+ENTRYPOINT ["/kafka-tls-entrypoint.sh"]
+
+# AFTER:
+FROM confluentinc/cp-kafka:7.6.1
+USER root
+COPY experiments/experiment-7/dockerfiles/kafka-tls-entrypoint.sh /kafka-tls-entrypoint.sh
+RUN chmod +x /kafka-tls-entrypoint.sh
+USER 1001
+ENTRYPOINT ["/kafka-tls-entrypoint.sh"]
+```
+
+### Guidance for Future Iterations
+
+**Before adding a `RUN apt-get` (or any package manager command) to a Dockerfile,
+verify the base image's OS distribution.**
+
+Quick check:
+
+```bash
+docker run --rm <image> cat /etc/os-release
+```
+
+Confluent Platform images (`cp-kafka`, `cp-zookeeper`, `cp-schema-registry`, etc.)
+are RHEL-based and ship `microdnf`. They do not have `apt-get`.
+
+Specific checks:
+
+1. **Check whether the tool is already present** before adding an install step:
+   ```bash
+   docker run --rm <image> which openssl
+   ```
+   If it exits 0, no installation is needed.
+
+2. **If installation is genuinely required on a RHEL image**, use `microdnf`:
+   ```dockerfile
+   RUN microdnf install -y openssl && microdnf clean all
+   ```
+
+3. **Add this check to the Dockerfile comment** so future editors know the OS:
+   ```dockerfile
+   # confluentinc/cp-kafka:7.6.1 is RHEL 8-based; openssl ships at /usr/bin/openssl.
+   ```
+
+---
+
+## EXP-014 — Missing `go.sum` files cause Docker build failures for new experiment modules (experiment-7, 2026-05-08)
+
+### Symptom
+
+`docker compose up --build` for experiment-7 failed during the Go build stage for
+`data-provider-tls` and `robot-fleet-tls`:
+
+```
+ > [data-provider-tls builder 5/5] RUN go mod download && CGO_ENABLED=0 go build -o /app .:
+1.597 main.go:37:2: missing go.sum entry for module providing package github.com/segmentio/kafka-go
+1.597   (imported by arrowhead/experiment7/data-provider-tls); to add:
+1.597     go get arrowhead/experiment7/data-provider-tls
+
+ > [robot-fleet-tls builder 6/6] RUN go mod download && CGO_ENABLED=0 go build -o /app .:
+1.515 /src/support/message-broker/broker.go:12:2: missing go.sum entry for module providing package github.com/rabbitmq/amqp091-go
+1.515 main.go:43:2: missing go.sum entry for module providing package github.com/segmentio/kafka-go
+```
+
+The same problem was latent in four other experiment-7 modules (`cert-consumer`,
+`cert-provisioner`, `cert-rest-authz`, `consumer-direct-tls`) that had not yet
+reached the build stage.
+
+### Root Cause
+
+New Go modules were created with `go.mod` files listing external dependencies, but
+`go mod tidy` was never run in those module directories. Without `go.sum`, Docker
+multi-stage builds fail at `go mod download` because Go requires cryptographic
+checksums for every dependency before it will fetch or use them.
+
+`go build` and `go test` in the workspace succeeded locally because the Go workspace
+(`go.work`) allows the workspace to satisfy indirect dependencies from other modules'
+`go.sum` entries. The Docker build copies each module in isolation (no `go.work`) and
+therefore has no fallback — the missing `go.sum` is fatal.
+
+### Fix
+
+Run `go mod tidy` in every module directory that is missing a `go.sum`:
+
+```bash
+cd experiments/experiment-7/services/data-provider-tls && go mod tidy
+cd experiments/experiment-7/services/robot-fleet-tls   && go mod tidy
+cd experiments/experiment-7/services/cert-consumer      && go mod tidy
+cd experiments/experiment-7/services/cert-provisioner   && go mod tidy
+cd experiments/experiment-7/services/cert-rest-authz    && go mod tidy
+cd experiments/experiment-7/services/consumer-direct-tls && go mod tidy
+```
+
+Commit the generated `go.sum` files alongside the existing `go.mod` files.
+
+### Guidance for Future Iterations
+
+**After creating any new Go module, immediately run `go mod tidy` and commit the
+resulting `go.sum` before building or shipping the module.**
+
+The `go.work` workspace masks this problem locally: `go build ./...` from the repo
+root succeeds even with missing `go.sum` files because workspace dependency
+resolution is more permissive than module-isolated builds. Docker Dockerfiles build
+each module in isolation without `go.work`, so they expose the gap immediately.
+
+Specific checks:
+
+1. **After creating a new module**, verify `go.sum` exists before committing:
+   ```bash
+   ls experiments/experiment-N/services/*/go.sum
+   ```
+   Any missing file needs `go mod tidy` run in that directory.
+
+2. **Canary test**: build one Docker image for the new module immediately after
+   creating it — do not wait until all services are ready. A failing `go mod download`
+   at that stage confirms a missing `go.sum`.
+
+3. **`go build ./...` from the workspace root is not sufficient** to detect missing
+   `go.sum` files in individual modules. The only reliable check is either:
+   - `go mod tidy` in each module directory, or
+   - `docker compose build <service>` for at least one new service.
+
+---
+
+## EXP-015 — Confluent Kafka `dub` requires `KAFKA_SSL_KEYSTORE_FILENAME`, not `KAFKA_SSL_KEYSTORE_LOCATION` (experiment-7, 2026-05-08)
+
+### Symptom
+
+`docker compose up` succeeded for all services except Kafka, which exited with code 1:
+
+```
+kafka-1  | [kafka-tls] SSL configured — starting Kafka
+kafka-1  | ===> Configuring ...
+kafka-1  | Running in KRaft mode...
+kafka-1  | SSL is enabled.
+kafka-1  | KAFKA_SSL_KEYSTORE_FILENAME is required.
+kafka-1  | Command [/usr/local/bin/dub ensure KAFKA_SSL_KEYSTORE_FILENAME] FAILED !
+```
+
+The entrypoint script completed successfully (keystores were created, SSL env vars were
+exported), but Kafka itself refused to start.
+
+### Root Cause
+
+The Confluent Platform Docker image uses a configuration tool called `dub` (Docker
+Utility Bridge) to translate `KAFKA_*` environment variables into `server.properties`
+entries. `dub` enforces its own set of required variable names.
+
+For SSL, `dub` expects:
+
+- `KAFKA_SSL_KEYSTORE_FILENAME` — a **bare filename** resolved relative to
+  `/etc/kafka/secrets/`
+- `KAFKA_SSL_TRUSTSTORE_FILENAME` — same pattern
+
+The entrypoint script was instead exporting:
+
+- `KAFKA_SSL_KEYSTORE_LOCATION="/tmp/kafka-keystore.p12"` — an absolute path
+
+`dub` does not recognise `*_LOCATION` for file-based SSL config; it only accepts
+`*_FILENAME`. Because `KAFKA_SSL_KEYSTORE_FILENAME` was absent, `dub`'s
+`ensure` check failed and Kafka exited before writing `server.properties`.
+
+### Fix
+
+1. Write keystores to `/etc/kafka/secrets/` (the directory `dub` resolves filenames
+   against) instead of `/tmp/`.
+2. Export `KAFKA_SSL_KEYSTORE_FILENAME` and `KAFKA_SSL_TRUSTSTORE_FILENAME` as bare
+   filenames, not absolute paths.
+
+```bash
+# BEFORE:
+KEYSTORE_PATH="/tmp/kafka-keystore.p12"
+TRUSTSTORE_PATH="/tmp/kafka-truststore.p12"
+...
+export KAFKA_SSL_KEYSTORE_LOCATION="$KEYSTORE_PATH"
+export KAFKA_SSL_TRUSTSTORE_LOCATION="$TRUSTSTORE_PATH"
+
+# AFTER:
+SECRETS_DIR="/etc/kafka/secrets"
+KEYSTORE_PATH="$SECRETS_DIR/kafka-keystore.p12"
+TRUSTSTORE_PATH="$SECRETS_DIR/kafka-truststore.p12"
+mkdir -p "$SECRETS_DIR"
+...
+export KAFKA_SSL_KEYSTORE_FILENAME="kafka-keystore.p12"
+export KAFKA_SSL_TRUSTSTORE_FILENAME="kafka-truststore.p12"
+```
+
+Applied to `experiments/experiment-7/dockerfiles/kafka-tls-entrypoint.sh`.
+
+### Guidance for Future Iterations
+
+**When configuring SSL on `confluentinc/cp-kafka`, use `KAFKA_SSL_KEYSTORE_FILENAME`
+and place the keystore file in `/etc/kafka/secrets/` — never use
+`KAFKA_SSL_KEYSTORE_LOCATION` with an absolute path.**
+
+The `dub` variable name convention:
+
+| What you want | Wrong variable | Correct variable |
+|---|---|---|
+| Keystore file | `KAFKA_SSL_KEYSTORE_LOCATION` | `KAFKA_SSL_KEYSTORE_FILENAME` |
+| Truststore file | `KAFKA_SSL_TRUSTSTORE_LOCATION` | `KAFKA_SSL_TRUSTSTORE_FILENAME` |
+
+Both `*_FILENAME` variables are bare names (e.g. `kafka-keystore.p12`); `dub`
+prepends `/etc/kafka/secrets/` automatically when generating `server.properties`.
+
+Specific checks:
+
+1. **Search Confluent documentation and GitHub for `dub ensure`** before setting
+   any `KAFKA_SSL_*` environment variable — the required variable names are enforced
+   at startup and failures are silent until `dub` runs.
+
+2. **Check `/etc/kafka/secrets/` exists** in the entrypoint before writing keystores:
+   ```bash
+   mkdir -p /etc/kafka/secrets
+   ```
+
+3. **`KAFKA_SSL_KEYSTORE_LOCATION` is a valid Kafka broker config key** (in
+   `server.properties`) but it is NOT a valid `dub` environment variable. The two
+   naming systems are different and the error message only reveals the `dub` side.
+
+---
+
+## EXP-016 — Confluent Kafka SSL truststore never loaded; four interacting bugs (experiment-7, 2026-05-08)
+
+### Symptom
+
+Kafka kept failing at startup with `PKIX path building failed: unable to find valid
+certification path to requested target` even after the keystore and truststore were
+visually confirmed correct via `keytool -list` and `openssl verify`. Every fix attempt
+revealed a new layer of the same root failure.
+
+### Root Causes (layered)
+
+Four separate bugs combined to produce the same `PKIX path building failed` error:
+
+**Bug 1 — `KAFKA_INTER_BROKER_LISTENER_NAME` absent.**
+Kafka defaults `inter.broker.listener.name` to `PLAINTEXT`, which is not in
+`advertised.listeners` (only `SSL` is). This caused an `IllegalArgumentException`
+at startup before SSL validation even ran.
+Fix: add `KAFKA_INTER_BROKER_LISTENER_NAME: SSL` to docker-compose.yml.
+
+**Bug 2 — `dub` does NOT translate `KAFKA_SSL_TRUSTSTORE_FILENAME` to `ssl.truststore.location`.**
+`dub` (Confluent's Docker config tool) translates `KAFKA_SSL_KEYSTORE_FILENAME` →
+`ssl.keystore.location=/etc/kafka/secrets/<name>`, but performs no equivalent
+translation for `KAFKA_SSL_TRUSTSTORE_FILENAME`. The generated `kafka.properties`
+contained `ssl.truststore.filename=...` (unused by Kafka) but no
+`ssl.truststore.location`. Kafka therefore used the JVM default `cacerts` trust store,
+which does not contain our custom CA, causing the `PKIX path building failed` error.
+Fix: set `KAFKA_SSL_TRUSTSTORE_LOCATION` (absolute path) in the entrypoint script instead.
+
+**Bug 3 — `openssl pkcs12 -nokeys` does not produce Java-readable trusted entries.**
+The original truststore was created with `openssl pkcs12 -export -nokeys -in ca.crt`.
+OpenSSL does not set the `trustedKeyUsage` attribute on the CA entry. Java's SSL engine
+requires this attribute to recognise a certificate as a trust anchor. Even if the
+truststore path had been correctly passed to Kafka, it would have been empty from Java's
+perspective.
+Fix: use `keytool -importcert -trustcacerts` to create the truststore, which correctly
+marks the CA cert as a `trustedCertEntry`.
+
+**Bug 4 — Stale keystore/truststore files persist on container restart.**
+The entrypoint script wrote keystores to `/etc/kafka/secrets/` (inside the container
+filesystem). When Docker restarts a container without recreating it, the old files remain.
+On the next run, `set -e` caused the script to exit when keytool reported "alias already
+exists" instead of overwriting the stale truststore.
+Fix: add `rm -f "$KEYSTORE_PATH" "$TRUSTSTORE_PATH"` at the top of the keystore creation
+section.
+
+**Bonus — Hostname verification.**
+Kafka 2.0+ defaults `ssl.endpoint.identification.algorithm` to `HTTPS`, which requires
+the server cert to have a SAN matching the hostname. Our CA does not issue SANs. This
+would have caused a separate failure after the above bugs were fixed.
+Fix: set `KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""` in docker-compose.yml.
+
+### Final working SSL configuration pattern
+
+**Entrypoint script:**
+
+```bash
+# Remove stale files from previous container run
+rm -f "$KEYSTORE_PATH" "$TRUSTSTORE_PATH"
+
+# PKCS12 keystore — openssl is fine here (Java reads the private key entry correctly)
+openssl pkcs12 -export \
+  -in "$CERT_DIR/kafka.crt" -inkey "$CERT_DIR/kafka.key" \
+  -out "$KEYSTORE_PATH" -passout "pass:$PASS" -name kafka
+
+# JKS truststore — MUST use keytool (sets trusted-key-usage attribute)
+keytool -importcert -alias ca -file "$CERT_DIR/ca.crt" \
+  -keystore "$TRUSTSTORE_PATH" -storetype JKS -storepass "$PASS" -noprompt
+
+# Keystore: use FILENAME (dub translates to ssl.keystore.location)
+export KAFKA_SSL_KEYSTORE_TYPE=PKCS12
+export KAFKA_SSL_KEYSTORE_FILENAME="kafka-keystore.p12"
+export KAFKA_SSL_KEYSTORE_CREDENTIALS="kafka_keystore_creds"
+export KAFKA_SSL_KEY_CREDENTIALS="kafka_key_creds"
+
+# Truststore: use LOCATION (dub does NOT translate TRUSTSTORE_FILENAME)
+export KAFKA_SSL_TRUSTSTORE_TYPE=JKS
+export KAFKA_SSL_TRUSTSTORE_LOCATION="$TRUSTSTORE_PATH"
+export KAFKA_SSL_TRUSTSTORE_PASSWORD="$PASS"
+```
+
+**docker-compose.yml additions:**
+
+```yaml
+KAFKA_INTER_BROKER_LISTENER_NAME: SSL
+KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""   # our CA issues no SANs
+```
+
+### Guidance for Future Iterations
+
+1. **`dub` variable asymmetry**: `KAFKA_SSL_KEYSTORE_FILENAME` is translated to
+   `ssl.keystore.location`; `KAFKA_SSL_TRUSTSTORE_FILENAME` is NOT. Always verify
+   the generated `kafka.properties` with a test run before debugging SSL errors:
+   ```bash
+   docker run --rm -e KAFKA_SSL_TRUSTSTORE_FILENAME=foo ... \
+     confluentinc/cp-kafka:7.6.1 /etc/confluent/docker/configure \
+     && grep ssl /etc/kafka/kafka.properties
+   ```
+
+2. **Always use `keytool` for Java truststores.** `openssl pkcs12 -nokeys` produces
+   cert entries that Java's `X509TrustManager` silently ignores.
+
+3. **`PKIX path building failed` on Kafka startup almost always means the truststore
+   is missing or unreadable** — not that the cert chain is actually broken. Verify
+   with `openssl verify -CAfile ca.crt cert.crt` first; if that passes, the problem
+   is truststore configuration, not the certs.
+
+4. **Stale container filesystem:** add `rm -f` before recreating keystores in
+   entrypoint scripts. Docker restarts preserve the container filesystem; `docker
+   compose up -d` does not recreate containers unless the image or config changed.
+
+5. **Set `ssl.endpoint.identification.algorithm=` (empty)** when the CA does not issue
+   SANs. The default `HTTPS` value causes Kafka to reject its own cert at startup.
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -889,3 +1270,10 @@ Use this before marking an experiment implementation complete:
 - [ ] If any file in `dashboard/src/` is a symlink to `support/dashboard-shared/`, the dashboard Dockerfile uses the loop pattern: `find src -type l | while read link; do rel="${link#src/}"; rm "$link" && cp "/dashboard-shared/$rel" "$link"; done` — never use `cp -r /dashboard-shared/. src/` (overwrites real components with stubs) or `cp -rn` (not supported in Alpine BusyBox) (EXP-010)
 - [ ] If any file in `dashboard/src/` is a symlink, `vite.config.ts` contains `resolve: { preserveSymlinks: true }` — run `npm run build` locally (not just `npm run typecheck`) to verify (EXP-011)
 - [ ] README.md includes the WSL2 networking note alongside browser access instructions — users running Docker Engine directly in WSL2 must use the WSL2 IP (`hostname -I`) or enable `networkingMode=mirrored` in `.wslconfig` (EXP-012)
+- [ ] Any Dockerfile built `FROM confluentinc/cp-*` uses `microdnf` (not `apt-get`) for any package installs — and checks whether the package (e.g. `openssl`) is already present before adding an install step (EXP-013)
+- [ ] Kafka SSL entrypoint scripts use `KAFKA_SSL_KEYSTORE_FILENAME` for the keystore (dub translates it to `ssl.keystore.location`) but `KAFKA_SSL_TRUSTSTORE_LOCATION` (absolute path) for the truststore — dub does NOT translate `KAFKA_SSL_TRUSTSTORE_FILENAME` (EXP-015, EXP-016)
+- [ ] Kafka SSL truststore is created with `keytool -importcert -trustcacerts`, NOT with `openssl pkcs12 -nokeys` — openssl does not set the Java-required trusted-key-usage attribute (EXP-016)
+- [ ] Entrypoint scripts that write keystores add `rm -f` before recreating files — container restarts preserve the filesystem and `set -e` will exit on "alias already exists" (EXP-016)
+- [ ] `KAFKA_INTER_BROKER_LISTENER_NAME` is set in docker-compose.yml when the SSL listener is the only advertised listener (EXP-016)
+- [ ] `KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""` is set when the CA does not issue SANs — Kafka 2.0+ defaults to HTTPS hostname verification which rejects CN-only certs at startup (EXP-016)
+- [ ] Every Go module under `experiments/` has a `go.sum` file committed alongside its `go.mod` — run `go mod tidy` in each module directory and commit both files before building Docker images (EXP-014)
