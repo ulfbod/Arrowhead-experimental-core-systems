@@ -509,5 +509,24 @@ services:
       robot-fleet-tls:
         condition: service_healthy
 
+  dashboard:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/dashboard.Dockerfile
+    ports:
+      - "3007:80"
+    depends_on:
+      - consumerauth
+      - authzforce
+      - policy-sync
+      - kafka-authz
+      - cert-rest-authz
+      - cert-consumer
+      - analytics-consumer
+      - robot-fleet-tls
+      - data-provider-tls
+      - serviceregistry
+      - ca
+
 volumes:
   certs:

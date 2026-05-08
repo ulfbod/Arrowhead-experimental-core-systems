@@ -1,0 +1,1 @@
+../../../../support/dashboard-shared/views/HealthView.tsx

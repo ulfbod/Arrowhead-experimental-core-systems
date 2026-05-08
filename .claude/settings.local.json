@@ -211,7 +211,12 @@
       "WebFetch(domain:fpvn.arrowhead.eu)",
       "Bash(docker run:*)",
       "Bash(KAFKA_OPTS=\"-Djavax.net.debug=ssl:trustmanager\" docker compose up --no-deps kafka)",
-      "Bash(KAFKA_OPTS=\"-Djavax.net.debug=ssl:trustmanager\" docker compose run --rm -e KAFKA_OPTS=\"-Djavax.net.debug=ssl:trustmanager\" kafka)"
+      "Bash(KAFKA_OPTS=\"-Djavax.net.debug=ssl:trustmanager\" docker compose run --rm -e KAFKA_OPTS=\"-Djavax.net.debug=ssl:trustmanager\" kafka)",
+      "Bash(ln -sf ../../../../support/dashboard-shared/main.tsx main.tsx)",
+      "Bash(ln -sf ../../../../support/dashboard-shared/hooks/usePolling.ts hooks/usePolling.ts)",
+      "Bash(ln -sf ../../../../support/dashboard-shared/config/context.tsx config/context.tsx)",
+      "Bash(ln -sf ../../../../support/dashboard-shared/config/defaults.ts config/defaults.ts)",
+      "Bash(ln -sf ../../../../support/dashboard-shared/config/types.ts config/types.ts)"
     ]
   }
 }
