@@ -97,7 +97,7 @@ Several paths use TLS for transport encryption without client authentication:
 
 | Connection | Configuration |
 |---|---|
-| cert-rest-authz → data-provider-tls (upstream proxy) | `buildClientTLSConfig` — presents own cert, verifies server against CA pool |
+| cert-rest-authz → data-provider-tls (upstream proxy) | `buildClientTLSConfig` — presents own cert, verifies server against CA pool (fixed: previously used `http.DefaultClient` which bypassed the CA pool; see EXP-018 in `EXPERIENCES.md`) |
 | data-provider-tls HTTPS server | `tls.Listen` with own cert, `MinVersion: TLS12`, no `ClientAuth` |
 | robot-fleet-tls → RabbitMQ | `amqp.DialTLS` with CA pool in `RootCAs` |
 | robot-fleet-tls → Kafka | `kafka.Transport{TLS: &tls.Config{RootCAs: caPool}}` |
@@ -160,16 +160,26 @@ Subject: pkix.Name{CommonName: req.SystemName}
 Issued CNs are bare names such as `cert-consumer`, `kafka`, `rabbitmq`, `cert-rest-authz`.
 These do not embed cloud identity or follow the AH5 X.509 profile naming hierarchy.
 
-### 4.3 No Subject Alternative Names (SANs) in Issued Certificates
+### 4.3 DNS SANs Present but No IP SANs — AH5 Naming Still Non-Conformant
 
-The leaf certificate template in `ca.go` contains no `DNSNames` or `IPAddresses` fields.
-The AH5 X.509 profile (and RFC 5280 as enforced by Go's TLS stack since 1.15) requires SANs
-for hostname verification. In practice this works within Docker (services use hostnames
-matching the CN) but would fail strict hostname verification in environments where Go's TLS
-stack checks SANs and the SAN list is absent.
+The leaf certificate template in `ca.go` adds the system name as a DNS SAN:
 
-The `cert-consumer` poll test works around this by using IP SANs in the test-only
-certificate, underscoring that the production CA does not emit them.
+```go
+// Go 1.15+ requires SANs for hostname verification; CN alone is rejected.
+// Add the system name as a DNS SAN so TLS clients can verify server certs.
+DNSNames: []string{req.SystemName},
+```
+
+Every issued certificate carries a DNS SAN matching the system name (e.g.
+`DNS:cert-rest-authz`, `DNS:data-provider-tls`). TLS hostname verification works correctly
+within Docker because Go's TLS stack verifies the SAN, which matches the service hostname.
+This is not a gap in the running system.
+
+The `cert-consumer` poll test uses IP SANs (`127.0.0.1`) because the test server binds to
+an IP address, not because the production CA lacks DNS SANs.
+
+The remaining gap is that AH5 specifies a hierarchical DNS SAN format
+(`systemName.cloudName.operatorName.arrowhead.eu`) rather than bare system names — see 4.2.
 
 ### 4.4 No Certificate Revocation at the X.509 Level
 
@@ -208,6 +218,26 @@ specification." The CA HTTP API is a custom design. AH5 defines a Certificate Au
 a supporting core system with a hierarchical PKI model (Master CA → Organization CA →
 Local Cloud CA → end-entity). The flat single-CA design here does not match that hierarchy.
 
+### 4.8 Dashboard nginx Proxy Disables TLS Verification for data-provider-tls
+
+`experiments/experiment-7/dashboard/nginx.conf` proxies dashboard API calls to the
+`data-provider-tls` HTTPS backend with certificate verification disabled:
+
+```nginx
+location /api/data-provider-tls/ {
+    proxy_pass       https://data-provider-tls:9094/;
+    proxy_ssl_verify off;   # nginx lacks the ephemeral CA cert
+}
+```
+
+`proxy_ssl_verify off` is functionally equivalent to `InsecureSkipVerify: true` — nginx
+accepts any server certificate without validating the chain. This does not affect the
+data-plane authorization path (cert-consumer → cert-rest-authz → data-provider-tls), which
+uses proper Go TLS clients with the CA pool. The dashboard is an observatory/UI component;
+no sensitive authorization decisions flow through this proxy path. The root cause is that
+nginx does not have access to the ephemeral CA certificate (it would need to be mounted into
+the dashboard container at runtime).
+
 ---
 
 ## 5. Summary Table
@@ -219,10 +249,12 @@ Local Cloud CA → end-entity). The flat single-CA design here does not match th
 | Peer cert verification against CA pool | Yes | `ClientCAs`/`RootCAs` set on all TLS configs; `MinVersion: TLS12` everywhere |
 | Consumer identity from cert CN | Yes | `r.TLS.PeerCertificates[0].Subject.CommonName` in `cert-rest-authz/server.go` |
 | CA active and issuing runtime certs | Yes | `core/internal/ca/service/ca.go`; all experiment-7 services call CA at startup |
-| SAN (DNS/IP) in issued certificates | No | Bare CN only; no `DNSNames` or `IPAddresses` in leaf template |
+| DNS SANs in issued certificates | Yes | `DNSNames: []string{req.SystemName}` in leaf template; hostname verification works within Docker |
+| IP SANs in issued certificates | No | Test certs use IP SANs; production CA issues DNS SANs only |
+| nginx dashboard proxy verifies server cert | No | `proxy_ssl_verify off` for data-provider-tls path (see 4.8) |
 | AH5 hierarchical cert naming | No | Bare system names, not `sys.cloud.org.arrowhead.eu` |
 | Certificate revocation (CRL/OCSP) | No | Policy-level (XACML) revocation only |
-| `InsecureSkipVerify` in production code | No | Absent from all service code |
+| `InsecureSkipVerify` in Go service code | No | Absent from all Go service code |
 | mTLS on core system communication | No | `core/GAP_ANALYSIS.md G4` — documented gap |
 | AH5 JWT bearer token authorization | No | XACML/AuthzForce used instead |
 | Hierarchical PKI (Master→Org→Cloud CA) | No | Flat single self-signed CA |
