@@ -3,6 +3,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"arrowhead/core/internal/ca/model"
@@ -18,6 +19,8 @@ func NewHandler(svc *service.CAService) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ca/certificate/issue", h.handleIssue)
 	mux.HandleFunc("/ca/certificate/verify", h.handleVerify)
+	mux.HandleFunc("/ca/certificate/revoke", h.handleRevoke)
+	mux.HandleFunc("/ca/crl", h.handleCRL)
 	mux.HandleFunc("/ca/info", h.handleInfo)
 	mux.HandleFunc("/ca/health", h.handleHealth)
 	mux.HandleFunc("/health", h.handleHealth)
@@ -64,6 +67,49 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// POST /ca/certificate/revoke
+func (h *Handler) handleRevoke(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	var req model.RevokeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	resp, err := h.svc.Revoke(req.Certificate)
+	if err != nil {
+		if errors.Is(err, service.ErrMissingCertificate) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, service.ErrCertNotIssuedByCA) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// GET /ca/crl
+func (h *Handler) handleCRL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	crlPEM, err := h.svc.CRL()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate CRL")
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.WriteHeader(http.StatusOK)
+	w.Write(crlPEM) //nolint:errcheck
+}
+
 // GET /ca/info
 func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -80,7 +126,7 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	json.NewEncoder(w).Encode(v) //nolint:errcheck
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

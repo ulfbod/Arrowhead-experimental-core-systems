@@ -144,6 +144,11 @@ export interface VerifyCertResult {
   reason:     string
 }
 
+export interface RevokeResponse {
+  systemName: string
+  revokedAt:  string
+}
+
 // ── ServiceRegistry query ─────────────────────────────────────────────────────
 
 export interface ServiceRegistryProvider {

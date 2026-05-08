@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,6 +145,120 @@ func TestHandlerInfo(t *testing.T) {
 	if info.Certificate == "" {
 		t.Error("expected non-empty Certificate")
 	}
+}
+
+// ---- Revoke ----
+
+func TestHandlerRevokeValid(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Issue first.
+	issueW := postJSON(t, h, "/ca/certificate/issue", map[string]string{"systemName": "to-revoke"})
+	var issued model.IssuedCert
+	json.NewDecoder(issueW.Body).Decode(&issued)
+
+	// Verify is valid.
+	verifyW := postJSON(t, h, "/ca/certificate/verify", map[string]string{"certificate": issued.Certificate})
+	var verifyBefore map[string]any
+	json.NewDecoder(verifyW.Body).Decode(&verifyBefore)
+	if verifyBefore["valid"] != true {
+		t.Fatal("expected valid=true before revocation")
+	}
+
+	// Revoke it.
+	w := postJSON(t, h, "/ca/certificate/revoke", map[string]string{"certificate": issued.Certificate})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var revokeResp map[string]any
+	json.NewDecoder(w.Body).Decode(&revokeResp)
+	if revokeResp["systemName"] != "to-revoke" {
+		t.Errorf("systemName = %v, want to-revoke", revokeResp["systemName"])
+	}
+	if revokeResp["revokedAt"] == "" {
+		t.Error("revokedAt is empty")
+	}
+
+	// Verify now returns invalid.
+	verifyW2 := postJSON(t, h, "/ca/certificate/verify", map[string]string{"certificate": issued.Certificate})
+	var verifyAfter map[string]any
+	json.NewDecoder(verifyW2.Body).Decode(&verifyAfter)
+	if verifyAfter["valid"] != false {
+		t.Error("expected valid=false after revocation")
+	}
+}
+
+func TestHandlerRevokeMissingCert(t *testing.T) {
+	h := newTestHandler(t)
+	w := postJSON(t, h, "/ca/certificate/revoke", map[string]string{"certificate": ""})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandlerRevokeWrongMethod(t *testing.T) {
+	h := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/ca/certificate/revoke", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ---- CRL ----
+
+func TestHandlerCRLEmpty(t *testing.T) {
+	h := newTestHandler(t)
+	w := getReq(t, h, "/ca/crl")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	ct := w.Header().Get("Content-Type")
+	if ct != "application/x-pem-file" {
+		t.Errorf("Content-Type = %q, want application/x-pem-file", ct)
+	}
+	body := w.Body.String()
+	if body == "" {
+		t.Error("CRL body is empty")
+	}
+	// PEM header must be present.
+	if !contains(body, "-----BEGIN X509 CRL-----") {
+		t.Errorf("CRL body does not contain PEM header: %q", body)
+	}
+}
+
+func TestHandlerCRLAfterRevoke(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Issue and revoke a cert.
+	issueW := postJSON(t, h, "/ca/certificate/issue", map[string]string{"systemName": "crl-test"})
+	var issued model.IssuedCert
+	json.NewDecoder(issueW.Body).Decode(&issued)
+	postJSON(t, h, "/ca/certificate/revoke", map[string]string{"certificate": issued.Certificate})
+
+	// CRL must contain the revoked serial.
+	w := getReq(t, h, "/ca/crl")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !contains(w.Body.String(), "-----BEGIN X509 CRL-----") {
+		t.Error("CRL response does not contain PEM header")
+	}
+}
+
+func TestHandlerCRLWrongMethod(t *testing.T) {
+	h := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/ca/crl", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func contains(s, sub string) bool {
+	return strings.Contains(s, sub)
 }
 
 // ---- Health ----

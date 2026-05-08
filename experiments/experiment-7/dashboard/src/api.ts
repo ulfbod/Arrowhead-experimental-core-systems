@@ -21,6 +21,7 @@ import type {
   CAInfo,
   IssuedCert,
   VerifyCertResult,
+  RevokeResponse,
   ServiceQueryResponse,
 } from './types'
 
@@ -215,11 +216,19 @@ export function fetchCAInfo(signal?: AbortSignal): Promise<CAInfo> {
   return get<CAInfo>('/api/ca/ca/info', { signal })
 }
 
-export async function issueCert(systemName: string, signal?: AbortSignal): Promise<IssuedCert> {
+export async function issueCert(
+  systemName: string,
+  cloudName?: string,
+  operatorName?: string,
+  signal?: AbortSignal,
+): Promise<IssuedCert> {
+  const body: Record<string, string> = { systemName }
+  if (cloudName) body.cloudName = cloudName
+  if (operatorName) body.operatorName = operatorName
   const resp = await fetch('/api/ca/ca/certificate/issue', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ systemName }),
+    body: JSON.stringify(body),
     signal,
   })
   if (!resp.ok) {
@@ -227,6 +236,29 @@ export async function issueCert(systemName: string, signal?: AbortSignal): Promi
     throw new Error(`HTTP ${resp.status}: ${text}`)
   }
   return resp.json() as Promise<IssuedCert>
+}
+
+export async function revokeCert(certificate: string, signal?: AbortSignal): Promise<RevokeResponse> {
+  const resp = await fetch('/api/ca/ca/certificate/revoke', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ certificate }),
+    signal,
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(`HTTP ${resp.status}: ${text}`)
+  }
+  return resp.json() as Promise<RevokeResponse>
+}
+
+export async function fetchCRL(signal?: AbortSignal): Promise<string> {
+  const resp = await fetch('/api/ca/ca/crl', { signal })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(`HTTP ${resp.status}: ${text}`)
+  }
+  return resp.text()
 }
 
 export async function verifyCert(certificate: string, signal?: AbortSignal): Promise<VerifyCertResult> {

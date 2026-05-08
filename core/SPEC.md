@@ -442,17 +442,23 @@ Issues a new leaf certificate.
 **Request body:**
 ```json
 {
-  "systemName": "string (required, non-empty)",
-  "validDays":  0
+  "systemName":   "string (required, non-empty)",
+  "validDays":    0,
+  "cloudName":    "string (optional)",
+  "operatorName": "string (optional)"
 }
 ```
 
 `validDays` overrides the default certificate lifetime when > 0.
 
-The CA sets the `systemName` as both the certificate Subject CN and a DNS Subject
-Alternative Name (SAN). Go 1.15+ ignores the CN for TLS hostname verification and
-requires a SAN; including the `systemName` as a DNS SAN ensures that TLS clients
-connecting to `<systemName>:<port>` can verify the server certificate.
+When `cloudName` and `operatorName` are both provided, the certificate Subject CN is
+set to the AH5 hierarchical name `systemName.cloudName.operatorName.arrowhead.eu`
+and both the bare `systemName` and the hierarchical name are included as DNS SANs.
+This enables AH5-conformant cert naming while preserving Docker hostname verification
+(Go 1.15+ ignores CN for TLS hostname verification and requires a matching SAN).
+
+When `cloudName`/`operatorName` are omitted, the CN and DNS SAN are set to the bare
+`systemName` as before.
 
 **Response: 201 Created**
 ```json
@@ -496,6 +502,44 @@ Returns the CA's own certificate.
   "certificate": "PEM string"
 }
 ```
+
+### POST /ca/certificate/revoke
+
+Revokes a previously issued certificate. The certificate must have been issued by
+this CA. Revoking an already-revoked certificate is idempotent.
+
+**Request body:**
+```json
+{ "certificate": "PEM string" }
+```
+
+**Response: 200 OK**
+```json
+{
+  "systemName": "string",
+  "revokedAt":  "RFC3339"
+}
+```
+
+**Errors:** `400` if `certificate` is empty, not valid PEM, or not issued by this CA; `405` for non-POST.
+
+After revocation, `POST /ca/certificate/verify` for the same certificate returns
+`"valid": false` with `"reason": "certificate has been revoked"`.
+
+### GET /ca/crl
+
+Returns the current Certificate Revocation List (CRL) signed by this CA. The CRL
+is generated fresh on each call and is valid for 24 hours.
+
+**Response: 200 OK** — PEM-encoded CRL (`Content-Type: application/x-pem-file`)
+
+```
+-----BEGIN X509 CRL-----
+...
+-----END X509 CRL-----
+```
+
+**Errors:** `405` for non-GET; `500` if CRL generation fails (rare, indicates internal crypto error).
 
 ### GET /ca/health  ·  GET /health
 

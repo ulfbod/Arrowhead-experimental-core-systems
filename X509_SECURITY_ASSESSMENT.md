@@ -240,7 +240,23 @@ the dashboard container at runtime).
 
 ---
 
-## 5. Summary Table
+## 5. Remediation Status
+
+The following gaps were addressed in a subsequent implementation pass. All code changes
+are in `core/` and `experiments/experiment-7/`.
+
+| Gap | Action taken |
+|---|---|
+| **4.2** Certificate naming | `IssueRequest` now accepts optional `cloudName` and `operatorName`. When both are set, the CN is set to `systemName.cloudName.operatorName.arrowhead.eu` and both the bare name and the hierarchical name appear as DNS SANs. Backward-compatible: bare-name behaviour unchanged when fields are omitted. Tests added in `core/internal/ca/service/ca_test.go`. SPEC.md updated. |
+| **4.4** No CRL/OCSP | `CAService` now tracks revoked certificates in an in-memory list. `Revoke()` validates that the cert was issued by this CA before accepting the revocation. `CRL()` generates a CA-signed PEM CRL. `VerifyCert()` checks the revocation list after chain validation. New endpoints: `POST /ca/certificate/revoke`, `GET /ca/crl`. Tests added in `ca_test.go` and `handler_test.go`. SPEC.md updated. Note: revocation state is in-memory (GAP_ANALYSIS G5); it resets on CA restart. |
+| **4.8** nginx `proxy_ssl_verify off` | The `cert-provisioner` already writes `ca.crt` to the shared `/certs` Docker volume. The dashboard service now mounts this volume (`certs:/certs:ro`) with a `depends_on: cert-provisioner: condition: service_completed_successfully` guard. `nginx.conf` replaced `proxy_ssl_verify off` with `proxy_ssl_verify on; proxy_ssl_trusted_certificate /certs/ca.crt; proxy_ssl_verify_depth 2`. No new containers or entrypoint scripts required. |
+
+Gaps **4.1**, **4.5**, **4.6**, and **4.7** remain documented-only. They are intentional
+architectural choices or out-of-scope for this experiment (see `core/GAP_ANALYSIS.md`).
+
+---
+
+## 6. Summary Table
 
 | Criterion | Status | Evidence |
 |---|---|---|
@@ -251,9 +267,9 @@ the dashboard container at runtime).
 | CA active and issuing runtime certs | Yes | `core/internal/ca/service/ca.go`; all experiment-7 services call CA at startup |
 | DNS SANs in issued certificates | Yes | `DNSNames: []string{req.SystemName}` in leaf template; hostname verification works within Docker |
 | IP SANs in issued certificates | No | Test certs use IP SANs; production CA issues DNS SANs only |
-| nginx dashboard proxy verifies server cert | No | `proxy_ssl_verify off` for data-provider-tls path (see 4.8) |
-| AH5 hierarchical cert naming | No | Bare system names, not `sys.cloud.org.arrowhead.eu` |
-| Certificate revocation (CRL/OCSP) | No | Policy-level (XACML) revocation only |
+| nginx dashboard proxy verifies server cert | **Yes (fixed)** | `proxy_ssl_verify on; proxy_ssl_trusted_certificate /certs/ca.crt` — see §5 |
+| AH5 hierarchical cert naming | **Supported (fixed)** | `cloudName`+`operatorName` fields in `IssueRequest` — see §5 |
+| Certificate revocation (CRL/OCSP) | **Partial (fixed)** | In-memory CRL via `POST /ca/certificate/revoke` + `GET /ca/crl` — see §5 |
 | `InsecureSkipVerify` in Go service code | No | Absent from all Go service code |
 | mTLS on core system communication | No | `core/GAP_ANALYSIS.md G4` — documented gap |
 | AH5 JWT bearer token authorization | No | XACML/AuthzForce used instead |

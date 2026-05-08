@@ -515,18 +515,34 @@ services:
       dockerfile: experiments/experiment-7/dockerfiles/dashboard.Dockerfile
     ports:
       - "3007:80"
+    volumes:
+      # Mount the shared cert volume so nginx can verify data-provider-tls server cert (Gap 4.8 fix).
+      - certs:/certs:ro
     depends_on:
-      - consumerauth
-      - authzforce
-      - policy-sync
-      - kafka-authz
-      - cert-rest-authz
-      - cert-consumer
-      - analytics-consumer
-      - robot-fleet-tls
-      - data-provider-tls
-      - serviceregistry
-      - ca
+      cert-provisioner:
+        condition: service_completed_successfully
+      consumerauth:
+        condition: service_started
+      authzforce:
+        condition: service_started
+      policy-sync:
+        condition: service_started
+      kafka-authz:
+        condition: service_started
+      cert-rest-authz:
+        condition: service_started
+      cert-consumer:
+        condition: service_started
+      analytics-consumer:
+        condition: service_started
+      robot-fleet-tls:
+        condition: service_started
+      data-provider-tls:
+        condition: service_started
+      serviceregistry:
+        condition: service_started
+      ca:
+        condition: service_started
 
 volumes:
   certs:

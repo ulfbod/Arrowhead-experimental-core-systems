@@ -13,6 +13,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -21,7 +22,18 @@ import (
 	"arrowhead/core/internal/ca/model"
 )
 
-var ErrMissingSystemName = errors.New("systemName is required")
+var (
+	ErrMissingSystemName  = errors.New("systemName is required")
+	ErrMissingCertificate = errors.New("certificate is required")
+	ErrCertNotIssuedByCA  = errors.New("certificate was not issued by this CA")
+)
+
+// revokedEntry records when a certificate serial was revoked.
+type revokedEntry struct {
+	serial     *big.Int
+	revokedAt  time.Time
+	systemName string
+}
 
 // CAService manages a self-signed CA and issues leaf certificates.
 type CAService struct {
@@ -31,6 +43,11 @@ type CAService struct {
 	certDur    time.Duration
 	mu         sync.Mutex
 	nextSerial atomic.Int64
+
+	// revocation: protected by revokedMu
+	revokedMu   sync.RWMutex
+	revokedList []revokedEntry // ordered by revocation time
+	revokedSet  map[string]struct{} // serial.String() → revoked; fast membership test
 }
 
 // NewCAService initialises the CA by generating a self-signed root certificate.
@@ -66,10 +83,11 @@ func NewCAService(certDuration time.Duration) (*CAService, error) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 
 	svc := &CAService{
-		caKey:     key,
-		caCert:    cert,
-		caCertPEM: certPEM,
-		certDur:   certDuration,
+		caKey:      key,
+		caCert:     cert,
+		caCertPEM:  certPEM,
+		certDur:    certDuration,
+		revokedSet: make(map[string]struct{}),
 	}
 	svc.nextSerial.Store(2) // 1 is the CA itself
 	return svc, nil
@@ -94,16 +112,31 @@ func (s *CAService) Issue(req model.IssueRequest) (*model.IssuedCert, error) {
 
 	serial := s.nextSerial.Add(1)
 	now := time.Now()
+
+	// Build the Subject CN and DNS SANs.
+	// When cloudName and operatorName are provided, form the AH5 hierarchical name:
+	//   systemName.cloudName.operatorName.arrowhead.eu
+	// Both the bare system name and the hierarchical name are included as DNS SANs so
+	// that TLS hostname verification works for both Docker hostnames and AH5-compliant names.
+	cn := req.SystemName
+	dnsNames := []string{req.SystemName}
+	if req.CloudName != "" && req.OperatorName != "" {
+		hierarchical := fmt.Sprintf("%s.%s.%s.arrowhead.eu", req.SystemName, req.CloudName, req.OperatorName)
+		cn = hierarchical
+		dnsNames = append(dnsNames, hierarchical)
+	}
+
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(serial),
-		Subject:      pkix.Name{CommonName: req.SystemName},
+		Subject:      pkix.Name{CommonName: cn},
 		// Go 1.15+ requires SANs for hostname verification; CN alone is rejected.
-		// Add the system name as a DNS SAN so TLS clients can verify server certs.
-		DNSNames:     []string{req.SystemName},
-		NotBefore:    now.Add(-time.Minute),
-		NotAfter:     now.Add(dur),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		// Always include the bare system name as a DNS SAN for Docker hostname verification.
+		// When hierarchical naming is used, the AH5 name is also included.
+		DNSNames:    dnsNames,
+		NotBefore:   now.Add(-time.Minute),
+		NotAfter:    now.Add(dur),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 	}
 
 	s.mu.Lock()
@@ -139,7 +172,7 @@ func (s *CAService) CAInfo() model.CAInfo {
 }
 
 // VerifyCert parses a PEM-encoded leaf certificate and checks it was signed
-// by this CA and has not expired.
+// by this CA, has not expired, and has not been revoked.
 func (s *CAService) VerifyCert(certPEM string) (systemName string, valid bool, reason string) {
 	block, _ := pem.Decode([]byte(certPEM))
 	if block == nil {
@@ -154,5 +187,86 @@ func (s *CAService) VerifyCert(certPEM string) (systemName string, valid bool, r
 	if _, err := cert.Verify(x509.VerifyOptions{Roots: pool}); err != nil {
 		return "", false, err.Error()
 	}
+
+	// Check revocation after chain verification.
+	s.revokedMu.RLock()
+	_, revoked := s.revokedSet[cert.SerialNumber.String()]
+	s.revokedMu.RUnlock()
+	if revoked {
+		return cert.Subject.CommonName, false, "certificate has been revoked"
+	}
+
 	return cert.Subject.CommonName, true, ""
+}
+
+// Revoke records a certificate as revoked. The certificate must have been issued
+// by this CA. Revoking an already-revoked certificate is a no-op (idempotent).
+func (s *CAService) Revoke(certPEM string) (*model.RevokeResponse, error) {
+	if certPEM == "" {
+		return nil, ErrMissingCertificate
+	}
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return nil, errors.New("invalid PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("cannot parse certificate: %w", err)
+	}
+
+	// Verify the cert belongs to this CA before accepting revocation.
+	pool := x509.NewCertPool()
+	pool.AddCert(s.caCert)
+	if _, err := cert.Verify(x509.VerifyOptions{Roots: pool}); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrCertNotIssuedByCA, err.Error())
+	}
+
+	now := time.Now()
+	key := cert.SerialNumber.String()
+
+	s.revokedMu.Lock()
+	if _, already := s.revokedSet[key]; !already {
+		s.revokedSet[key] = struct{}{}
+		s.revokedList = append(s.revokedList, revokedEntry{
+			serial:     cert.SerialNumber,
+			revokedAt:  now,
+			systemName: cert.Subject.CommonName,
+		})
+	}
+	s.revokedMu.Unlock()
+
+	return &model.RevokeResponse{
+		SystemName: cert.Subject.CommonName,
+		RevokedAt:  now.UTC().Format(time.RFC3339),
+	}, nil
+}
+
+// CRL generates and returns a PEM-encoded Certificate Revocation List signed by
+// this CA. The CRL is generated fresh on each call; it is valid for 24 hours.
+func (s *CAService) CRL() ([]byte, error) {
+	s.revokedMu.RLock()
+	entries := make([]x509.RevocationListEntry, len(s.revokedList))
+	for i, e := range s.revokedList {
+		entries[i] = x509.RevocationListEntry{
+			SerialNumber:   e.serial,
+			RevocationTime: e.revokedAt,
+		}
+	}
+	s.revokedMu.RUnlock()
+
+	template := &x509.RevocationList{
+		Number:                    big.NewInt(time.Now().Unix()),
+		ThisUpdate:                time.Now(),
+		NextUpdate:                time.Now().Add(24 * time.Hour),
+		RevokedCertificateEntries: entries,
+	}
+
+	s.mu.Lock()
+	der, err := x509.CreateRevocationList(rand.Reader, template, s.caCert, s.caKey)
+	s.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("create CRL: %w", err)
+	}
+
+	return pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: der}), nil
 }
