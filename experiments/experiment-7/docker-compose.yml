@@ -1,0 +1,503 @@
+# Experiment 7 — X.509/TLS Extension: Certificate-Based Identity with mTLS.
+#
+# Architecture:
+#   Single root CA (core CertificateAuthority) issues all service certificates.
+#   cert-provisioner fetches certs for infrastructure (Kafka, RabbitMQ) at startup.
+#   Go services fetch their own certs at runtime via the CA HTTP API.
+#
+# TLS coverage:
+#   cert-consumer ←mTLS→ cert-rest-authz  (identity from client cert CN)
+#   cert-rest-authz → data-provider-tls   (HTTPS, server cert verified)
+#   robot-fleet-tls → Kafka              (SSL, CA cert verified)
+#   robot-fleet-tls → RabbitMQ          (AMQPS, CA cert verified)
+#   consumer-direct-tls → RabbitMQ      (AMQPS, CA cert verified)
+#   kafka-authz → Kafka                  (SSL, CA cert verified)
+#   data-provider-tls → Kafka            (SSL, CA cert verified)
+#
+# Plain HTTP (documented limitations):
+#   Core systems: serviceregistry, authentication, consumerauth, dynamicorch
+#   AuthzForce: Java service in HTTP mode (complex TLS config)
+#   policy-sync → AuthzForce: HTTP (AuthzForce is HTTP)
+#   analytics-consumer → kafka-authz: HTTP SSE (TLS on Kafka layer, not SSE)
+#   topic-auth-xacml → RabbitMQ management: HTTP management API
+#
+# Ports exposed to host:
+#   Dashboard:               http://localhost:3007
+#   cert-rest-authz (mTLS):  https://localhost:9098  (requires client cert)
+#   cert-rest-authz (HTTP):  http://localhost:9099   (health/status/check)
+#   kafka-authz SSE/check:   http://localhost:9091
+#   AuthzForce API:          http://localhost:8186/authzforce-ce
+#   RabbitMQ management UI:  http://localhost:15676  (admin/admin)
+#   robot-fleet control API: http://localhost:9106/config
+#   ServiceRegistry:         http://localhost:8080
+#   ConsumerAuthorization:   http://localhost:8082
+#   CertificateAuthority:    http://localhost:8086
+
+services:
+
+  # ── Shared certificate volume ─────────────────────────────────────────────────
+  # cert-provisioner writes certs here; Kafka and RabbitMQ mount it read-only.
+
+  # ── Infrastructure ────────────────────────────────────────────────────────────
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "15676:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - certs:/certs:ro
+    depends_on:
+      cert-provisioner:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  authzforce:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/authzforce-server.Dockerfile
+    ports:
+      - "8186:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  kafka:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/kafka-tls.Dockerfile
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: SSL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: SSL://kafka:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SSL:SSL,CONTROLLER:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_SSL_CLIENT_AUTH: none
+      CERT_DIR: /certs
+      KAFKA_KEYSTORE_PASS: kafkapass123
+    volumes:
+      - certs:/certs:ro
+    depends_on:
+      cert-provisioner:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "printf '' > /dev/tcp/localhost/9092 2>/dev/null && echo ok || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # ── Arrowhead Core Systems ────────────────────────────────────────────────────
+
+  ca:
+    build:
+      context: ../../core
+      dockerfile: ../experiments/experiment-7/dockerfiles/core.Dockerfile
+      args:
+        CMD: ca
+    environment:
+      PORT: "8086"
+    ports:
+      - "8086:8086"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8086/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # cert-provisioner fetches certs from the CA and writes them to the shared volume.
+  # Kafka and RabbitMQ depend on this completing before they start.
+  cert-provisioner:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/cert-provisioner.Dockerfile
+    environment:
+      CA_URL: "http://ca:8086"
+      CERTS_DIR: "/certs"
+    volumes:
+      - certs:/certs
+    depends_on:
+      ca:
+        condition: service_healthy
+    restart: "no"
+
+  serviceregistry:
+    build:
+      context: ../../core
+      dockerfile: ../experiments/experiment-7/dockerfiles/core.Dockerfile
+      args:
+        CMD: serviceregistry
+    environment:
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  authentication:
+    build:
+      context: ../../core
+      dockerfile: ../experiments/experiment-7/dockerfiles/core.Dockerfile
+      args:
+        CMD: authentication
+    environment:
+      PORT: "8081"
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  consumerauth:
+    build:
+      context: ../../core
+      dockerfile: ../experiments/experiment-7/dockerfiles/core.Dockerfile
+      args:
+        CMD: consumerauth
+    environment:
+      PORT: "8082"
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  dynamicorch:
+    build:
+      context: ../../core
+      dockerfile: ../experiments/experiment-7/dockerfiles/core.Dockerfile
+      args:
+        CMD: dynamicorch
+    environment:
+      PORT: "8083"
+      SERVICE_REGISTRY_URL: "http://serviceregistry:8080"
+      CONSUMER_AUTH_URL: "http://consumerauth:8082"
+      AUTH_SYSTEM_URL: "http://authentication:8081"
+      ENABLE_AUTH: "true"
+      ENABLE_IDENTITY_CHECK: "true"
+    ports:
+      - "8083:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8083/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      serviceregistry:
+        condition: service_healthy
+      consumerauth:
+        condition: service_healthy
+      authentication:
+        condition: service_healthy
+
+  # Seeds authorization grants for all consumers.
+  setup:
+    image: curlimages/curl:8.7.1
+    depends_on:
+      consumerauth:
+        condition: service_healthy
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |-
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-1","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"analytics-consumer","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"cert-consumer","providerSystemName":"data-provider-tls","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"test-probe","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"test-probe","providerSystemName":"data-provider-tls","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists'
+
+  # ── Policy Engine ─────────────────────────────────────────────────────────────
+
+  policy-sync:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/policy-sync.Dockerfile
+    environment:
+      CA_URL: "http://consumerauth:8082"
+      AUTHZFORCE_URL: "http://authzforce:8080/authzforce-ce"
+      AUTHZFORCE_DOMAIN: "arrowhead-exp7"
+      SYNC_INTERVAL: "10s"
+      PORT: "9095"
+    depends_on:
+      authzforce:
+        condition: service_healthy
+      consumerauth:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9095/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # ── AMQP Enforcement (PEP → AuthzForce) ──────────────────────────────────────
+
+  topic-auth-xacml:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/topic-auth-xacml.Dockerfile
+    environment:
+      AUTHZFORCE_URL: "http://authzforce:8080/authzforce-ce"
+      AUTHZFORCE_DOMAIN: "arrowhead-exp7"
+      RABBITMQ_ADMIN_USER: admin
+      RABBITMQ_ADMIN_PASS: admin
+      CONSUMER_PASSWORD: "consumer-secret"
+      PUBLISHER_USER: "robot-fleet-tls"
+      PUBLISHER_PASSWORD: "fleet-secret"
+      CACHE_TTL: "0s"
+      PORT: "9090"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      policy-sync:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Kafka Enforcement (PEP → AuthzForce) ─────────────────────────────────────
+
+  kafka-authz:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/kafka-authz.Dockerfile
+    environment:
+      KAFKA_BROKERS: "kafka:9092"
+      AUTHZFORCE_URL: "http://authzforce:8080/authzforce-ce"
+      AUTHZFORCE_DOMAIN: "arrowhead-exp7"
+      PORT: "9091"
+      CA_URL: "http://ca:8086"
+    ports:
+      - "9091:9091"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      policy-sync:
+        condition: service_healthy
+      ca:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9091/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── REST mTLS Enforcement (cert-based PEP → AuthzForce) ──────────────────────
+
+  data-provider-tls:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/data-provider-tls.Dockerfile
+    environment:
+      KAFKA_BROKERS: "kafka:9092"
+      KAFKA_TOPIC: "arrowhead.telemetry"
+      PORT: "9094"
+      CA_URL: "http://ca:8086"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --no-check-certificate https://localhost:9094/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 15s
+    depends_on:
+      kafka:
+        condition: service_healthy
+      ca:
+        condition: service_healthy
+
+  cert-rest-authz:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/cert-rest-authz.Dockerfile
+    environment:
+      CA_URL: "http://ca:8086"
+      AUTHZFORCE_URL: "http://authzforce:8080/authzforce-ce"
+      AUTHZFORCE_DOMAIN: "arrowhead-exp7"
+      UPSTREAM_URL: "https://data-provider-tls:9094"
+      DEFAULT_SERVICE: "telemetry-rest"
+      CACHE_TTL: "0s"
+      PORT: "9099"
+      TLS_PORT: "9098"
+    ports:
+      - "9098:9098"
+      - "9099:9099"
+    depends_on:
+      data-provider-tls:
+        condition: service_healthy
+      policy-sync:
+        condition: service_healthy
+      ca:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9099/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  cert-consumer:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/cert-consumer.Dockerfile
+    environment:
+      CONSUMER_NAME: "cert-consumer"
+      CA_URL: "http://ca:8086"
+      CERT_REST_AUTHZ_URL: "https://cert-rest-authz:9098"
+      SERVICE: "telemetry-rest"
+      POLL_INTERVAL: "2s"
+      HEALTH_PORT: "9096"
+    depends_on:
+      cert-rest-authz:
+        condition: service_healthy
+
+  # ── Experiment Services ───────────────────────────────────────────────────────
+
+  robot-fleet-tls:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/robot-fleet-tls.Dockerfile
+    restart: on-failure
+    ports:
+      - "9106:9003"
+    environment:
+      AMQP_URL: "amqps://robot-fleet-tls:fleet-secret@rabbitmq:5671/"
+      KAFKA_BROKERS: "kafka:9092"
+      KAFKA_TOPIC: "arrowhead.telemetry"
+      INITIAL_ROBOT_COUNT: "3"
+      PAYLOAD_TYPE: "imu"
+      PAYLOAD_HZ: "10"
+      NETWORK_PRESET: "5g_good"
+      FLEET_PORT: "9003"
+      SR_URL: "http://serviceregistry:8080"
+      SYSTEM_NAME: "robot-fleet-tls"
+      SYSTEM_CREDENTIALS: "fleet-secret"
+      AUTH_URL: "http://authentication:8081"
+      CA_URL: "http://ca:8086"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9003/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      topic-auth-xacml:
+        condition: service_healthy
+      serviceregistry:
+        condition: service_healthy
+      authentication:
+        condition: service_healthy
+      ca:
+        condition: service_healthy
+
+  consumer-1:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/consumer-direct-tls.Dockerfile
+    environment:
+      CONSUMER_NAME: "demo-consumer-1"
+      SYSTEM_CREDENTIALS: "consumer-secret"
+      CONSUMER_PASSWORD: "consumer-secret"
+      AUTH_URL: "http://authentication:8081"
+      ORCHESTRATION_URL: "http://dynamicorch:8083"
+      CONSUMERAUTH_URL: "http://consumerauth:8082"
+      HEALTH_PORT: "9002"
+      CA_URL: "http://ca:8086"
+    depends_on:
+      topic-auth-xacml:
+        condition: service_healthy
+      dynamicorch:
+        condition: service_healthy
+      robot-fleet-tls:
+        condition: service_healthy
+
+  consumer-2:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/consumer-direct-tls.Dockerfile
+    environment:
+      CONSUMER_NAME: "demo-consumer-2"
+      SYSTEM_CREDENTIALS: "consumer-secret"
+      CONSUMER_PASSWORD: "consumer-secret"
+      AUTH_URL: "http://authentication:8081"
+      ORCHESTRATION_URL: "http://dynamicorch:8083"
+      CONSUMERAUTH_URL: "http://consumerauth:8082"
+      HEALTH_PORT: "9002"
+      CA_URL: "http://ca:8086"
+    depends_on:
+      topic-auth-xacml:
+        condition: service_healthy
+      dynamicorch:
+        condition: service_healthy
+      robot-fleet-tls:
+        condition: service_healthy
+
+  consumer-3:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/consumer-direct-tls.Dockerfile
+    environment:
+      CONSUMER_NAME: "demo-consumer-3"
+      SYSTEM_CREDENTIALS: "consumer-secret"
+      CONSUMER_PASSWORD: "consumer-secret"
+      AUTH_URL: "http://authentication:8081"
+      ORCHESTRATION_URL: "http://dynamicorch:8083"
+      CONSUMERAUTH_URL: "http://consumerauth:8082"
+      HEALTH_PORT: "9002"
+      CA_URL: "http://ca:8086"
+    depends_on:
+      topic-auth-xacml:
+        condition: service_healthy
+      dynamicorch:
+        condition: service_healthy
+      robot-fleet-tls:
+        condition: service_healthy
+
+  analytics-consumer:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-7/dockerfiles/analytics-consumer.Dockerfile
+    environment:
+      CONSUMER_NAME: "analytics-consumer"
+      KAFKA_AUTHZ_URL: "http://kafka-authz:9091"
+      SERVICE: "telemetry"
+      HEALTH_PORT: "9004"
+    depends_on:
+      kafka-authz:
+        condition: service_healthy
+      robot-fleet-tls:
+        condition: service_healthy
+
+volumes:
+  certs:

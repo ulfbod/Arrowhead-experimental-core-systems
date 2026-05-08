@@ -196,7 +196,18 @@
       "Bash(curl:*)",
       "Bash(ip route:*)",
       "Read(//mnt/c/Users/**)",
-      "Read(//home/uffe/**)"
+      "Read(//home/uffe/**)",
+      "Bash(mkdir -p /home/uffe/projects/ArrowheadCore/experiments/experiment-7/services/cert-provisioner)",
+      "Bash(mkdir -p /home/uffe/projects/ArrowheadCore/experiments/experiment-7/services/cert-rest-authz)",
+      "Bash(mkdir -p /home/uffe/projects/ArrowheadCore/experiments/experiment-7/services/cert-consumer)",
+      "Bash(mkdir -p /home/uffe/projects/ArrowheadCore/experiments/experiment-7/services/data-provider-tls)",
+      "Bash(mkdir -p /home/uffe/projects/ArrowheadCore/experiments/experiment-7/services/robot-fleet-tls)",
+      "WebSearch",
+      "WebFetch(domain:projects.eclipse.org)",
+      "WebFetch(domain:arrowhead.eu)",
+      "WebFetch(domain:arrowhead-client-python-library.readthedocs.io)",
+      "WebFetch(domain:www.researchgate.net)",
+      "WebFetch(domain:ceur-ws.org)"
     ]
   }
 }

@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -33,6 +34,8 @@ type serverConfig struct {
 	azDomainID   string
 	adminUser    string
 	adminPass    string
+	// tlsConfig is optional. When non-nil, Kafka connections use TLS.
+	tlsConfig *tls.Config
 }
 
 type authzServer struct {
@@ -178,7 +181,7 @@ func (s *authzServer) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	// Subscribe to Kafka topic.
 	topic := topicForService(service)
-	reader := newKafkaReader(s.cfg.kafkaBrokers, topic)
+	reader := newKafkaReader(s.cfg.kafkaBrokers, topic, s.cfg.tlsConfig)
 	defer reader.Close()
 
 	ctx := r.Context()

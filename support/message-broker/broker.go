@@ -6,6 +6,7 @@
 package broker
 
 import (
+	"crypto/tls"
 	"fmt"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -14,9 +15,14 @@ import (
 // Config holds connection and exchange configuration.
 type Config struct {
 	// URL is the AMQP connection string, e.g. amqp://guest:guest@localhost:5672/
+	// Use amqps:// for TLS connections.
 	URL string
 	// Exchange is the topic exchange name. Defaults to "arrowhead" if empty.
 	Exchange string
+	// TLSConfig is optional. When non-nil, amqp.DialTLS is used instead of
+	// amqp.Dial, enabling TLS (AMQPS). Existing callers that leave TLSConfig
+	// nil continue to use plain AMQP.
+	TLSConfig *tls.Config
 }
 
 // Handler is called once per received message.
@@ -40,7 +46,13 @@ func New(cfg Config) (*Broker, error) {
 		exchange = "arrowhead"
 	}
 
-	conn, err := amqp.Dial(cfg.URL)
+	var conn *amqp.Connection
+	var err error
+	if cfg.TLSConfig != nil {
+		conn, err = amqp.DialTLS(cfg.URL, cfg.TLSConfig)
+	} else {
+		conn, err = amqp.Dial(cfg.URL)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("broker: dial %s: %w", cfg.URL, err)
 	}

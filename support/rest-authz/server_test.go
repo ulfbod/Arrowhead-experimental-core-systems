@@ -38,7 +38,7 @@ func mockPDP(allowed map[string]bool) *httptest.Server {
 			gt := strings.Index(inner, ">")
 			lt := strings.Index(inner[gt:], "<")
 			if gt >= 0 && lt >= 0 {
-				subject = inner[gt+1 : gt+1+lt]
+				subject = inner[gt+1 : gt+lt]
 			}
 		}
 		w.Header().Set("Content-Type", "application/xml")

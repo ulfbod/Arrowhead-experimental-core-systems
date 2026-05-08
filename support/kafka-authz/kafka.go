@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"time"
 
@@ -21,18 +22,26 @@ type KafkaReader struct {
 // overhead, rebalancing delays (especially when the previous kafka-authz
 // instance was killed and its member hasn't timed out yet), and committed-
 // offset bookkeeping that is irrelevant for a live-stream use case.
-func newKafkaReader(brokers []string, topic string) *KafkaReader {
-	return &KafkaReader{
-		r: kafka.NewReader(kafka.ReaderConfig{
-			Brokers:     brokers,
-			Topic:       topic,
-			Partition:   0,
-			MinBytes:    1,
-			MaxBytes:    1 << 20, // 1 MB
-			MaxWait:     500 * time.Millisecond,
-			StartOffset: kafka.LastOffset,
-		}),
+//
+// When tlsConfig is non-nil, the reader uses TLS for all broker connections.
+func newKafkaReader(brokers []string, topic string, tlsConfig *tls.Config) *KafkaReader {
+	cfg := kafka.ReaderConfig{
+		Brokers:     brokers,
+		Topic:       topic,
+		Partition:   0,
+		MinBytes:    1,
+		MaxBytes:    1 << 20, // 1 MB
+		MaxWait:     500 * time.Millisecond,
+		StartOffset: kafka.LastOffset,
 	}
+	if tlsConfig != nil {
+		cfg.Dialer = &kafka.Dialer{
+			Timeout:   10 * time.Second,
+			DualStack: true,
+			TLS:       tlsConfig,
+		}
+	}
+	return &KafkaReader{r: kafka.NewReader(cfg)}
 }
 
 // ReadMessage reads the next message from Kafka, blocking until one arrives
@@ -56,16 +65,19 @@ type KafkaWriter struct {
 }
 
 // newKafkaWriter creates a producer for the given topic.
-func newKafkaWriter(brokers []string, topic string) *KafkaWriter {
-	return &KafkaWriter{
-		w: &kafka.Writer{
-			Addr:         kafka.TCP(brokers...),
-			Topic:        topic,
-			Balancer:     &kafka.LeastBytes{},
-			BatchSize:    1,
-			BatchTimeout: 10 * time.Millisecond,
-		},
+// When tlsConfig is non-nil, the writer uses TLS for all broker connections.
+func newKafkaWriter(brokers []string, topic string, tlsConfig *tls.Config) *KafkaWriter {
+	w := &kafka.Writer{
+		Addr:         kafka.TCP(brokers...),
+		Topic:        topic,
+		Balancer:     &kafka.LeastBytes{},
+		BatchSize:    1,
+		BatchTimeout: 10 * time.Millisecond,
 	}
+	if tlsConfig != nil {
+		w.Transport = &kafka.Transport{TLS: tlsConfig}
+	}
+	return &KafkaWriter{w: w}
 }
 
 // WriteMessage publishes a message with the given key and value.
