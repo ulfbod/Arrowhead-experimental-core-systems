@@ -100,8 +100,13 @@ func main() {
 	log.Printf("[cert-rest-authz] issuing own cert from %s", caURL)
 	ownCert := issueCertWithRetry(caURL, "cert-rest-authz", 10)
 
-	// Build mTLS server TLS config.
+	// Build mTLS server TLS config (for inbound connections from cert-consumer).
 	serverTLSCfg := buildServerTLSConfig(ownCert, caPool)
+
+	// Build upstream HTTP client (for outbound connections to data-provider-tls).
+	// Must use the CA pool as RootCAs so the CA-issued server cert is accepted.
+	upstreamTLSCfg := buildClientTLSConfig(ownCert, caPool)
+	upstreamClient := buildMTLSUpstreamClient(upstreamTLSCfg)
 
 	// Resolve the AuthzForce domain (created by policy-sync at startup).
 	azClient := az.New(azURL)
@@ -131,7 +136,7 @@ func main() {
 	}
 
 	cache := newDecisionCache(cacheTTL)
-	srv := newCertAuthzServer(cfg, azClient, cache)
+	srv := newCertAuthzServer(cfg, azClient, cache, upstreamClient)
 
 	// Start plain HTTP server (health + status + auth/check).
 	plainMux := http.NewServeMux()

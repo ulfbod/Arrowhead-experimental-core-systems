@@ -85,10 +85,16 @@ echo
 echo "=== 2. cert-provisioner — certificate volume ==="
 
 # Verify cert-provisioner completed (kafka and rabbitmq are healthy as a proxy).
-check_eq "Kafka reachable (cert-provisioner completed)" "200" \
-  "$(docker compose ps -q kafka 2>/dev/null | head -1 | xargs -r docker inspect --format='{{.State.Status}}' 2>/dev/null | grep -c running || echo 0; echo 200)"
+# Kafka uses SSL on 9092 — not HTTP-reachable from host. Verify via container health status.
+kafka_health=$(docker compose ps kafka --format json 2>/dev/null | python3 -c \
+  'import sys,json; rows=json.load(sys.stdin); print(rows[0].get("Health","") if isinstance(rows,list) else rows.get("Health",""))' \
+  2>/dev/null || echo "")
+if [ "$kafka_health" = "healthy" ]; then
+  pass "Kafka container healthy (cert-provisioner completed)"
+else
+  fail "Kafka container healthy (cert-provisioner completed)" "healthy" "${kafka_health:-not healthy}"
+fi
 
-# Actually test: check that kafka-authz is healthy (depends on kafka which depends on cert-provisioner)
 smoke_http "kafka-authz healthy (implies cert-provisioner succeeded)" http://localhost:9091/health
 
 # ── Section 3: AuthzForce server endpoints ────────────────────────────────────
@@ -163,20 +169,21 @@ else
   pass "CA cert fetched for mTLS test"
   echo "$ca_cert_pem" > /tmp/exp7-ca.crt
 
-  # Issue a cert for test-probe
-  probe_resp=$(curl -s -X POST http://localhost:8086/ca/certificate/issue \
+  # Issue a cert for test-probe (parse cert and key fields separately via python3)
+  probe_resp_json=$(curl -s -X POST http://localhost:8086/ca/certificate/issue \
     -H 'Content-Type: application/json' \
-    -d '{"systemName":"test-probe"}' | python3 -c \
-    'import sys,json; d=json.load(sys.stdin); print(d["certificate"]); print("---"); print(d["privateKey"])' 2>/dev/null || echo "")
-
-  probe_cert=$(echo "$probe_resp" | sed -n '/^-----BEGIN CERTIFICATE-----/,/^-----END CERTIFICATE-----/p')
-  probe_key=$(echo "$probe_resp"  | sed -n '/^-----BEGIN/,/^-----END/p' | tail -n +$(echo "$probe_resp" | grep -n "BEGIN" | sed -n '2p' | cut -d: -f1))
+    -d '{"systemName":"test-probe"}')
+  probe_cert=$(echo "$probe_resp_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["certificate"])' 2>/dev/null || echo "")
+  probe_key=$(echo "$probe_resp_json"  | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["privateKey"])'  2>/dev/null || echo "")
 
   if [ -n "$probe_cert" ] && [ -n "$probe_key" ]; then
     echo "$probe_cert" > /tmp/exp7-test-probe.crt
     echo "$probe_key"  > /tmp/exp7-test-probe.key
 
     # Use client cert to access cert-rest-authz mTLS port.
+    # cert-rest-authz has SAN=cert-rest-authz (not localhost). Use --resolve so
+    # curl maps cert-rest-authz:9098 → 127.0.0.1 without DNS, letting TLS hostname
+    # verification use the correct name from the server certificate.
     # Wait for data to be available (up to 60s).
     mtls_code="000"
     for i in $(seq 1 12); do
@@ -184,7 +191,8 @@ else
         --cert /tmp/exp7-test-probe.crt \
         --key  /tmp/exp7-test-probe.key \
         --cacert /tmp/exp7-ca.crt \
-        https://localhost:9098/telemetry/latest 2>/dev/null || echo "000")
+        --resolve "cert-rest-authz:9098:127.0.0.1" \
+        https://cert-rest-authz:9098/telemetry/latest 2>/dev/null || echo "000")
       if [ "$mtls_code" = "200" ] || [ "$mtls_code" = "404" ]; then
         break
       fi
@@ -193,10 +201,13 @@ else
     done
     check_eq "mTLS test-probe GET /telemetry/latest → 200 (authorized)" "200" "$mtls_code"
 
-    # Request WITHOUT client cert → 400 or connection error (server requires client cert)
+    # Request WITHOUT client cert → 400 or connection error (server requires client cert).
+    # Do not use || echo "000": curl -w "%{http_code}" already outputs "000" on connection
+    # failure, so || echo "000" would double it to "000000".
     no_cert_code=$(curl -s -o /dev/null -w "%{http_code}" \
       --cacert /tmp/exp7-ca.crt \
-      https://localhost:9098/telemetry/latest 2>/dev/null || echo "000")
+      --resolve "cert-rest-authz:9098:127.0.0.1" \
+      https://cert-rest-authz:9098/telemetry/latest 2>/dev/null; echo -n "")
     if [ "$no_cert_code" = "400" ] || [ "$no_cert_code" = "000" ] || [ "$no_cert_code" = "401" ]; then
       pass "mTLS: request without client cert rejected (got $no_cert_code)"
     else

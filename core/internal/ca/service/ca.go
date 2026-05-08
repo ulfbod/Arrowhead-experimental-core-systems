@@ -97,6 +97,9 @@ func (s *CAService) Issue(req model.IssueRequest) (*model.IssuedCert, error) {
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(serial),
 		Subject:      pkix.Name{CommonName: req.SystemName},
+		// Go 1.15+ requires SANs for hostname verification; CN alone is rejected.
+		// Add the system name as a DNS SAN so TLS clients can verify server certs.
+		DNSNames:     []string{req.SystemName},
 		NotBefore:    now.Add(-time.Minute),
 		NotAfter:     now.Add(dur),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

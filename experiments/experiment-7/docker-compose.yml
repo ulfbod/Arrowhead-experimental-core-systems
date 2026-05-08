@@ -243,11 +243,13 @@ services:
       context: ../../
       dockerfile: experiments/experiment-7/dockerfiles/policy-sync.Dockerfile
     environment:
-      CA_URL: "http://consumerauth:8082"
+      CONSUMERAUTH_URL: "http://consumerauth:8082"
       AUTHZFORCE_URL: "http://authzforce:8080/authzforce-ce"
       AUTHZFORCE_DOMAIN: "arrowhead-exp7"
       SYNC_INTERVAL: "10s"
       PORT: "9095"
+    ports:
+      - "9095:9095"
     depends_on:
       authzforce:
         condition: service_healthy
@@ -378,6 +380,8 @@ services:
       SERVICE: "telemetry-rest"
       POLL_INTERVAL: "2s"
       HEALTH_PORT: "9096"
+    ports:
+      - "9096:9096"
     depends_on:
       cert-rest-authz:
         condition: service_healthy
@@ -497,6 +501,8 @@ services:
       KAFKA_AUTHZ_URL: "http://kafka-authz:9091"
       SERVICE: "telemetry"
       HEALTH_PORT: "9004"
+    ports:
+      - "9004:9004"
     depends_on:
       kafka-authz:
         condition: service_healthy

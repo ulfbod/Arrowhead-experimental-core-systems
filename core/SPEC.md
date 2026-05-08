@@ -449,6 +449,11 @@ Issues a new leaf certificate.
 
 `validDays` overrides the default certificate lifetime when > 0.
 
+The CA sets the `systemName` as both the certificate Subject CN and a DNS Subject
+Alternative Name (SAN). Go 1.15+ ignores the CN for TLS hostname verification and
+requires a SAN; including the `systemName` as a DNS SAN ensures that TLS clients
+connecting to `<systemName>:<port>` can verify the server certificate.
+
 **Response: 201 Created**
 ```json
 {

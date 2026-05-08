@@ -77,7 +77,7 @@ func newTestCertAuthzServer(t *testing.T, allowed map[string]bool, upstreamURL s
 	}
 	client := az.New(pdp.URL)
 	cache := newDecisionCache(0)
-	srv := newCertAuthzServer(cfg, client, cache)
+	srv := newCertAuthzServer(cfg, client, cache, http.DefaultClient)
 	return srv, pdp.Close
 }
 

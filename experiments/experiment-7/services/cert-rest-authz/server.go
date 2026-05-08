@@ -49,14 +49,15 @@ type serverStats struct {
 
 // certAuthzServer handles both plain-HTTP and mTLS-HTTPS endpoints.
 type certAuthzServer struct {
-	cfg    serverConfig
-	client *az.Client
-	cache  *decisionCache
-	stats  serverStats
+	cfg            serverConfig
+	client         *az.Client
+	cache          *decisionCache
+	stats          serverStats
+	upstreamClient *http.Client
 }
 
-func newCertAuthzServer(cfg serverConfig, client *az.Client, cache *decisionCache) *certAuthzServer {
-	return &certAuthzServer{cfg: cfg, client: client, cache: cache}
+func newCertAuthzServer(cfg serverConfig, client *az.Client, cache *decisionCache, upstreamClient *http.Client) *certAuthzServer {
+	return &certAuthzServer{cfg: cfg, client: client, cache: cache, upstreamClient: upstreamClient}
 }
 
 // registerPlain registers the plain-HTTP endpoints onto mux.
@@ -185,7 +186,7 @@ func (s *certAuthzServer) proxyRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s.upstreamClient.Do(req)
 	if err != nil {
 		log.Printf("[cert-rest-authz] upstream error: %v", err)
 		http.Error(w, `{"error":"upstream unavailable"}`, http.StatusBadGateway)

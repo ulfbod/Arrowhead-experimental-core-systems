@@ -1247,6 +1247,255 @@ KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""   # our CA issues no SANs
 
 ---
 
+## EXP-017 — policy-sync port not exposed and wrong env var name caused test pre-flight failure (experiment-7, 2026-05-08)
+
+### Symptom
+
+`test-system.sh` pre-flight failed on `policy-sync synced=true` after waiting 30 s, even
+though `docker compose logs policy-sync` clearly showed repeated `sync OK` lines. The
+test reported "not synced after 30s — check policy-sync container logs."
+
+```
+  Waiting for policy-sync first sync (up to 30s)...
+  ... attempt 1/6, sleeping 5s
+  ...
+  ... attempt 6/6, sleeping 5s
+  FAIL  policy-sync synced=true
+         not synced after 30s — check policy-sync container logs
+```
+
+### Root Cause
+
+Two independent bugs in `docker-compose.yml` for the policy-sync service:
+
+**Bug 1 — Port 9095 not published to the host.**
+The policy-sync service had no `ports:` section. The test script calls
+`curl http://localhost:9095/status` from the host, which connects to the host's
+loopback — not the Docker network. Without a port mapping, this connection is always
+refused, so `ps_status` was always `{}` and the `"synced":true` check never passed.
+
+**Bug 2 — Wrong environment variable name: `CA_URL` instead of `CONSUMERAUTH_URL`.**
+The policy-sync support module reads `CONSUMERAUTH_URL` (the ConsumerAuthorization base
+URL from which it fetches grants). The docker-compose.yml was setting `CA_URL` instead.
+Because the wrong variable was silently ignored and the default value
+(`http://consumerauth:8082`) happens to be identical to what was configured, policy-sync
+still connected correctly — making this bug invisible at runtime but incorrect and
+misleading in configuration.
+
+### Fix
+
+In `docker-compose.yml`, for the `policy-sync` service:
+1. Add `ports: - "9095:9095"`
+2. Rename `CA_URL` → `CONSUMERAUTH_URL`
+
+```yaml
+# BEFORE:
+policy-sync:
+  environment:
+    CA_URL: "http://consumerauth:8082"
+    ...
+  # (no ports: section)
+
+# AFTER:
+policy-sync:
+  environment:
+    CONSUMERAUTH_URL: "http://consumerauth:8082"
+    ...
+  ports:
+    - "9095:9095"
+```
+
+### Guidance for Future Iterations
+
+**Verify the `ports:` mapping in docker-compose.yml for every service whose endpoints
+are called by `test-system.sh`.**
+
+The `test-system.sh` script runs on the host and reaches services via `localhost:<port>`.
+A service that only exposes an internal Docker network port is unreachable from the test
+script even if every container inside the stack can reach it.
+
+Specific checks:
+
+1. **For every `curl`/`http_code` call in `test-system.sh`**, confirm the target port
+   is in `ports:` for the relevant service in docker-compose.yml:
+   ```bash
+   grep "localhost:" test-system.sh | grep -oP ':\d+' | sort -u
+   # Then verify each port appears in docker-compose.yml under ports:
+   ```
+
+2. **Environment variable names must match what the service binary reads**, not what
+   sounds intuitive. Always cross-check against the support module's `main.go`:
+   ```bash
+   grep 'envOr\|os.Getenv' support/policy-sync/main.go
+   ```
+   A wrong env var name is silently ignored if the Go code has a matching default.
+
+3. **Distinguish "service is syncing" from "test can reach /status"** — healthy
+   container logs and a test pre-flight failure can coexist when the port is missing.
+   Always check `curl localhost:<port>/health` from the HOST before running the test
+   suite.
+
+---
+
+## EXP-018 — cert-rest-authz proxied upstream requests using `http.DefaultClient`, bypassing custom CA pool (experiment-7, 2026-05-08)
+
+### Symptom
+
+cert-rest-authz logs show successful XACML decisions (`PERMIT consumer="cert-consumer"`) but
+every forwarded request to data-provider-tls fails immediately:
+
+```
+upstream error: Get "https://data-provider-tls:9094/telemetry/latest":
+tls: failed to verify certificate: x509: certificate signed by unknown authority
+```
+
+cert-consumer polls and receives 502 from cert-rest-authz. `msgCount` stays at 0. The
+AuthzForce path is completely correct; only the upstream proxy step fails.
+
+### Root Cause
+
+`server.go:proxyRequest()` called `http.DefaultClient.Do(req)`. `http.DefaultClient` uses
+the system root CAs, which do not include the ephemeral Arrowhead CA certificate (generated
+fresh at every `ca` container start).
+
+Meanwhile, `tlsconfig.go` already contained `buildClientTLSConfig(cert, caPool)` and
+`buildMTLSUpstreamClient(tlsCfg)` — the right helpers existed but were never wired up.
+`main.go` built the CA pool and own cert for the **inbound** server TLS config but did not
+pass them to the upstream HTTP client used for **outbound** requests.
+
+### Fix
+
+1. Add `upstreamClient *http.Client` field to `certAuthzServer`.
+2. Pass it as a parameter to `newCertAuthzServer(...)`.
+3. In `main.go`, build the upstream client via the existing helpers:
+   ```go
+   upstreamTLSCfg := buildClientTLSConfig(ownCert, caPool)
+   upstreamClient := buildMTLSUpstreamClient(upstreamTLSCfg)
+   srv := newCertAuthzServer(cfg, azClient, cache, upstreamClient)
+   ```
+4. In `proxyRequest`, replace `http.DefaultClient.Do(req)` with `s.upstreamClient.Do(req)`.
+
+The CA pool (fetched at startup via `GET /ca/info`) is populated with the live CA root
+certificate, so the outbound TLS verifier now trusts certs issued by the same CA instance.
+
+### Guidance for Future Iterations
+
+**Every TLS-proxying service must use a custom HTTP client for outbound requests.**
+
+`http.DefaultClient` uses the system root CA store. An ephemeral self-signed CA (like the
+Arrowhead CA) is never in that store. A service that:
+- Fetches the CA cert at startup (for its own TLS setup)
+- Then proxies requests to other services over HTTPS
+
+…must configure a custom `*http.Client` with `RootCAs` set to the fetched CA pool, and use
+that client for ALL outbound HTTPS requests. Using `http.DefaultClient` silently works in
+tests (if tests use plaintext or `InsecureSkipVerify`) but fails against real mTLS upstreams.
+
+Pattern to apply consistently:
+```go
+// At startup: fetch CA cert, issue own cert
+caPool, _ := fetchCACertWithRetry(caURL, 10)
+ownCert    := issueCertWithRetry(caURL, systemName, 10)
+
+// For inbound mTLS (server verifies client certs)
+serverTLS := buildServerTLSConfig(ownCert, caPool)
+
+// For outbound HTTPS (client verifies server cert)
+upstreamTLS    := buildClientTLSConfig(ownCert, caPool)
+upstreamClient := buildMTLSUpstreamClient(upstreamTLS)
+// … pass upstreamClient to the handler; never use http.DefaultClient for upstream calls
+```
+
+---
+
+## EXP-019 — mTLS test used `localhost` hostname, failing cert hostname verification; probe key extraction used mismatched line numbers (experiment-7, 2026-05-08)
+
+### Symptom
+
+Section 7 of `test-system.sh` (mTLS direct curl test) always returned HTTP `000000` for
+both the authorized and unauthorized cases:
+
+```
+waiting for data-provider-tls data... (attempt 1/12, HTTP 000000)
+...
+FAIL  mTLS test-probe GET /telemetry/latest → 200 (authorized)
+FAIL  mTLS: request without client cert rejected
+```
+
+### Root Cause
+
+**Bug A — hostname mismatch:** cert-rest-authz is issued a certificate with
+`CN=cert-rest-authz` and `SAN=cert-rest-authz`. The test script called:
+
+```bash
+curl ... https://localhost:9098/telemetry/latest
+```
+
+curl connects to `localhost` and verifies the server cert against that name. The cert only
+has `cert-rest-authz` as a SAN, so curl rejects the connection:
+
+```
+* subjectAltName does not match localhost
+* SSL: no alternative certificate subject name matches target host name 'localhost'
+```
+
+Exit code 60 from curl; with `-w "%{http_code}"` curl still outputs `000`, then
+`|| echo "000"` appends another `000`, giving `000000`.
+
+**Bug B — doubled `000` for the no-cert case:** `curl -s -o /dev/null -w "%{http_code}"`
+always outputs the HTTP status code string, including `000` when the connection fails.
+The pattern `|| echo "000"` then appended a second `000`, so `$no_cert_code` was `000000`
+instead of `000`, and the `[ "$no_cert_code" = "000" ]` check never matched.
+
+**Bug C — broken key extraction:** The original key extraction used:
+
+```bash
+probe_key=$(echo "$probe_resp" | sed -n '/^-----BEGIN/,/^-----END/p' | \
+  tail -n +$(echo "$probe_resp" | grep -n "BEGIN" | sed -n '2p' | cut -d: -f1))
+```
+
+`grep -n "BEGIN"` counts lines in the full response (including empty lines and the `---`
+separator). `tail -n +N` was applied to the `sed` output (which only contains PEM blocks,
+with no empty lines or separator). The line offsets didn't match, so the key was truncated
+to its last 2–3 lines, missing the `-----BEGIN EC PRIVATE KEY-----` header. Curl then
+failed with `unable to set private key file`.
+
+### Fix
+
+**Bug A:** Use `--resolve "cert-rest-authz:9098:127.0.0.1"` so curl maps the hostname to
+localhost's IP without DNS, while sending the correct SNI and verifying against
+`cert-rest-authz`:
+```bash
+curl ... --resolve "cert-rest-authz:9098:127.0.0.1" https://cert-rest-authz:9098/...
+```
+
+**Bug B:** Replace `|| echo "000"` with `; echo -n ""` (a no-op that resets the exit
+code) for TLS-connection tests. The curl already outputs `000` on connection failure;
+suppressing the `|| echo` prevents doubling.
+
+**Bug C:** Use python3 to extract the cert and key fields separately:
+```bash
+probe_resp_json=$(curl -s ...)
+probe_cert=$(echo "$probe_resp_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["certificate"])')
+probe_key=$(echo "$probe_resp_json"  | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["privateKey"])')
+```
+
+### Guidance for Future Iterations
+
+1. **Never use `https://localhost:<port>` in test scripts for services with service-name SANs.**
+   Use `--resolve <hostname>:<port>:127.0.0.1` to map the Docker service hostname to the
+   loopback address. The TLS handshake then succeeds because the hostname matches the SAN.
+
+2. **`curl -w "%{http_code}"` already outputs `000` on connection failure.** Do not combine
+   with `|| echo "000"` — this doubles the string to `000000`, breaking equality checks.
+   Use `; true` or `; echo -n ""` if you need to suppress the non-zero exit code.
+
+3. **Extract JSON fields with `python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["field"])'`
+   rather than `sed`/`grep` + line-number arithmetic.** Shell line-counting across filtered
+   and unfiltered versions of the same stream is fragile; Python JSON parsing is exact.
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -1277,3 +1526,9 @@ Use this before marking an experiment implementation complete:
 - [ ] `KAFKA_INTER_BROKER_LISTENER_NAME` is set in docker-compose.yml when the SSL listener is the only advertised listener (EXP-016)
 - [ ] `KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""` is set when the CA does not issue SANs — Kafka 2.0+ defaults to HTTPS hostname verification which rejects CN-only certs at startup (EXP-016)
 - [ ] Every Go module under `experiments/` has a `go.sum` file committed alongside its `go.mod` — run `go mod tidy` in each module directory and commit both files before building Docker images (EXP-014)
+- [ ] Every service whose endpoints are called by `test-system.sh` has a `ports:` mapping in docker-compose.yml — `test-system.sh` runs on the host and reaches services via `localhost:<port>` (EXP-017)
+- [ ] Environment variable names in docker-compose.yml match what the service binary reads (check `grep 'envOr\|os.Getenv' support/<module>/main.go`) — wrong names are silently ignored when Go defaults match (EXP-017)
+- [ ] Any service that proxies HTTPS requests to another service uses a custom `*http.Client` with `RootCAs` set to the ephemeral CA pool — never `http.DefaultClient` for mTLS upstreams (EXP-018)
+- [ ] `test-system.sh` mTLS curl tests use `--resolve <hostname>:<port>:127.0.0.1 https://<hostname>:<port>/...` — never `https://localhost:<port>` when the server cert has a service-name SAN (EXP-019)
+- [ ] `test-system.sh` does not combine `curl -w "%{http_code}"` with `|| echo "000"` — curl already outputs `000` on connection failure; the `||` branch doubles it to `000000` (EXP-019)
+- [ ] JSON fields from CA/service responses are extracted with `python3 -c 'import json,sys; print(json.load(sys.stdin)["field"])'` — not with `sed`/`grep` + line-number arithmetic across filtered streams (EXP-019)
