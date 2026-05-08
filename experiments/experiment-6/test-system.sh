@@ -14,25 +14,88 @@ set -euo pipefail
 PASS=0
 FAIL=0
 
-green() { printf '\033[32m%s\033[0m\n' "$*"; }
-red()   { printf '\033[31m%s\033[0m\n' "$*"; }
+source "$(dirname "$0")/../test-lib.sh"
 
-pass() { green "  PASS  $1"; PASS=$((PASS+1)); }
+# ── TypeScript type-check (no Docker required) ────────────────────────────────
+# Run tsc --noEmit before any Docker checks so type errors are caught before a
+# slow rebuild.  Skipped gracefully when node_modules has not been installed.
+echo
+echo "=== TypeScript type-check ==="
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if command -v npm &>/dev/null && [ -d "$SCRIPT_DIR/dashboard/node_modules" ]; then
+  if npm --prefix "$SCRIPT_DIR/dashboard" run typecheck 2>&1; then
+    pass "dashboard tsc --noEmit"
+  else
+    red "  FAIL  dashboard tsc --noEmit"
+    red "  TypeScript type errors found — fix before running docker compose up --build"
+    exit 2
+  fi
+else
+  printf '\033[33m  SKIP  dashboard type-check (cd dashboard && npm install, then re-run)\033[0m\n'
+fi
 
-fail() {
-  red "  FAIL  $1"
-  echo "         expected: $2"
-  echo "         actual:   $3"
-  FAIL=$((FAIL+1))
-}
+# ── Pre-flight: dashboard reachable ───────────────────────────────────────────
+# Fail fast if nginx is not up — every /api/* test would also fail, making the
+# output misleading.  Wait up to 15 s for the container to become ready.
+echo
+echo "=== Pre-flight: dashboard nginx (localhost:3006) ==="
 
-check_eq() {
-  local desc="$1" expected="$2" actual="$3"
-  if [ "$actual" = "$expected" ]; then pass "$desc"; else fail "$desc" "$expected" "$actual"; fi
-}
+dashboard_up=false
+for i in $(seq 1 15); do
+  code=$(http_code http://localhost:3006 2>/dev/null || echo "000")
+  if [ "$code" = "200" ]; then
+    dashboard_up=true
+    break
+  fi
+  echo "  waiting for dashboard... (attempt $i/15, HTTP $code)"
+  sleep 1
+done
 
-http_code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-http_body() { curl -s "$@"; }
+if $dashboard_up; then
+  pass "Dashboard nginx → 200"
+else
+  red "  FAIL  Dashboard nginx → 200 (got $code after 15s)"
+  red "  Cannot continue — nginx is not serving.  Is the stack up?"
+  red "  Run: docker compose up -d --build"
+  exit 1
+fi
+
+# Verify the dashboard HTML is the React SPA (not a build error page).
+html=$(http_body http://localhost:3006 2>/dev/null || echo "")
+if echo "$html" | grep -q '<div id="root">'; then
+  pass "Dashboard HTML contains React root element"
+else
+  fail "Dashboard HTML contains React root element" '<div id="root">' "${html:0:120}"
+fi
+
+# Core and PEP service health — exit immediately on any failure so downstream
+# tests do not produce misleading cascades.
+smoke_http "ConsumerAuth /health"   http://localhost:8082/health
+smoke_http "AuthzForce /health"     http://localhost:8186/health
+smoke_http "kafka-authz /health"    http://localhost:9091/health
+smoke_http "rest-authz /health"     http://localhost:9093/health
+
+# policy-sync must be synced and using the correct AuthzForce domain.
+# A domain mismatch causes every PEP decision to return Deny silently (see EXP-001).
+echo "  Waiting for policy-sync first sync (up to 30s)..."
+ps_status=""
+for i in $(seq 1 6); do
+  ps_status=$(http_body http://localhost:3006/api/policy-sync/status 2>/dev/null || echo "{}")
+  if echo "$ps_status" | grep -q '"synced":true'; then break; fi
+  echo "  ... attempt $i/6, sleeping 5s"
+  sleep 5
+done
+if echo "$ps_status" | grep -q '"synced":true'; then
+  pass "policy-sync synced=true"
+else
+  smoke_fail "policy-sync synced=true" "not synced after 30s — check policy-sync container logs"
+fi
+if echo "$ps_status" | grep -q '"domainExternalId":"arrowhead-exp6"'; then
+  pass "policy-sync domainExternalId=arrowhead-exp6"
+else
+  smoke_fail "policy-sync domainExternalId=arrowhead-exp6" \
+    "expected arrowhead-exp6 — AUTHZFORCE_DOMAIN mismatch causes all auth checks to return Deny (see EXP-001)"
+fi
 
 # ── Section 1: AuthzForce server endpoints ─────────────────────────────────────
 echo
@@ -57,41 +120,12 @@ echo "=== 2. policy-sync /status (via nginx localhost:3006) ==="
 status=$(http_body http://localhost:3006/api/policy-sync/status)
 echo "  raw: $status"
 
-if echo "$status" | grep -q '"synced":true'; then
-  pass "synced=true"
-else
-  fail "synced=true" '"synced":true' "$status"
-fi
-
-if echo "$status" | grep -qE '"version":[1-9]'; then
-  pass "version ≥ 1"
-else
-  fail "version ≥ 1" '"version":N≥1' "$status"
-fi
-
-if echo "$status" | grep -q '"lastSyncedAt":"20'; then
-  pass "lastSyncedAt field present"
-else
-  fail "lastSyncedAt field present" '"lastSyncedAt":"2026-..."' "$status"
-fi
-
-if echo "$status" | grep -qE '"grants":[1-9]'; then
-  pass "grants field ≥ 1"
-else
-  fail "grants field ≥ 1" '"grants":N≥1' "$status"
-fi
-
-if echo "$status" | grep -q '"syncInterval"'; then
-  pass "syncInterval field present in /status"
-else
-  fail "syncInterval field present" '"syncInterval":"..."' "$status"
-fi
-
-if echo "$status" | grep -q '"domainExternalId":"arrowhead-exp6"'; then
-  pass "policy-sync using domain arrowhead-exp6"
-else
-  fail "policy-sync using domain arrowhead-exp6" '"domainExternalId":"arrowhead-exp6"' "$status"
-fi
+assert_json_value "synced=true"                        "synced"           "true"           "$status"
+assert_json_gt    "version ≥ 1"                        "version"          0                "$status"
+assert_contains   "lastSyncedAt field present"         '"lastSyncedAt":"20' "$status"
+assert_json_gt    "grants field ≥ 1"                   "grants"           0                "$status"
+assert_json_field "syncInterval field present"         "syncInterval"                      "$status"
+assert_json_value "policy-sync using domain arrowhead-exp6" "domainExternalId" "arrowhead-exp6" "$status"
 
 # ── Section 3: policy-sync /config (runtime SYNC_INTERVAL) ────────────────────
 echo
@@ -120,21 +154,13 @@ body=$(http_body -X POST http://localhost:9091/auth/check \
   -H 'Content-Type: application/json' \
   -d '{"consumer":"demo-consumer-1","service":"telemetry"}')
 echo "  demo-consumer-1:    $body"
-if echo "$body" | grep -q '"decision":"Permit"'; then
-  pass "demo-consumer-1 → Permit (Kafka)"
-else
-  fail "demo-consumer-1 → Permit (Kafka)" '"decision":"Permit"' "$body"
-fi
+assert_json_value "demo-consumer-1 → Permit (Kafka)" "decision" "Permit" "$body"
 
 body=$(http_body -X POST http://localhost:9091/auth/check \
   -H 'Content-Type: application/json' \
   -d '{"consumer":"unknown-consumer","service":"telemetry"}')
 echo "  unknown-consumer:   $body"
-if echo "$body" | grep -q '"decision":"Deny"'; then
-  pass "unknown-consumer → Deny (Kafka)"
-else
-  fail "unknown-consumer → Deny (Kafka)" '"decision":"Deny"' "$body"
-fi
+assert_json_value "unknown-consumer → Deny (Kafka)" "decision" "Deny" "$body"
 
 # ── Section 5: rest-authz /auth/check ─────────────────────────────────────────
 echo
@@ -144,31 +170,19 @@ body=$(http_body -X POST http://localhost:9093/auth/check \
   -H 'Content-Type: application/json' \
   -d '{"consumer":"rest-consumer","service":"telemetry-rest"}')
 echo "  rest-consumer:      $body"
-if echo "$body" | grep -q '"decision":"Permit"'; then
-  pass "rest-consumer → Permit (REST)"
-else
-  fail "rest-consumer → Permit (REST)" '"decision":"Permit"' "$body"
-fi
+assert_json_value "rest-consumer → Permit (REST)" "decision" "Permit" "$body"
 
 body=$(http_body -X POST http://localhost:9093/auth/check \
   -H 'Content-Type: application/json' \
   -d '{"consumer":"test-probe","service":"telemetry-rest"}')
 echo "  test-probe:         $body"
-if echo "$body" | grep -q '"decision":"Permit"'; then
-  pass "test-probe → Permit (REST)"
-else
-  fail "test-probe → Permit (REST)" '"decision":"Permit"' "$body"
-fi
+assert_json_value "test-probe → Permit (REST)" "decision" "Permit" "$body"
 
 body=$(http_body -X POST http://localhost:9093/auth/check \
   -H 'Content-Type: application/json' \
   -d '{"consumer":"unauthorized","service":"telemetry-rest"}')
 echo "  unauthorized:       $body"
-if echo "$body" | grep -q '"decision":"Deny"'; then
-  pass "unauthorized → Deny (REST)"
-else
-  fail "unauthorized → Deny (REST)" '"decision":"Deny"' "$body"
-fi
+assert_json_value "unauthorized → Deny (REST)" "decision" "Deny" "$body"
 
 # ── Section 6: REST data access via rest-authz ─────────────────────────────────
 echo
@@ -214,17 +228,8 @@ for i in $(seq 1 12); do
 done
 echo "  raw: $rcstats"
 
-if [ "${count:-0}" -gt 0 ]; then
-  pass "rest-consumer msgCount > 0 (got $count)"
-else
-  fail "rest-consumer msgCount > 0" ">0" "${count:-0}"
-fi
-
-if echo "$rcstats" | grep -q '"lastDeniedAt":""'; then
-  pass "rest-consumer lastDeniedAt is empty (never denied)"
-else
-  fail "rest-consumer lastDeniedAt is empty" '""' "$rcstats"
-fi
+assert_json_gt    "rest-consumer msgCount > 0" "msgCount" 0 "$rcstats"
+assert_json_value "rest-consumer lastDeniedAt is empty (never denied)" "lastDeniedAt" "" "$rcstats"
 
 # ── Section 8: analytics-consumer (Kafka path) ─────────────────────────────────
 echo
@@ -243,11 +248,7 @@ for i in $(seq 1 12); do
 done
 echo "  raw: $stats"
 
-if [ "${ac_count:-0}" -gt 0 ]; then
-  pass "analytics-consumer msgCount > 0 (got $ac_count)"
-else
-  fail "analytics-consumer msgCount > 0" ">0" "${ac_count:-0}"
-fi
+assert_json_gt "analytics-consumer msgCount > 0" "msgCount" 0 "$stats"
 
 # ── Section 9: Sync-delay revocation test (REST path) ─────────────────────────
 echo
@@ -267,11 +268,7 @@ else
   permit_before=$(http_body -X POST http://localhost:9093/auth/check \
     -H 'Content-Type: application/json' \
     -d '{"consumer":"rest-consumer","service":"telemetry-rest"}')
-  if echo "$permit_before" | grep -q '"decision":"Permit"'; then
-    pass "rest-consumer → Permit before revocation"
-  else
-    fail "rest-consumer → Permit before revocation" '"decision":"Permit"' "$permit_before"
-  fi
+  assert_json_value "rest-consumer → Permit before revocation" "decision" "Permit" "$permit_before"
 
   revoke_code=$(http_code -X DELETE "http://localhost:8082/authorization/revoke/$rc_grant_id")
   check_eq "revoke rest-consumer grant → 200" "200" "$revoke_code"
@@ -283,11 +280,7 @@ else
     -H 'Content-Type: application/json' \
     -d '{"consumer":"rest-consumer","service":"telemetry-rest"}')
   echo "  rest-consumer AuthzForce after revoke: $deny_body"
-  if echo "$deny_body" | grep -q '"decision":"Deny"'; then
-    pass "rest-consumer → Deny in AuthzForce after revocation"
-  else
-    fail "rest-consumer → Deny after revocation" '"decision":"Deny"' "$deny_body"
-  fi
+  assert_json_value "rest-consumer → Deny in AuthzForce after revocation" "decision" "Deny" "$deny_body"
 
   http_code_after=$(http_code -H 'X-Consumer-Name: rest-consumer' \
     http://localhost:9093/telemetry/latest)
@@ -296,10 +289,10 @@ else
   regrant=$(http_body -X POST http://localhost:8082/authorization/grant \
     -H 'Content-Type: application/json' \
     -d '{"consumerSystemName":"rest-consumer","providerSystemName":"data-provider","serviceDefinition":"telemetry-rest"}')
-  if echo "$regrant" | grep -qE '"id":|already exists'; then
+  if [[ "$regrant" == *'"id":'* ]] || [[ "$regrant" == *"already exists"* ]]; then
     pass "rest-consumer grant restored"
   else
-    fail "rest-consumer grant restored" '"id":N' "$regrant"
+    fail "rest-consumer grant restored" '"id":N or already exists' "$regrant"
   fi
 
   echo "  waiting 15 s for grant restoration to propagate..."
@@ -308,11 +301,7 @@ else
   permit_after=$(http_body -X POST http://localhost:9093/auth/check \
     -H 'Content-Type: application/json' \
     -d '{"consumer":"rest-consumer","service":"telemetry-rest"}')
-  if echo "$permit_after" | grep -q '"decision":"Permit"'; then
-    pass "rest-consumer → Permit again after grant restored"
-  else
-    fail "rest-consumer → Permit after grant restored" '"decision":"Permit"' "$permit_after"
-  fi
+  assert_json_value "rest-consumer → Permit again after grant restored" "decision" "Permit" "$permit_after"
 fi
 
 # ── Section 10: kafka-authz SSE stream (test-probe) ───────────────────────────
@@ -324,17 +313,8 @@ sse=$(timeout 4 curl -sN \
 preview="${sse:0:300}"
 echo "  first 300 chars: $preview"
 
-if echo "$sse" | grep -q 'not authorized'; then
-  fail "SSE test-probe: not denied" "no 'not authorized'" "$preview"
-else
-  pass "SSE test-probe: not denied (403)"
-fi
-
-if [[ "$sse" == *"data: {"* ]]; then
-  pass "SSE test-probe: data lines received from Kafka"
-else
-  fail "SSE test-probe: data lines received from Kafka" "data: {...}" "$preview"
-fi
+assert_not_contains "SSE test-probe: not denied (403)" "not authorized" "$sse"
+assert_contains     "SSE test-probe: data lines received from Kafka" "data: {" "$sse"
 
 # ── Section 11: Dashboard proxy — Kafka and REST tab endpoints ────────────────
 echo
@@ -343,86 +323,50 @@ echo "=== 11. Dashboard proxy — Kafka and REST tab API endpoints (localhost:30
 # kafka-authz /status via nginx
 kstatus=$(http_body http://localhost:3006/api/kafka-authz/status)
 echo "  kafka-authz /status: $kstatus"
-if echo "$kstatus" | grep -q '"activeStreams"'; then
-  pass "GET /api/kafka-authz/status via nginx → activeStreams field"
-else
-  fail "GET /api/kafka-authz/status via nginx" '"activeStreams":N' "$kstatus"
-fi
-if echo "$kstatus" | grep -q '"totalServed"'; then
-  pass "GET /api/kafka-authz/status via nginx → totalServed field"
-else
-  fail "GET /api/kafka-authz/status via nginx" '"totalServed":N' "$kstatus"
-fi
+assert_json_field "GET /api/kafka-authz/status via nginx → activeStreams field" "activeStreams" "$kstatus"
+assert_json_field "GET /api/kafka-authz/status via nginx → totalServed field"  "totalServed"   "$kstatus"
 
 # kafka-authz /auth/check via nginx
 kcheck=$(http_body -X POST http://localhost:3006/api/kafka-authz/auth/check \
   -H 'Content-Type: application/json' \
   -d '{"consumer":"analytics-consumer","service":"telemetry"}')
 echo "  kafka-authz /auth/check (analytics-consumer): $kcheck"
-if echo "$kcheck" | grep -q '"decision":"Permit"'; then
-  pass "POST /api/kafka-authz/auth/check via nginx → analytics-consumer Permit"
-else
-  fail "POST /api/kafka-authz/auth/check via nginx" '"decision":"Permit"' "$kcheck"
-fi
+assert_json_value "POST /api/kafka-authz/auth/check via nginx → analytics-consumer Permit" "decision" "Permit" "$kcheck"
 
 kcheck_deny=$(http_body -X POST http://localhost:3006/api/kafka-authz/auth/check \
   -H 'Content-Type: application/json' \
   -d '{"consumer":"unknown-consumer","service":"telemetry"}')
 echo "  kafka-authz /auth/check (unknown-consumer): $kcheck_deny"
-if echo "$kcheck_deny" | grep -q '"decision":"Deny"'; then
-  pass "POST /api/kafka-authz/auth/check via nginx → unknown-consumer Deny"
-else
-  fail "POST /api/kafka-authz/auth/check via nginx" '"decision":"Deny"' "$kcheck_deny"
-fi
+assert_json_value "POST /api/kafka-authz/auth/check via nginx → unknown-consumer Deny" "decision" "Deny" "$kcheck_deny"
 
 # data-provider /stats via nginx
 dpstats=$(http_body http://localhost:3006/api/data-provider/stats)
 echo "  data-provider /stats: $dpstats"
-if echo "$dpstats" | grep -q '"msgCount"'; then
-  pass "GET /api/data-provider/stats via nginx → msgCount field"
-else
-  fail "GET /api/data-provider/stats via nginx" '"msgCount":N' "$dpstats"
-fi
-if echo "$dpstats" | grep -q '"robotCount"'; then
-  pass "GET /api/data-provider/stats via nginx → robotCount field"
-else
-  fail "GET /api/data-provider/stats via nginx" '"robotCount":N' "$dpstats"
-fi
+assert_json_field "GET /api/data-provider/stats via nginx → msgCount field"   "msgCount"   "$dpstats"
+assert_json_field "GET /api/data-provider/stats via nginx → robotCount field" "robotCount" "$dpstats"
 
 # rest-authz /status via nginx
 rastatus=$(http_body http://localhost:3006/api/rest-authz/status)
 echo "  rest-authz /status: $rastatus"
-if echo "$rastatus" | grep -q '"requestsTotal"'; then
-  pass "GET /api/rest-authz/status via nginx → requestsTotal field"
-else
-  fail "GET /api/rest-authz/status via nginx" '"requestsTotal":N' "$rastatus"
-fi
-if echo "$rastatus" | grep -q '"permitted"'; then
-  pass "GET /api/rest-authz/status via nginx → permitted field"
-else
-  fail "GET /api/rest-authz/status via nginx" '"permitted":N' "$rastatus"
-fi
+assert_json_field "GET /api/rest-authz/status via nginx → requestsTotal field" "requestsTotal" "$rastatus"
+assert_json_field "GET /api/rest-authz/status via nginx → permitted field"     "permitted"     "$rastatus"
 
-# ServiceRegistry query for telemetry-rest via nginx
+# ServiceRegistry query for telemetry-rest via nginx.
+# data-provider does not self-register in this experiment so serviceQueryData is
+# expected to be empty; the test verifies the endpoint responds in the correct
+# spec format (serviceQueryData + unfilteredHits), not that instances are present.
 srquery=$(http_body -X POST http://localhost:3006/api/serviceregistry/serviceregistry/query \
   -H 'Content-Type: application/json' \
   -d '{"serviceDefinition":"telemetry-rest"}')
 echo "  SR query for telemetry-rest (first 200 chars): ${srquery:0:200}"
-if echo "$srquery" | grep -q '"serviceInstances"'; then
-  pass "POST /api/serviceregistry/query telemetry-rest via nginx → serviceInstances field"
-else
-  fail "POST /api/serviceregistry/query via nginx" '"serviceInstances":[...]' "$srquery"
-fi
+assert_json_field "POST /api/serviceregistry/query via nginx → serviceQueryData field" "serviceQueryData" "$srquery"
+assert_json_field "POST /api/serviceregistry/query via nginx → unfilteredHits field"  "unfilteredHits"  "$srquery"
 
-# REST data access via nginx proxy (authorized)
-rest_auth_code=$(http_code -H 'X-Consumer-Name: test-probe' \
-  http://localhost:3006/api/rest-authz/telemetry/latest)
-check_eq "GET /api/rest-authz/telemetry/latest via nginx (test-probe) → 200" "200" "$rest_auth_code"
-
-# REST data access via nginx proxy (unauthorized)
-rest_deny_code=$(http_code -H 'X-Consumer-Name: unauthorized' \
-  http://localhost:3006/api/rest-authz/telemetry/latest)
-check_eq "GET /api/rest-authz/telemetry/latest via nginx (unauthorized) → 403" "403" "$rest_deny_code"
+# REST data access via nginx proxy (authorized / unauthorized)
+assert_http "GET /api/rest-authz/telemetry/latest via nginx (test-probe) → 200" 200 \
+  http://localhost:3006/api/rest-authz/telemetry/latest -H 'X-Consumer-Name: test-probe'
+assert_http "GET /api/rest-authz/telemetry/latest via nginx (unauthorized) → 403" 403 \
+  http://localhost:3006/api/rest-authz/telemetry/latest -H 'X-Consumer-Name: unauthorized'
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo

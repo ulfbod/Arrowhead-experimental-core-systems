@@ -19,6 +19,8 @@ Three clearly separated areas:
 | Shared support modules | `support/` | Stable — production-quality shared libraries |
 | Experiments | `experiments/` | Exploratory — may be incomplete or in-progress |
 
+**Experiment status:** Experiments 1–5 are preserved as historical reference — they document the design iterations that led to the current architecture and must not be removed. They are **not actively maintained**. Experiment-6 is the **active baseline**; new experiments (experiment-7 and beyond) should use it as their template. Do not load experiments 1–5 as reference material when working on experiment-6 or later.
+
 ---
 
 ## The one rule that governs everything
@@ -41,7 +43,7 @@ Never reach into core internals.
    - `core/` work → read [`core/CLAUDE.md`](core/CLAUDE.md) first
    - `support/` work → read [`support/CLAUDE.md`](support/CLAUDE.md) first
    - `experiments/` work → read [`experiments/CLAUDE_EXPERIMENTS.md`](experiments/CLAUDE_EXPERIMENTS.md) first
-3. **Read [`EXPERIENCES.md`](EXPERIENCES.md)** — seven documented failure modes with root causes and fixes. The pre-flight checklist at the bottom applies to every experiment task.
+3. **Read [`EXPERIENCES.md`](EXPERIENCES.md)** — ten documented failure modes with root causes and fixes. The pre-flight checklist at the bottom applies to every experiment task.
 
 ---
 
@@ -79,8 +81,8 @@ Each area has a `test-system.sh` script that runs a self-contained test suite an
 | Script | Requires Docker | What it covers |
 |---|---|---|
 | `core/test-system.sh` | No | build + vet + unit/integration tests for all core systems |
-| `experiments/experiment-2/test-system.sh` | Yes (`docker compose up -d`) | service health, RabbitMQ, edge-adapter, consumer messages |
-| `experiments/experiment-3/test-system.sh` | Yes (`docker compose up -d`) | service health, topic-auth-sync, grant seeding, revocation flow |
+| `experiments/experiment-5/test-system.sh` | Yes (`docker compose up -d`) | AuthzForce, policy-sync, kafka-authz, SSE stream, analytics-consumer, revocation |
+| `experiments/experiment-6/test-system.sh` | Yes (`docker compose up -d`) | kafka-authz, rest-authz, policy-sync, data-provider, rest-consumer, revocation |
 
 Run a system test from its experiment directory with the stack already up:
 
@@ -110,7 +112,7 @@ If these files conflict with anything else (including this file), they win.
 
 - Do NOT modify `core/` files to serve an experiment's needs
 - Do NOT add endpoints, fields, or behaviors not in `core/SPEC.md`
-- Do NOT wire `support/topic-auth-sync` into anything — it is dead code (superseded by the XACML approach in experiment-5)
+- Do NOT wire `support/topic-auth-sync` into experiments 5 or later — it is superseded by the XACML/AuthzForce approach from experiment-5 onward. It remains active in experiment-3 and must not be removed while that experiment exists.
 - Do NOT hardcode ports, hostnames, or AuthzForce domain names — always use environment variables
 - Do NOT use Kafka consumer group readers for services that start before their producer — use partition readers (see `EXPERIENCES.md` EXP-007)
 

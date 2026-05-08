@@ -173,8 +173,13 @@ Must always pass from `core/`:
 
 ```bash
 go build ./...
+go vet ./...
 go test ./...
 ```
+
+`staticcheck ./...` must also pass if staticcheck is installed
+(`go install honnef.co/go/tools/cmd/staticcheck@latest`).
+`core/test-system.sh` runs all four steps in order.
 
 Dashboard build (optional, run from `core/dashboard/`):
 

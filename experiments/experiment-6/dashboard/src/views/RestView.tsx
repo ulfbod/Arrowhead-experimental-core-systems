@@ -95,7 +95,7 @@ function RegisteredServicesCard({ data, error }: { data: ServiceQueryResponse | 
   if (error) return <div style={s.errBox}>ServiceRegistry unavailable: {error}</div>
   if (!data)  return <div style={s.muted}>loading…</div>
 
-  const instances = data.serviceInstances ?? []
+  const instances = data.serviceQueryData ?? []
   if (instances.length === 0) {
     return <div style={s.muted}>No instances of <code>{REST_SERVICE}</code> registered.</div>
   }
@@ -124,8 +124,11 @@ function RegisteredServicesCard({ data, error }: { data: ServiceQueryResponse | 
         </tbody>
       </table>
       <p style={s.hint}>
-        {instances.length} instance{instances.length !== 1 ? 's' : ''} registered.
-        rest-consumer discovers this endpoint via DynamicOrchestration, not by direct address.
+        {instances.length} instance{instances.length !== 1 ? 's' : ''} registered
+        (unfilteredHits: {data.unfilteredHits}).
+        In this experiment data-provider does not self-register — the table will be empty.
+        In a full Arrowhead deployment the provider would register here and rest-consumer
+        would discover it via DynamicOrchestration.
       </p>
     </div>
   )

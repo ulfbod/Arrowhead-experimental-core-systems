@@ -236,6 +236,8 @@ See [DIAGRAMS.md](DIAGRAMS.md) for Mermaid component and sequence diagrams.
 
 ---
 
-> **Note:** The dashboard source (`dashboard/src/`) is identical to
-> `../experiment-6/dashboard/src/`. Changes to dashboard logic must be
-> mirrored manually to the other experiment.
+> **Note:** The shared dashboard files (`dashboard/src/`) are symlinked from
+> `support/dashboard-shared/`. To change shared dashboard logic, edit the
+> canonical file in `support/dashboard-shared/` — never edit the symlinks
+> directly. Run `bash support/dashboard-shared/check-dashboard-shared.sh` to
+> verify all symlinks are intact.

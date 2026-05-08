@@ -111,6 +111,27 @@ bash test-system.sh
 
 The script prints a PASS/FAIL summary for each check and exits 1 if any check fails.
 
+Each `test-system.sh` begins with a **Pre-flight smoke-check** section that runs before any application-level tests. Smoke-check failures call `smoke_fail` which exits immediately (exit 2) so that downstream cascade failures do not obscure the root cause.
+
+Each `test-system.sh` sources the shared assertion library at the top:
+
+```bash
+PASS=0
+FAIL=0
+source "$(dirname "$0")/../test-lib.sh"
+```
+
+The library (`experiments/test-lib.sh`) provides: `pass`, `fail`, `check_eq`, `http_code`, `http_body`, `smoke_fail`, `smoke_http`, `assert_http`, `assert_contains`, `assert_not_contains`, `assert_json_field`, `assert_json_value`, `assert_json_gt`. Use these — do NOT copy-paste inline implementations. The key rule: **never use `echo "$x" | grep -q` as a test assertion** — use `assert_contains`/`assert_json_value` instead, which use `[[ ]]` matching to avoid the SSE false-negative trap (EXP-004, EXP-006).
+
+Smoke-check responsibilities per experiment type:
+- All experiments: core services reachable, message broker management API reachable, primary PEP service healthy, grants seeded in ConsumerAuth.
+- XACML experiments (5, 6): additionally waits up to 30 s for `policy-sync` to report `synced=true` and verifies `domainExternalId` matches the experiment's `AUTHZFORCE_DOMAIN` — a mismatch causes every auth check to return Deny silently (see `EXPERIENCES.md` EXP-001).
+
+When adding a new experiment:
+1. Define `smoke_fail` and `smoke_http` helpers (see any existing `test-system.sh`).
+2. Add a `=== Pre-flight: smoke-check ===` section before section 1.
+3. Include at minimum: one representative core service, the primary PEP, the message broker, and (for XACML stacks) the policy-sync domain check.
+
 ---
 
 ## Stability expectation
@@ -137,25 +158,155 @@ experiments/experiment-N/
 Support services (shared across experiments) live in `support/`. Before adding a new service
 locally, check whether an equivalent already exists there.
 
-Add each new Go service module to `go.work` at the repo root.
+Add each new Go service module to `go.work` — see **Go workspace** section below.
 
 ---
 
-## Files shared across experiments — mirror changes manually
+## Go workspace (go.work)
 
-The following files are **duplicated** across experiments and must be kept in sync by hand:
+The repository uses a Go workspace (`go.work` at the root) that spans every Go module:
+`core/`, all `support/<module>/` directories, and every
+`experiments/experiment-N/services/<service>/` directory.
 
-| File | Shared between |
+This lets `go build ./...` and `go test ./...` from the **repo root** build and test the
+entire codebase in one step without manual `replace` directives between modules.
+
+**When you create a new Go service, you must register it or the workspace build silently
+fails to resolve it:**
+
+```bash
+# From the repo root — run once per new service directory:
+go work use ./experiments/experiment-N/services/<service-name>
+```
+
+To confirm the current module list:
+
+```bash
+go work edit -json | jq '.Use[].DiskPath'
+```
+
+### Current workspace modules
+
+| Group | Modules |
 |---|---|
-| `experiment-5/dashboard/src/` | experiment-5, experiment-6 (identical source) |
-| `experiment-6/dashboard/src/` | experiment-5, experiment-6 (identical source) |
+| Core | `core` |
+| Experiment 1 | `experiment-1/example-client`, `experiment-1/service` |
+| Experiment 2 | `experiment-2/services/consumer`, `edge-adapter`, `robot-fleet`, `robot-simulator`, `tests` |
+| Experiment 3 | `experiment-3/services/consumer-direct` |
+| Experiment 4 | `experiment-4/services/consumer-direct`, `robot-fleet` |
+| Experiment 5 | `experiment-5/services/analytics-consumer`, `consumer-direct`, `robot-fleet` |
+| Experiment 6 | `experiment-6/services/data-provider`, `rest-consumer` |
+| Support | `authzforce`, `authzforce-server`, `kafka-authz`, `message-broker`, `policy-sync`, `rest-authz`, `topic-auth-http`, `topic-auth-sync`, `topic-auth-xacml` |
 
-If you change dashboard logic in one of these experiments, apply the same change to the other.
-There is currently no automated check for divergence.
+**Experiment status:** Experiment-6 is the **active baseline** for new development. Experiments 1–5 are **historical reference** — preserved to document the design iterations that led to experiment-6, but not actively maintained and not suitable templates for new experiments. When building experiment-7 or later, treat experiment-6 as the authoritative starting point; ignore earlier experiments unless specifically tracing a design decision.
+
+**Note:** a service that has no unit tests and is only built inside Docker does not need
+to be in `go.work`. Adding it anyway is harmless; omitting it is only fine if you never
+want `go build ./...` from the root to cover it.
+
+---
+
+## Adding a new experiment — step-by-step checklist
+
+Use this when creating experiment-N. Work through the items in order; each group can cause
+hard-to-diagnose failures if skipped.
+
+### Directory and documentation
+
+- [ ] Create `experiments/experiment-N/`
+- [ ] Write `README.md`: one-paragraph description, service table (name | port | what it does), startup order, architecture note
+- [ ] Document port assignments — pick numbers that do not collide with existing experiments
+
+### Docker stack
+
+- [ ] Create `docker-compose.yml` defining the full stack
+- [ ] Use environment variables for **all** ports, hostnames, domain names, and URLs — never hardcode (checked by pre-flight checklist in `EXPERIENCES.md`)
+- [ ] If using XACML/AuthzForce: set `AUTHZFORCE_DOMAIN` identically across `policy-sync`, `kafka-authz`, `rest-authz`, and `topic-auth-xacml`; use a name unique to this experiment (e.g. `arrowhead-exp7`) to avoid collisions (see `EXPERIENCES.md` EXP-001)
+- [ ] Create `dockerfiles/` with one Dockerfile per service; use `--build` with every `docker compose up`
+
+### Go services
+
+For each new Go service:
+
+- [ ] Create `services/<name>/go.mod` with `module arrowhead/<name>`
+- [ ] If it imports a support module, add the replace directive:
+  ```
+  replace arrowhead/<dep> => ../../../../support/<dep>
+  ```
+- [ ] **Register in `go.work`** (easy to miss — causes silent workspace build failures):
+  ```bash
+  go work use ./experiments/experiment-N/services/<name>
+  ```
+- [ ] Verify: `go build ./...` from repo root succeeds with no "cannot find module" errors
+
+### Dashboard (if applicable)
+
+- [ ] If sharing source files with experiments 5–6, symlink from `support/dashboard-shared/`; run `bash support/dashboard-shared/check-dashboard-shared.sh` (expect 20/20 PASS, plus N new symlinks)
+- [ ] If the dashboard contains symlinks, set `build.context: ../..` in `docker-compose.yml` and use the three-step Dockerfile pattern to resolve them (see `EXPERIENCES.md` EXP-010)
+- [ ] Set `package.json` build script to `tsc -p tsconfig.app.json` (not bare `tsc`) to exclude test files (see `EXPERIENCES.md` EXP-008)
+
+### test-system.sh
+
+- [ ] Source `../test-lib.sh` at the top — do **not** copy helpers inline
+- [ ] Add a `=== Pre-flight: smoke-check ===` section using `smoke_http` for each critical service
+- [ ] For XACML stacks: add a `policy-sync` smoke-check that waits up to 30 s for `synced=true` and asserts the correct `domainExternalId`
+- [ ] Use `assert_json_value` / `assert_contains` / `assert_json_gt` for all assertions — never `echo "$x" | grep -q` (see `EXPERIENCES.md` EXP-004/EXP-006)
+
+### Final verification
+
+- [ ] `docker compose up -d --build` → `bash test-system.sh` → all PASS
+- [ ] `go build ./...` and `go test ./...` from repo root → no errors
+- [ ] If a new support module was added: update the stability table in `support/CLAUDE.md` and the module overview in `support/README.md`
+
+---
+
+## Files shared across experiments — symlinked via support/dashboard-shared/
+
+Ten source files are shared between the experiment-5 and experiment-6 dashboards.
+They live canonically in `support/dashboard-shared/` and are **symlinked** into both
+experiment `dashboard/src/` directories:
+
+| Canonical file | Symlinked from |
+|---|---|
+| `support/dashboard-shared/main.tsx` | `experiment-5/dashboard/src/main.tsx`, `experiment-6/dashboard/src/main.tsx` |
+| `support/dashboard-shared/hooks/usePolling.ts` | both experiments |
+| `support/dashboard-shared/config/context.tsx` | both experiments |
+| `support/dashboard-shared/config/defaults.ts` | both experiments |
+| `support/dashboard-shared/config/types.ts` | both experiments |
+| `support/dashboard-shared/components/StatusDot.tsx` | both experiments |
+| `support/dashboard-shared/views/HealthView.tsx` | both experiments |
+| `support/dashboard-shared/views/GrantsView.tsx` | both experiments |
+| `support/dashboard-shared/views/PolicyView.tsx` | both experiments |
+| `support/dashboard-shared/views/LiveDataView.tsx` | both experiments |
+
+**Rule: always edit the canonical file in `support/dashboard-shared/`.** Never edit
+the symlinks directly — they are resolved by the filesystem and by Docker at build time.
+
+To verify all symlinks are intact and no content has drifted:
+
+```bash
+bash support/dashboard-shared/check-dashboard-shared.sh
+```
+
+**Docker build context:** both dashboard Dockerfiles use `context: ../..` (repo root)
+so that `support/dashboard-shared/` is within the build context. Do not change this
+back to `context: .` — the COPY of shared files would fail with "forbidden path
+outside build context".
+
+**Docker symlink resolution:** Docker copies relative symlinks as-is; inside the
+container the relative paths are dangling. The Dockerfiles handle this explicitly:
+after copying the dashboard, they copy `support/dashboard-shared/` to a temp path,
+remove all dangling symlinks in `src/`, and copy in the real files. See EXP-010 in
+`EXPERIENCES.md`.
+
+**Development (npm run dev):** symlinks are resolved normally by the filesystem; no
+special setup needed.
 
 ---
 
 ## Before starting work on a specific experiment
+
+If building a **new experiment**, use experiment-6 as the template — not any earlier experiment.
 
 1. Read that experiment's `README.md` — it contains the service table, port assignments,
    startup order, and architecture specific to that experiment.

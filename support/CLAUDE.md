@@ -19,9 +19,9 @@ These are production-quality support modules — held to a higher standard than 
 | `authzforce-server` | Stable | experiment-5, experiment-6 (AuthzForce Docker wrapper) |
 | `message-broker` | Stable | experiment-2, experiment-3, experiment-4 |
 | `topic-auth-http` | Stable | experiment-3, experiment-4 |
-| `topic-auth-sync` | **Dead code** — not wired in any experiment | — |
+| `topic-auth-sync` | Stable | experiment-3 (core service); not wired in experiments 4–6 |
 
-**topic-auth-sync is dead code.** It implements a RabbitMQ topic-authorization sync mechanism that was superseded by the XACML/AuthzForce approach in experiment-5. Do not wire it into new experiments. Do not delete it without confirming it is safe to remove.
+**topic-auth-sync is the architectural centrepiece of experiment-3.** It polls ConsumerAuthorization and reconciles RabbitMQ users and topic permissions. It has a dedicated Dockerfile, health checks, and dashboard integration in experiment-3. Experiment-4 has a Dockerfile for it but does not wire it into its stack. It was superseded by the XACML/AuthzForce approach from experiment-5 onward. Do not wire it into experiments 5+. Do not remove it while experiment-3 exists.
 
 ---
 
@@ -87,6 +87,22 @@ go test ./...
 | `rest-authz` | `cache_test.go`, `server_test.go` | TTL cache behaviour; /health, /auth/check (permit/deny/missing fields), proxy (forward/403/401), stats counters |
 
 When adding a new support module, add a corresponding `_test.go` covering its exported functions and HTTP handlers.
+
+---
+
+## API Specifications
+
+Four support services expose HTTP APIs that experiment code depends on.
+**Always read the relevant SPEC.md before writing TypeScript types, test assertions,
+or dashboard API calls against these services.** Never infer field names from first
+principles — use the spec (see EXP-009 in `EXPERIENCES.md`).
+
+| Service | Spec file |
+|---|---|
+| `authzforce-server` | [`authzforce-server/SPEC.md`](authzforce-server/SPEC.md) |
+| `kafka-authz` | [`kafka-authz/SPEC.md`](kafka-authz/SPEC.md) |
+| `policy-sync` | [`policy-sync/SPEC.md`](policy-sync/SPEC.md) |
+| `rest-authz` | [`rest-authz/SPEC.md`](rest-authz/SPEC.md) |
 
 ---
 

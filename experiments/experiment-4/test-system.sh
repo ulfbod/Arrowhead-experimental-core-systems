@@ -15,25 +15,7 @@ set -euo pipefail
 PASS=0
 FAIL=0
 
-green() { printf '\033[32m%s\033[0m\n' "$*"; }
-red()   { printf '\033[31m%s\033[0m\n' "$*"; }
-
-pass() { green "  PASS  $1"; PASS=$((PASS+1)); }
-
-fail() {
-  red "  FAIL  $1"
-  echo "         expected: $2"
-  echo "         actual:   $3"
-  FAIL=$((FAIL+1))
-}
-
-check_eq() {
-  local desc="$1" expected="$2" actual="$3"
-  if [ "$actual" = "$expected" ]; then pass "$desc"; else fail "$desc" "$expected" "$actual"; fi
-}
-
-http_code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-http_body() { curl -s "$@"; }
+source "$(dirname "$0")/../test-lib.sh"
 
 # Tracks grant IDs that we revoke so we can restore them at the end.
 REVOKED_IDS=""
@@ -46,6 +28,25 @@ restore_all() {
   done
 }
 trap restore_all EXIT
+
+# ── Pre-flight: smoke-check ───────────────────────────────────────────────────
+# Verify fundamental preconditions before running application-level tests.
+# Any failure here exits immediately so cascade failures do not obscure the root cause.
+echo
+echo "=== Pre-flight: smoke-check ==="
+
+smoke_http "ServiceRegistry /health"   http://localhost:8080/health
+smoke_http "ConsumerAuth /health"      http://localhost:8082/health
+smoke_http "RabbitMQ management"       http://localhost:15674/api/overview -u admin:admin
+smoke_http "topic-auth-http /health"   http://localhost:9090/health
+
+grants_body=$(http_body http://localhost:8082/authorization/lookup 2>/dev/null || echo "{}")
+grant_count=$(echo "$grants_body" | grep -oE '"count":[0-9]+' | grep -oE '[0-9]+' || echo "0")
+if [ "${grant_count:-0}" -ge 1 ]; then
+  pass "ConsumerAuth grants seeded (count=$grant_count)"
+else
+  smoke_fail "ConsumerAuth grants seeded" "no grants found (count=0) — run the setup script first"
+fi
 
 # ── Section 1: Core service health ────────────────────────────────────────────
 echo
@@ -67,20 +68,14 @@ check_eq "robot-fleet /health → 200" "200" "$(http_code http://localhost:9104/
 # ── Section 2: RabbitMQ management reachable ──────────────────────────────────
 echo
 echo "=== 2. RabbitMQ management API ==="
-check_eq "RabbitMQ management /api/overview → 200" "200" \
-  "$(http_code -u admin:admin http://localhost:15674/api/overview)"
+assert_http "RabbitMQ management /api/overview" 200 http://localhost:15674/api/overview -u admin:admin
 
 # ── Section 3: CA grants seeded by setup ──────────────────────────────────────
 echo
 echo "=== 3. ConsumerAuth grants ==="
 grants_body=$(http_body http://localhost:8082/authorization/lookup)
 echo "  $grants_body"
-grant_count=$(echo "$grants_body" | grep -oE '"count":[0-9]+' | grep -oE '[0-9]+' || echo "0")
-if [ "${grant_count:-0}" -ge 3 ]; then
-  pass "at least 3 grants seeded (count=$grant_count)"
-else
-  fail "at least 3 grants seeded" "≥3" "${grant_count:-0}"
-fi
+assert_json_gt "at least 3 grants seeded" "count" 2 "$grants_body"
 
 # ── Section 4: All 3 consumers receiving messages ─────────────────────────────
 echo
@@ -121,11 +116,7 @@ check_eq "auth/user unknown-system → deny" "deny" "$auth_deny"
 # Admin auth
 auth_admin=$(http_body -X POST http://localhost:9090/auth/user \
   -d "username=admin&password=admin")
-if echo "$auth_admin" | grep -q "^allow"; then
-  pass "auth/user admin → allow (with tags)"
-else
-  fail "auth/user admin → allow" "allow ..." "$auth_admin"
-fi
+assert_contains "auth/user admin → allow (with tags)" "allow" "$auth_admin"
 
 # ── Section 6: Revocation — consumer-2 ────────────────────────────────────────
 echo
@@ -202,10 +193,10 @@ else
   regrant=$(http_body -X POST http://localhost:8082/authorization/grant \
     -H 'Content-Type: application/json' \
     -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}')
-  if echo "$regrant" | grep -qE '"id":|already exists'; then
+  if [[ "$regrant" == *'"id":'* ]] || [[ "$regrant" == *"already exists"* ]]; then
     pass "demo-consumer-2 grant restored"
   else
-    fail "demo-consumer-2 grant restored" '"id":N' "$regrant"
+    fail "demo-consumer-2 grant restored" '"id":N or already exists' "$regrant"
   fi
 
   # Verify auth/user allows consumer-2 again.

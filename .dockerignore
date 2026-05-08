@@ -4,3 +4,7 @@
 # source files — causing stale cache hits when only src/ changes.
 experiments/experiment-2/dashboard/node_modules/
 experiments/experiment-2/dashboard/dist/
+experiments/experiment-5/dashboard/node_modules/
+experiments/experiment-5/dashboard/dist/
+experiments/experiment-6/dashboard/node_modules/
+experiments/experiment-6/dashboard/dist/

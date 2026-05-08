@@ -495,10 +495,232 @@ Specific checks before committing diagrams:
 
 ---
 
+## EXP-008 — Test files included in production TypeScript build break `npm run build` (experiment-6, 2026-05-06)
+
+### Symptom
+
+Docker image build for the experiment-6 dashboard failed during `npm run build`:
+
+```
+src/api.test.ts(24,17): error TS2322: Type 'VitestUtils' is not assignable to type 'Awaitable<void>'.
+failed to solve: process "/bin/sh -c npm run build" did not complete successfully: exit code: 2
+```
+
+The error appeared after adding unit tests for the new Kafka and REST tabs.
+The production build had worked before; adding `*.test.ts` files to `src/` broke it.
+
+### Root Cause
+
+The production build script was `tsc && vite build`.  With `tsconfig.json` including
+all files under `src/`, `tsc` compiled test files alongside application code.  Test
+files import vitest-specific APIs (e.g. `vi.stubGlobal`) that return vitest types
+(`VitestUtils`).  Those types are incompatible with the standard `Awaitable<void>`
+return type that `afterEach` expects, causing the `TS2322` error.
+
+The root issue is the lack of a build-specific tsconfig that excludes test files.
+A single `tsconfig.json` covering both production and test code works in the IDE
+but fails when `tsc` is run as a build gate in Docker.
+
+### Fix
+
+1. Create `tsconfig.app.json` — identical compiler options to `tsconfig.json` but
+   with an `exclude` for all test files:
+
+   ```json
+   {
+     "compilerOptions": { /* same as tsconfig.json */ },
+     "include": ["src"],
+     "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test"],
+     "references": [{ "path": "./tsconfig.node.json" }]
+   }
+   ```
+
+2. Update the build script in `package.json` to use the app-only tsconfig:
+
+   ```json
+   "build": "tsc -p tsconfig.app.json && vite build"
+   ```
+
+`tsconfig.json` is kept unchanged so the IDE (and `vitest`) continues to type-check
+test files with full vitest type support.
+
+### Guidance for Future Iterations
+
+**Whenever unit tests are added to a Vite dashboard, ensure the project has a
+separate `tsconfig.app.json` that excludes test files from the production `tsc` run.**
+
+Specific checks:
+
+1. **On any new dashboard project**, immediately create `tsconfig.app.json` and
+   point the `build` script at it — do not wait until test files cause a breakage.
+
+2. **The split tsconfig pattern**:
+   - `tsconfig.json` — full `src/` include, used by the IDE and by `vitest`
+   - `tsconfig.app.json` — same options, excludes `**/*.test.*` and `src/test/`, used by `npm run build`
+
+3. **Verify the Docker build locally** after adding the first test file to a dashboard:
+   ```bash
+   docker compose build dashboard
+   ```
+   A type error here means `tsconfig.app.json` is missing or the build script still
+   references `tsconfig.json`.
+
+4. **Do not work around this by suppressing the type error in the test file** (e.g.
+   using block-body `{ vi.stubGlobal(...) }` to avoid returning `VitestUtils`).
+   That hides the symptom without fixing the structural problem — a future test
+   importing other vitest APIs will trigger the same failure again.
+
+---
+
+## EXP-009 — ServiceRegistry query response uses `serviceQueryData`, not `serviceInstances` (experiment-6, 2026-05-06)
+
+### Symptom
+
+The system test section 11 check for the ServiceRegistry query endpoint failed:
+
+```
+SR query for telemetry-rest (first 200 chars): {"serviceQueryData":[],"unfilteredHits":2}
+FAIL  POST /api/serviceregistry/query via nginx
+       expected: "serviceInstances":[...]
+       actual:   {"serviceQueryData":[],"unfilteredHits":2}
+```
+
+The dashboard's `RestView` also silently showed an empty table in all cases — the
+`serviceQueryData` array was never read because the component accessed
+`data.serviceInstances` which was always `undefined`.
+
+### Root Cause
+
+The dashboard types and component were written against an assumed response shape
+(`serviceInstances` / `count`) without consulting `core/SPEC.md`.  The actual
+ServiceRegistry query response (per spec) uses:
+
+```json
+{ "serviceQueryData": [ /* ServiceInstance[] */ ], "unfilteredHits": 0 }
+```
+
+The secondary finding: in this experiment `data-provider` does not self-register
+with the ServiceRegistry, so `serviceQueryData` is always `[]` even after the fix.
+The `unfilteredHits: 2` shows other services are registered, just not `telemetry-rest`.
+This is expected behaviour for the current experiment design.
+
+### Fix
+
+1. `types.ts`: rename `serviceInstances → serviceQueryData`, `count → unfilteredHits`
+2. `RestView.tsx`: access `data.serviceQueryData` and `data.unfilteredHits`; updated
+   hint text to explain that data-provider does not self-register in this experiment
+3. `api.test.ts`, `RestView.test.tsx`: update mock data to use correct field names
+4. `test-system.sh`: check for `"serviceQueryData"` and `"unfilteredHits"` fields;
+   remove the assertion that instances are present (data-provider doesn't register)
+
+### Guidance for Future Iterations
+
+**Always read `core/SPEC.md` before writing TypeScript types or test assertions for
+any Arrowhead core system API response shape.  Do not infer field names from first
+principles or REST conventions.**
+
+Specific checks:
+
+1. Before writing a new API type in `types.ts`, grep SPEC.md for the endpoint:
+   ```bash
+   grep -A 20 "serviceregistry/query" core/SPEC.md
+   ```
+
+2. If a UI section shows an unexpectedly empty list, check whether the field name
+   in the component matches the actual JSON key — not just that the HTTP call
+   returns 200.
+
+3. When a system test asserts response body fields, assert the exact field names
+   from the spec, not assumed REST-conventional names.
+
+---
+
+## EXP-010 — Docker COPY does not dereference relative symlinks (dashboard shared source, 2026-05-07)
+
+### Symptom
+
+Docker build for the experiment-5 and experiment-6 dashboards failed at `npm run build`
+with a cascade of TypeScript `TS2307: Cannot find module` errors for every file that was
+symlinked from `support/dashboard-shared/`:
+
+```
+src/App.tsx(2,32): error TS2307: Cannot find module './config/context'
+src/App.tsx(3,29): error TS2307: Cannot find module './views/HealthView'
+src/components/SystemHealthGrid.tsx(2,28): error TS2307: Cannot find module '../hooks/usePolling'
+...
+```
+
+The COPY step itself completed without error; the failure only appeared when `tsc` ran.
+
+### Root Cause
+
+Ten source files in `dashboard/src/` are relative symlinks pointing to
+`support/dashboard-shared/` (e.g. `../../../../support/dashboard-shared/main.tsx`).
+
+Docker's `COPY` command copies relative symlinks **as-is** — it does not dereference
+them. Inside the container the files landed at `/app/src/main.tsx` (a symlink), but
+the symlink target `../../../../support/dashboard-shared/main.tsx`, resolved from
+`/app/src/`, points to `/support/dashboard-shared/main.tsx` — a path that does not
+exist in the container. TypeScript therefore could not find any of the shared modules.
+
+The COPY step produced no error because Docker successfully copied the symlink entries
+themselves; the failure was deferred to `tsc`, which tried to open the (dangling) files.
+
+### Fix
+
+The Dockerfile must explicitly copy the shared files and remove the dangling symlinks
+before the build runs:
+
+```dockerfile
+COPY experiments/experiment-N/dashboard/ .
+COPY support/dashboard-shared/ /dashboard-shared/
+RUN find src -type l -delete && cp -r /dashboard-shared/. src/
+RUN npm run build
+```
+
+Step-by-step:
+1. `COPY experiments/experiment-N/dashboard/ .` — copies the dashboard including dangling symlinks.
+2. `COPY support/dashboard-shared/ /dashboard-shared/` — copies shared files to a scratch path.
+3. `find src -type l -delete` — removes all dangling symlinks from `src/`.
+4. `cp -r /dashboard-shared/. src/` — copies the real files into `src/`, mirroring the directory structure of `support/dashboard-shared/`.
+
+Applied to both `experiments/experiment-5/dockerfiles/dashboard.Dockerfile` and
+`experiments/experiment-6/dockerfiles/dashboard.Dockerfile`.
+
+### Guidance for Future Experiments
+
+**When a dashboard's `src/` contains symlinks to files outside the dashboard directory,
+the Dockerfile must resolve them explicitly — never rely on Docker to dereference
+relative symlinks.**
+
+Specific checks before shipping a dashboard Dockerfile:
+
+1. **If any file in `src/` is a symlink**, add the three-step pattern above to the
+   Dockerfile. The pattern is safe even if there are no symlinks: `find src -type l -delete`
+   is a no-op when there are none.
+
+2. **Verify symlinks are dangling inside the container** by adding a temporary diagnostic:
+   ```dockerfile
+   RUN find src -type l | while read f; do echo "$f -> $(readlink $f)"; done
+   ```
+   Any output confirms symlinks are present and shows where they point.
+
+3. **Never rely on `docker compose build --no-cache` to reveal this problem** — the COPY
+   step succeeds silently; the error only appears at `tsc` or `npm run build`. The
+   symptom is indistinguishable from a missing file or a wrong import path.
+
+4. **The `check-dashboard-shared.sh` script verifies symlinks on the host filesystem**
+   (where they are valid). It cannot detect the Docker-side problem. The only way to
+   test the Docker side is to run `docker compose build dashboard`.
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
 
+- [ ] `test-system.sh` sources `../test-lib.sh` (no inline helper declarations); uses `assert_http`, `assert_contains`, `assert_json_field`, `assert_json_value`, `assert_json_gt` for all assertions — no bare `echo "$x" | grep -q` patterns used as assertions
+- [ ] `test-system.sh` has a `=== Pre-flight: smoke-check ===` section with `smoke_fail`/`smoke_http` helpers that exits immediately on any fundamental failure before application-level tests run
 - [ ] All shared support services read configurable keys from env vars (no experiment-N hardcoding in Go code)
 - [ ] docker-compose env vars for each service are consistent (same domain, same topic names)
 - [ ] `test-system.sh` includes explicit `/auth/check` tests for at least one Permit and one Deny case per PEP
@@ -511,3 +733,6 @@ Use this before marking an experiment implementation complete:
 - [ ] Smoke-check data-provider `/stats` directly (`msgCount > 0`) before investigating rest-authz failures
 - [ ] `support/README.md` and `support/DIAGRAMS.md` updated for any new or modified support service
 - [ ] All Mermaid diagrams render without parse errors (no `\"` inside `|"..."|` edge label strings)
+- [ ] Dashboard `package.json` build script uses `tsc -p tsconfig.app.json` (not bare `tsc`) to exclude test files from production build (EXP-008)
+- [ ] Dashboard TypeScript types for core system API responses match field names in `core/SPEC.md` exactly (e.g. `serviceQueryData`/`unfilteredHits`, not `serviceInstances`/`count`) (EXP-009)
+- [ ] If any file in `dashboard/src/` is a symlink to `support/dashboard-shared/`, the dashboard Dockerfile uses the three-step pattern: `COPY support/dashboard-shared/ /dashboard-shared/` then `find src -type l -delete && cp -r /dashboard-shared/. src/` before `npm run build` (EXP-010)

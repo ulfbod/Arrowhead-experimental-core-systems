@@ -9,17 +9,17 @@ depend on.
 
 ## Module overview
 
-| Module | Kind | Port | Used in |
-|---|---|---|---|
-| `authzforce` | Go library | — | topic-auth-xacml · kafka-authz · policy-sync · rest-authz |
-| `authzforce-server` | Service | 8080 | experiment-5 · experiment-6 |
-| `kafka-authz` | Service | 9091 | experiment-5 · experiment-6 |
-| `message-broker` | Go library | — | experiment services (robot-fleet · consumers) |
-| `policy-sync` | Service | 9095 | experiment-5 · experiment-6 |
-| `rest-authz` | Service | 9093 | experiment-6 |
-| `topic-auth-http` | Service | 9090 | experiment-4 |
-| `topic-auth-sync` | Service | 9090 | — (alternative design, not wired) |
-| `topic-auth-xacml` | Service | 9090 | experiment-5 · experiment-6 |
+| Module | Kind | Port | Used in | Spec |
+|---|---|---|---|---|
+| `authzforce` | Go library | — | topic-auth-xacml · kafka-authz · policy-sync · rest-authz | — |
+| `authzforce-server` | Service | 8080 | experiment-5 · experiment-6 | — |
+| `kafka-authz` | Service | 9091 | experiment-5 · experiment-6 | [`kafka-authz/SPEC.md`](kafka-authz/SPEC.md) |
+| `message-broker` | Go library | — | experiment services (robot-fleet · consumers) | — |
+| `policy-sync` | Service | 9095 | experiment-5 · experiment-6 | [`policy-sync/SPEC.md`](policy-sync/SPEC.md) |
+| `rest-authz` | Service | 9093 | experiment-6 | [`rest-authz/SPEC.md`](rest-authz/SPEC.md) |
+| `topic-auth-http` | Service | 9090 | experiment-4 | — |
+| `topic-auth-sync` | Service | 9090 | experiment-3 (not wired in 4–6) | — |
+| `topic-auth-xacml` | Service | 9090 | experiment-5 · experiment-6 | — |
 
 ---
 
@@ -106,7 +106,7 @@ Key environment variables:
 
 ### `topic-auth-sync`
 
-**Polling sync into RabbitMQ — alternative design, not used in any experiment.**
+**Polling sync into RabbitMQ — active in experiment-3; superseded by `topic-auth-http` (experiment-4) and XACML/AuthzForce (experiments 5+).**
 
 Instead of a live HTTP auth backend, this service periodically polls
 ConsumerAuthorization (`GET /authorization/lookup`) and reconciles RabbitMQ

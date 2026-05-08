@@ -129,6 +129,8 @@ Reusable modules shared across experiments. Each module is a standalone Go modul
 | `policy-sync` | `support/policy-sync/` | Compiles ConsumerAuth grants into a XACML PolicySet and uploads to AuthzForce (experiment-5) |
 | `topic-auth-xacml` | `support/topic-auth-xacml/` | RabbitMQ HTTP authz backend — delegates all decisions to AuthzForce PDP (experiment-5) |
 | `kafka-authz` | `support/kafka-authz/` | Kafka SSE proxy PEP — authenticates streams against AuthzForce and sends `event: revoked` on policy change (experiment-5) |
+| `rest-authz` | `support/rest-authz/` | HTTP reverse proxy PEP — forwards requests to an upstream service only when AuthzForce returns Permit (experiment-6) |
+| `dashboard-shared` | `support/dashboard-shared/` | Canonical shared React source files (10 components/views/hooks) symlinked into experiment-5 and experiment-6 dashboards |
 
 ---
 
@@ -149,6 +151,7 @@ Exploratory code built on top of the core. May include additional frontends, sim
 | [experiment-3](experiments/experiment-3/) | Direct AMQP subscriptions with broker-level topic authorization sourced from ConsumerAuth |
 | [experiment-4](experiments/experiment-4/) | Geo-distributed consumers over AMQP: dual-layer authorization via `topic-auth-http` (live CA checks) + RabbitMQ user lifecycle management |
 | [experiment-5](experiments/experiment-5/) | Unified XACML/ABAC policy projection across AMQP and Kafka: `policy-sync` compiles CA grants into a XACML PolicySet; one AuthzForce PDP governs both `topic-auth-xacml` (AMQP) and `kafka-authz` (Kafka SSE) |
+| [experiment-6](experiments/experiment-6/) | Triple-transport policy projection: extends experiment-5 by adding a REST/HTTP path via `rest-authz`; a single CA grant now propagates to all three transports (AMQP, Kafka, REST) within one sync cycle; `SYNC_INTERVAL` is runtime-configurable from the dashboard |
 
 See [`experiments/CLAUDE_EXPERIMENTS.md`](experiments/CLAUDE_EXPERIMENTS.md) for rules.
 
@@ -241,9 +244,11 @@ No code in `experiments/` or `dashboard/` may import packages from `core/interna
 │   ├── topic-auth-sync/             # ConsumerAuth → RabbitMQ topic-permission sync (experiment-3)
 │   ├── topic-auth-http/             # RabbitMQ HTTP authz backend, live CA checks (experiment-4)
 │   ├── authzforce/                  # AuthzForce REST client + XACML PolicySet builder
-│   ├── policy-sync/                 # CA → XACML → AuthzForce compiler (experiment-5)
-│   ├── topic-auth-xacml/            # RabbitMQ HTTP authz backend → AuthzForce PDP (experiment-5)
-│   └── kafka-authz/                 # Kafka SSE proxy PEP → AuthzForce PDP (experiment-5)
+│   ├── policy-sync/                 # CA → XACML → AuthzForce compiler (experiments 5–6)
+│   ├── topic-auth-xacml/            # RabbitMQ HTTP authz backend → AuthzForce PDP (experiments 5–6)
+│   ├── kafka-authz/                 # Kafka SSE proxy PEP → AuthzForce PDP (experiments 5–6)
+│   ├── rest-authz/                  # HTTP reverse proxy PEP → AuthzForce PDP (experiment-6)
+│   └── dashboard-shared/            # Shared React source files symlinked into exp-5 and exp-6
 │
 └── experiments/
     ├── CLAUDE_EXPERIMENTS.md
@@ -270,13 +275,20 @@ No code in `experiments/` or `dashboard/` may import packages from `core/interna
     │   └── services/
     │       ├── robot-fleet/         # AMQP publisher + SR registration
     │       └── consumer-direct/     # AMQP consumer via AHC orchestration flow
-    └── experiment-5/
+    ├── experiment-5/
+    │   ├── docker-compose.yml
+    │   ├── dockerfiles/
+    │   ├── rabbitmq/
+    │   ├── authzforce/              # AuthzForce config
+    │   └── services/
+    │       ├── robot-fleet/         # dual-publish AMQP + Kafka
+    │       ├── consumer-direct/     # AMQP consumer via AHC orchestration flow
+    │       └── analytics-consumer/  # Kafka SSE consumer via kafka-authz
+    └── experiment-6/
         ├── docker-compose.yml
         ├── dockerfiles/
         ├── rabbitmq/
-        ├── authzforce/              # AuthzForce config
         └── services/
-            ├── robot-fleet/         # dual-publish AMQP + Kafka
-            ├── consumer-direct/     # AMQP consumer via AHC orchestration flow
-            └── analytics-consumer/  # Kafka SSE consumer via kafka-authz
+            ├── data-provider/       # Kafka consumer + REST API (upstream of rest-authz)
+            └── rest-consumer/       # REST subscriber polling via rest-authz
 ```

@@ -91,3 +91,43 @@ func TestPoll_unreachableServer(t *testing.T) {
 		t.Error("expected error for unreachable server")
 	}
 }
+
+// TestPoll_consumerNameExact verifies that the exact consumer name string is sent
+// in X-Consumer-Name, not just any non-empty value.  The existing TestPoll_200OK
+// only asserts the header is present; this test asserts the correct identity is
+// forwarded — the contract rest-authz depends on for AuthzForce evaluation.
+func TestPoll_consumerNameExact(t *testing.T) {
+	var gotConsumer string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotConsumer = r.Header.Get("X-Consumer-Name")
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	poll(&http.Client{}, srv.URL, "my-exact-consumer", "svc", &statsTracker{})
+
+	if gotConsumer != "my-exact-consumer" {
+		t.Errorf("X-Consumer-Name: got %q, want %q", gotConsumer, "my-exact-consumer")
+	}
+}
+
+// TestPoll_403_setsLastDeniedAt verifies that a 403 response updates lastDeniedAt
+// in addition to incrementing deniedCount.  Without lastDeniedAt the dashboard
+// cannot display when access was last denied.
+func TestPoll_403_setsLastDeniedAt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":"not authorized"}`, http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	st := &statsTracker{}
+	poll(&http.Client{}, srv.URL, "bad-consumer", "svc", st)
+
+	snap := st.snapshot("bad-consumer")
+	if snap["lastDeniedAt"] == "" {
+		t.Error("lastDeniedAt should be set after 403 response")
+	}
+	if snap["lastReceivedAt"] != "" {
+		t.Error("lastReceivedAt should remain empty after 403 response")
+	}
+}

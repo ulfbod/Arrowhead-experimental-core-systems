@@ -443,8 +443,8 @@ services:
 
   dashboard:
     build:
-      context: .
-      dockerfile: dockerfiles/dashboard.Dockerfile
+      context: ../..
+      dockerfile: experiments/experiment-6/dockerfiles/dashboard.Dockerfile
     ports:
       - "3006:80"
     depends_on:

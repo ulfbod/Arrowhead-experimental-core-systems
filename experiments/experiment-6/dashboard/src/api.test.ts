@@ -89,10 +89,10 @@ describe('queryServiceRegistry', () => {
   })
 
   it('returns empty result when no instances registered', async () => {
-    stubFetch(200, { serviceInstances: [], count: 0 })
+    stubFetch(200, { serviceQueryData: [], unfilteredHits: 0 })
     const result = await queryServiceRegistry('telemetry-rest')
-    expect(result.serviceInstances).toHaveLength(0)
-    expect(result.count).toBe(0)
+    expect(result.serviceQueryData).toHaveLength(0)
+    expect(result.unfilteredHits).toBe(0)
   })
 
   it('returns registered service instances', async () => {
@@ -104,11 +104,11 @@ describe('queryServiceRegistry', () => {
       interfaces: ['HTTP-INSECURE-JSON'],
       version: 1,
     }
-    stubFetch(200, { serviceInstances: [instance], count: 1 })
+    stubFetch(200, { serviceQueryData: [instance], unfilteredHits: 1 })
     const result = await queryServiceRegistry('telemetry-rest')
-    expect(result.count).toBe(1)
-    expect(result.serviceInstances[0].providerSystem.systemName).toBe('data-provider')
-    expect(result.serviceInstances[0].serviceUri).toBe('/telemetry/latest')
+    expect(result.unfilteredHits).toBe(1)
+    expect(result.serviceQueryData[0].providerSystem.systemName).toBe('data-provider')
+    expect(result.serviceQueryData[0].serviceUri).toBe('/telemetry/latest')
   })
 
   it('throws on non-OK response', async () => {

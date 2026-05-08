@@ -1,9 +1,1 @@
-import { PolicyProjectionPanel } from '../components/PolicyProjectionPanel'
-
-export function PolicyView() {
-  return (
-    <div>
-      <PolicyProjectionPanel />
-    </div>
-  )
-}
+../../../../../support/dashboard-shared/views/PolicyView.tsx

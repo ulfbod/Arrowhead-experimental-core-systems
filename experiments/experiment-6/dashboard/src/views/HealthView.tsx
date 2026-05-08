@@ -1,9 +1,1 @@
-import { SystemHealthGrid } from '../components/SystemHealthGrid'
-
-export function HealthView() {
-  return (
-    <div>
-      <SystemHealthGrid />
-    </div>
-  )
-}
+../../../../../support/dashboard-shared/views/HealthView.tsx

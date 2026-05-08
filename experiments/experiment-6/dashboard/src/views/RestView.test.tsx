@@ -78,14 +78,14 @@ describe('RestView — registered services', () => {
       .mockReturnValueOnce(noData())                                               // dpStats
       .mockReturnValueOnce(noData())                                               // rcStats
       .mockReturnValueOnce(noData())                                               // caRules
-      .mockReturnValueOnce({ data: { serviceInstances: [], count: 0 }, error: null, loading: false, stale: false, refresh: vi.fn() }) // srResult
+      .mockReturnValueOnce({ data: { serviceQueryData: [], unfilteredHits: 0 }, error: null, loading: false, stale: false, refresh: vi.fn() }) // srResult
     render(<RestView />)
     expect(screen.getByText(/No instances of/)).toBeInTheDocument()
   })
 
   it('renders a table row when SR returns a registered instance', () => {
     const srResult = {
-      serviceInstances: [{
+      serviceQueryData: [{
         id: 1,
         serviceDefinition: 'telemetry-rest',
         providerSystem: { systemName: 'data-provider', address: 'data-provider', port: 9094 },
@@ -93,7 +93,7 @@ describe('RestView — registered services', () => {
         interfaces: ['HTTP-INSECURE-JSON'],
         version: 1,
       }],
-      count: 1,
+      unfilteredHits: 1,
     }
     mockUsePolling
       .mockReturnValueOnce(noData())

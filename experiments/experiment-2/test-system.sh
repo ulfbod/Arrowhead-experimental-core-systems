@@ -14,25 +14,18 @@ set -euo pipefail
 PASS=0
 FAIL=0
 
-green() { printf '\033[32m%s\033[0m\n' "$*"; }
-red()   { printf '\033[31m%s\033[0m\n' "$*"; }
+source "$(dirname "$0")/../test-lib.sh"
 
-pass() { green "  PASS  $1"; PASS=$((PASS+1)); }
+# ── Pre-flight: smoke-check ───────────────────────────────────────────────────
+# Verify fundamental preconditions before running application-level tests.
+# Any failure here exits immediately so cascade failures do not obscure the root cause.
+echo
+echo "=== Pre-flight: smoke-check ==="
 
-fail() {
-  red "  FAIL  $1"
-  echo "         expected: $2"
-  echo "         actual:   $3"
-  FAIL=$((FAIL+1))
-}
-
-check_eq() {
-  local desc="$1" expected="$2" actual="$3"
-  if [ "$actual" = "$expected" ]; then pass "$desc"; else fail "$desc" "$expected" "$actual"; fi
-}
-
-http_code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-http_body() { curl -s "$@"; }
+smoke_http "ServiceRegistry /health"  http://localhost:8080/health
+smoke_http "ConsumerAuth /health"     http://localhost:8082/health
+smoke_http "RabbitMQ management"      http://localhost:15672/api/overview -u admin:admin
+smoke_http "edge-adapter /health"     http://localhost:9001/health
 
 # ── Section 1: Core service health ────────────────────────────────────────────
 echo
@@ -52,8 +45,7 @@ done
 # ── Section 2: RabbitMQ management reachable ──────────────────────────────────
 echo
 echo "=== 2. RabbitMQ management API ==="
-check_eq "RabbitMQ management /api/overview → 200" "200" \
-  "$(http_code -u admin:admin http://localhost:15672/api/overview)"
+assert_http "RabbitMQ management /api/overview" 200 http://localhost:15672/api/overview -u admin:admin
 
 # ── Section 3: Edge-adapter health and telemetry endpoint ─────────────────────
 echo
@@ -65,7 +57,7 @@ echo "  Waiting for telemetry data (up to 15s)..."
 got_telemetry=false
 for i in $(seq 1 15); do
   body=$(http_body http://localhost:9001/telemetry/latest 2>/dev/null || echo "")
-  if echo "$body" | grep -q "robotId\|temperature\|robot"; then
+  if [[ "$body" == *"robotId"* ]] || [[ "$body" == *"robot"* ]]; then
     got_telemetry=true
     break
   fi
@@ -83,11 +75,7 @@ echo "=== 4. ServiceRegistry ==="
 sr_body=$(http_body -X POST http://localhost:8080/serviceregistry/query \
   -H 'Content-Type: application/json' \
   -d '{}' 2>/dev/null || echo "")
-if echo "$sr_body" | grep -q "serviceInstances\|services\|\[\]"; then
-  pass "ServiceRegistry /query → 200 with valid response"
-else
-  fail "ServiceRegistry /query" "JSON response with serviceInstances" "$sr_body"
-fi
+assert_json_field "ServiceRegistry /query → serviceQueryData field" "serviceQueryData" "$sr_body"
 
 # ── Section 5: Robot-fleet health ─────────────────────────────────────────────
 echo
@@ -99,21 +87,12 @@ check_eq "robot-fleet container running" "200" "$(http_code http://localhost:900
 echo
 echo "=== 6. Consumer stats ==="
 consumer_body=$(http_body http://localhost:9002/stats 2>/dev/null || echo "")
-if echo "$consumer_body" | grep -q "msgCount"; then
-  pass "consumer /stats → contains msgCount"
-else
-  fail "consumer /stats" "JSON with msgCount" "$consumer_body"
-fi
+assert_json_field "consumer /stats → msgCount field" "msgCount" "$consumer_body"
 
 # Allow some time for messages to arrive.
 sleep 5
 consumer_body=$(http_body http://localhost:9002/stats 2>/dev/null || echo "")
-msg_count=$(echo "$consumer_body" | grep -oE '"msgCount":[0-9]+' | grep -oE '[0-9]+' || echo "0")
-if [ "${msg_count:-0}" -gt 0 ]; then
-  pass "consumer received messages (msgCount=$msg_count)"
-else
-  fail "consumer msgCount > 0" ">0" "$msg_count"
-fi
+assert_json_gt "consumer received messages" "msgCount" 0 "$consumer_body"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo

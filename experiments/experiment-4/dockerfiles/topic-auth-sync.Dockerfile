@@ -1,5 +1,10 @@
 # Builds the topic-auth-sync service.
 # Build context: repo root (ArrowheadCore/)
+#
+# NOTE: This Dockerfile exists because topic-auth-sync was considered as an
+# authorization mechanism for experiment-4 during design (see AHC-INTEGRATION-PLAN.md),
+# but the experiment ultimately uses topic-auth-http instead. The file is retained
+# for reference. topic-auth-sync is NOT wired into experiment-4/docker-compose.yml.
 
 FROM golang:1.22-alpine AS builder
 WORKDIR /src

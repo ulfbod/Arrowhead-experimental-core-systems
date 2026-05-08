@@ -15,25 +15,7 @@ set -euo pipefail
 PASS=0
 FAIL=0
 
-green() { printf '\033[32m%s\033[0m\n' "$*"; }
-red()   { printf '\033[31m%s\033[0m\n' "$*"; }
-
-pass() { green "  PASS  $1"; PASS=$((PASS+1)); }
-
-fail() {
-  red "  FAIL  $1"
-  echo "         expected: $2"
-  echo "         actual:   $3"
-  FAIL=$((FAIL+1))
-}
-
-check_eq() {
-  local desc="$1" expected="$2" actual="$3"
-  if [ "$actual" = "$expected" ]; then pass "$desc"; else fail "$desc" "$expected" "$actual"; fi
-}
-
-http_code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-http_body() { curl -s "$@"; }
+source "$(dirname "$0")/../test-lib.sh"
 
 restore_all() {
   for name in demo-consumer-1 demo-consumer-2 demo-consumer-3; do
@@ -44,6 +26,25 @@ restore_all() {
   done
 }
 trap restore_all EXIT
+
+# ── Pre-flight: smoke-check ───────────────────────────────────────────────────
+# Verify fundamental preconditions before running application-level tests.
+# Any failure here exits immediately so cascade failures do not obscure the root cause.
+echo
+echo "=== Pre-flight: smoke-check ==="
+
+smoke_http "ServiceRegistry /health"   http://localhost:8080/health
+smoke_http "ConsumerAuth /health"      http://localhost:8082/health
+smoke_http "RabbitMQ management"       http://localhost:15673/api/overview -u admin:admin
+smoke_http "topic-auth-sync /health"   http://localhost:9090/health
+
+grants_body=$(http_body http://localhost:8082/authorization/lookup 2>/dev/null || echo "{}")
+grant_count=$(echo "$grants_body" | grep -oE '"count":[0-9]+' | grep -oE '[0-9]+' || echo "0")
+if [ "${grant_count:-0}" -ge 1 ]; then
+  pass "ConsumerAuth grants seeded (count=$grant_count)"
+else
+  smoke_fail "ConsumerAuth grants seeded" "no grants found (count=0) — run the setup script first"
+fi
 
 # ── Section 1: Core service health ────────────────────────────────────────────
 echo
@@ -60,8 +61,7 @@ done
 # ── Section 2: RabbitMQ management reachable ──────────────────────────────────
 echo
 echo "=== 2. RabbitMQ management API ==="
-check_eq "RabbitMQ management /api/overview → 200" "200" \
-  "$(http_code -u admin:admin http://localhost:15673/api/overview)"
+assert_http "RabbitMQ management /api/overview" 200 http://localhost:15673/api/overview -u admin:admin
 
 # ── Section 3: topic-auth-sync health ─────────────────────────────────────────
 echo
@@ -72,12 +72,7 @@ check_eq "topic-auth-sync /health → 200" "200" "$(http_code http://localhost:9
 echo
 echo "=== 4. ConsumerAuth grants ==="
 grants_body=$(http_body http://localhost:8082/authorization/lookup)
-grant_count=$(echo "$grants_body" | grep -oE '"count":[0-9]+' | grep -oE '[0-9]+' || echo "0")
-if [ "${grant_count:-0}" -ge 3 ]; then
-  pass "at least 3 grants seeded (count=$grant_count)"
-else
-  fail "grant count ≥ 3" "≥3" "${grant_count}"
-fi
+assert_json_gt "at least 3 grants seeded" "count" 2 "$grants_body"
 
 # ── Section 5: robot-fleet health ─────────────────────────────────────────────
 echo
@@ -91,12 +86,7 @@ sleep 5  # Allow time for messages to flow through broker
 
 for i in 1 2 3; do
   body=$(http_body "http://localhost:$((9002 + i - 1))/stats" 2>/dev/null || echo "")
-  msg_count=$(echo "$body" | grep -oE '"msgCount":[0-9]+' | grep -oE '[0-9]+' || echo "0")
-  if [ "${msg_count:-0}" -gt 0 ]; then
-    pass "consumer-$i received messages (msgCount=$msg_count)"
-  else
-    fail "consumer-$i msgCount > 0" ">0" "${msg_count}"
-  fi
+  assert_json_gt "consumer-$i received messages" "msgCount" 0 "$body"
 done
 
 # ── Section 7: topic-auth-sync authorization check ────────────────────────────
@@ -106,21 +96,13 @@ echo "=== 7. topic-auth-sync authorization ==="
 allow_resp=$(http_body -X POST http://localhost:9090/auth/topic \
   -d "username=demo-consumer-1&vhost=arrowhead&resource=topic&name=telemetry.robot-1&permission=read" \
   2>/dev/null || echo "")
-if echo "$allow_resp" | grep -q "allow"; then
-  pass "topic-auth-sync allows authorized consumer"
-else
-  fail "topic-auth-sync allow" "allow" "$allow_resp"
-fi
+assert_contains "topic-auth-sync allows authorized consumer" "allow" "$allow_resp"
 
 # Verify an unauthorized user is denied.
 deny_resp=$(http_body -X POST http://localhost:9090/auth/topic \
   -d "username=unknown-consumer&vhost=arrowhead&resource=topic&name=telemetry.robot-1&permission=read" \
   2>/dev/null || echo "")
-if echo "$deny_resp" | grep -q "deny"; then
-  pass "topic-auth-sync denies unauthorized consumer"
-else
-  fail "topic-auth-sync deny" "deny" "$deny_resp"
-fi
+assert_contains "topic-auth-sync denies unauthorized consumer" "deny" "$deny_resp"
 
 # ── Section 8: Revocation flow ────────────────────────────────────────────────
 echo
@@ -146,11 +128,7 @@ else
   deny_after=$(http_body -X POST http://localhost:9090/auth/topic \
     -d "username=demo-consumer-2&vhost=arrowhead&resource=topic&name=telemetry.robot-1&permission=read" \
     2>/dev/null || echo "")
-  if echo "$deny_after" | grep -q "deny"; then
-    pass "topic-auth-sync denies consumer-2 after revocation"
-  else
-    fail "topic-auth-sync deny after revocation" "deny" "$deny_after"
-  fi
+  assert_contains "topic-auth-sync denies consumer-2 after revocation" "deny" "$deny_after"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────

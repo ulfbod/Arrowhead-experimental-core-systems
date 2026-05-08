@@ -122,6 +122,21 @@ func poll(client *http.Client, restAuthzURL, consumer, service string, st *stats
 	return nil
 }
 
+// newMux returns an http.ServeMux with /health and /stats registered.
+// Extracted from main() to allow handler-level tests without starting a real server.
+func newMux(st *statsTracker, name string) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("/stats", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(st.snapshot(name))
+	})
+	return mux
+}
+
 func main() {
 	name         := envOr("CONSUMER_NAME", "rest-consumer")
 	restAuthzURL := envOr("REST_AUTHZ_URL", "http://rest-authz:9093")
@@ -137,18 +152,9 @@ func main() {
 	st := &statsTracker{}
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
-	http.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(st.snapshot(name))
-	})
-
 	go func() {
 		log.Printf("[%s] health server on :%s", name, healthPort)
-		if err := http.ListenAndServe(":"+healthPort, nil); err != nil {
+		if err := http.ListenAndServe(":"+healthPort, newMux(st, name)); err != nil {
 			log.Fatalf("health server: %v", err)
 		}
 	}()

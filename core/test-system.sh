@@ -46,9 +46,22 @@ else
   fail "go vet ./..." "vet issues found — see output above"
 fi
 
-# ── 3. Unit + integration tests ───────────────────────────────────────────────
+# ── 3. staticcheck (optional — skipped if not installed) ─────────────────────
 echo
-echo "--- 3. go test ./... (includes E2E integration test) ---"
+echo "--- 3. staticcheck ./... ---"
+if command -v staticcheck &>/dev/null; then
+  if staticcheck ./...; then
+    pass "staticcheck ./..."
+  else
+    fail "staticcheck ./..." "staticcheck issues found — see output above"
+  fi
+else
+  printf '\033[33m  SKIP  staticcheck not installed (go install honnef.co/go/tools/cmd/staticcheck@latest)\033[0m\n'
+fi
+
+# ── 4. Unit + integration tests ───────────────────────────────────────────────
+echo
+echo "--- 4. go test ./... (includes E2E integration test) ---"
 if go test -count=1 -race ./...; then
   pass "go test ./... (all systems, including E2E)"
 else

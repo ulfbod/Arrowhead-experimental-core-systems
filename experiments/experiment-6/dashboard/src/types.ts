@@ -141,6 +141,6 @@ export interface ServiceInstance {
 }
 
 export interface ServiceQueryResponse {
-  serviceInstances: ServiceInstance[]
-  count:            number
+  serviceQueryData: ServiceInstance[]  // spec field name (not "serviceInstances")
+  unfilteredHits:   number
 }

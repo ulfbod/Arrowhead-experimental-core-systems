@@ -179,7 +179,19 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(npx vite:*)",
       "Bash(npx vitest:*)",
-      "Bash(bash -n /home/uffe/projects/ArrowheadCore/experiments/experiment-6/test-system.sh)"
+      "Bash(bash -n /home/uffe/projects/ArrowheadCore/experiments/experiment-6/test-system.sh)",
+      "Bash(bash support/dashboard-shared/check-dashboard-shared.sh)",
+      "Bash(ls -la /home/uffe/projects/ArrowheadCore/experiments/experiment-5/dashboard/src/*.test.* /home/uffe/projects/ArrowheadCore/experiments/experiment-5/dashboard/src/**/*.test.*)",
+      "Bash(grep -E \"\\\\.md$\")",
+      "Bash(ls -la /home/uffe/projects/ArrowheadCore/experiments/experiment-6/dashboard/src/views/*.tsx)",
+      "Bash(ls /home/uffe/projects/ArrowheadCore/experiments/experiment-1/frontend/*.ts /home/uffe/projects/ArrowheadCore/experiments/experiment-1/frontend/*.json)",
+      "Bash(xargs -I{} sh -c 'echo \"=== {} ===\"; cat \"{}\"')",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(grep -r \"replace arrowhead\" experiments/experiment-6/services/*/go.mod)",
+      "Bash(bash /home/uffe/projects/ArrowheadCore/support/dashboard-shared/check-dashboard-shared.sh)",
+      "Bash(grep -l \"func.*Handler\" /home/uffe/projects/ArrowheadCore/experiments/experiment-6/services/*/*.go)",
+      "Bash(xargs -I '{}' bash -c 'name=$\\(basename {}\\); [ -f \"{}/SPEC.md\" ] && echo \"✓ $name\" || echo \"✗ $name\"')"
     ]
   }
 }
