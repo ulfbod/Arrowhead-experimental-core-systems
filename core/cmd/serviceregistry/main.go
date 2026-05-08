@@ -26,13 +26,26 @@ import (
 func main() {
 	cfg := config.Load()
 
+	// Legacy AH4-compatible handler (register/query/lookup/unregister).
 	repo := repository.NewMemoryRepository()
 	svc := service.NewRegistryService(repo)
-	apiHandler := api.NewHandler(svc)
+	legacyHandler := api.NewHandler(svc)
+
+	// AH5 discovery and management handler.
+	ah5Store := repository.NewAH5Store()
+	ah5Svc := service.NewAH5RegistryService(ah5Store)
+	ah5Handler := api.NewAH5Handler(ah5Svc)
 
 	mux := http.NewServeMux()
-	mux.Handle("/serviceregistry/", apiHandler)
-	mux.Handle("/health", apiHandler)
+	// AH5 routes are more specific and must be registered before the legacy
+	// catch-all so that Go's ServeMux prefers them on longer path matches.
+	mux.Handle("/serviceregistry/device-discovery/", ah5Handler)
+	mux.Handle("/serviceregistry/system-discovery/", ah5Handler)
+	mux.Handle("/serviceregistry/service-discovery/", ah5Handler)
+	mux.Handle("/serviceregistry/mgmt/", ah5Handler)
+	// Legacy catch-all for /serviceregistry/{register,query,lookup,unregister}.
+	mux.Handle("/serviceregistry/", legacyHandler)
+	mux.Handle("/health", legacyHandler)
 
 	const distDir = "dashboard/dist"
 	if info, err := os.Stat(distDir); err == nil && info.IsDir() {

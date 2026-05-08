@@ -83,6 +83,339 @@ Registers or updates a service instance.
 - `serviceUri` empty
 - `interfaces` empty
 
+---
+
+## 1a. ServiceRegistry — AH5 Discovery and Management Interfaces
+
+The following endpoints implement the AH5 `serviceDiscovery`, `systemDiscovery`,
+`deviceDiscovery`, and `serviceRegistryManagement` interfaces.
+They are served on the same port (8080) as the legacy endpoints.
+
+All errors use the shared format: `{"error": "message"}`.
+
+---
+
+### AH5 Shared Types
+
+#### Address
+```json
+{ "type": "MAC|IP|...", "address": "string" }
+```
+
+#### Device
+```json
+{
+  "name":      "string",
+  "metadata":  { "key": "value" },
+  "addresses": [ { "type": "...", "address": "..." } ],
+  "createdAt": "RFC3339",
+  "updatedAt": "RFC3339"
+}
+```
+
+#### AH5System
+```json
+{
+  "name":      "string",
+  "metadata":  { "key": "value" },
+  "version":   "string",
+  "addresses": [ { "type": "...", "address": "..." } ],
+  "device":    { /* Device, optional */ },
+  "createdAt": "RFC3339",
+  "updatedAt": "RFC3339"
+}
+```
+
+#### ServiceDefinition
+```json
+{ "name": "string", "createdAt": "RFC3339", "updatedAt": "RFC3339" }
+```
+
+#### InterfaceTemplate
+```json
+{
+  "name":                 "string",
+  "protocol":             "string",
+  "propertyRequirements": { "key": "value" },
+  "createdAt":            "RFC3339",
+  "updatedAt":            "RFC3339"
+}
+```
+
+#### InterfaceInstance
+```json
+{
+  "templateName": "string",
+  "protocol":     "string",
+  "policy":       "string",
+  "properties":   { "key": "value" }
+}
+```
+
+#### AH5ServiceInstance
+```json
+{
+  "instanceId":            "string",
+  "provider":              { /* AH5System */ },
+  "serviceDefinitionName": "string",
+  "version":               "string",
+  "expiresAt":             "RFC3339",
+  "metadata":              { "key": "value" },
+  "interfaces":            [ { /* InterfaceInstance */ } ],
+  "createdAt":             "RFC3339",
+  "updatedAt":             "RFC3339"
+}
+```
+
+---
+
+### Device Discovery
+
+#### POST /serviceregistry/device-discovery/register
+
+Registers or updates a device (upsert by name).
+
+**Request:**
+```json
+{ "name": "string", "metadata": {}, "addresses": [] }
+```
+
+**Response:**
+- `201 Created` — newly registered device
+- `200 OK` — existing device updated
+
+**Validation errors (400):** `name` empty.
+
+---
+
+#### POST /serviceregistry/device-discovery/lookup
+
+Returns devices matching optional filter criteria (all filters ANDed).
+
+**Request (all fields optional):**
+```json
+{
+  "deviceNames": ["string"],
+  "addresses":   ["string"],
+  "addressType": "string"
+}
+```
+
+**Response: 200 OK:**
+```json
+{ "entries": [ /* Device[] */ ], "count": 0 }
+```
+
+---
+
+#### DELETE /serviceregistry/device-discovery/revoke/{name}
+
+Removes the named device.
+
+**Response:**
+- `200 OK` — device removed
+- `204 No Content` — no matching device found
+
+---
+
+### System Discovery
+
+#### POST /serviceregistry/system-discovery/register
+
+Registers or updates a system (upsert by name).
+
+**Request:**
+```json
+{
+  "name":       "string",
+  "metadata":   {},
+  "version":    "string",
+  "addresses":  [],
+  "deviceName": "string"
+}
+```
+
+**Note (G10):** The AH5 spec derives the system name from the caller's auth token.
+This implementation requires it in the request body.
+
+**Response:**
+- `201 Created` — newly registered
+- `200 OK` — existing system updated
+
+**Validation errors (400):** `name` empty.
+
+---
+
+#### POST /serviceregistry/system-discovery/lookup
+
+Returns systems matching optional filter criteria.
+
+**Request (all fields optional):**
+```json
+{
+  "systemNames": [],
+  "addresses":   [],
+  "addressType": "string",
+  "versions":    [],
+  "deviceNames": []
+}
+```
+
+**Response: 200 OK:**
+```json
+{ "entries": [ /* AH5System[] */ ], "count": 0 }
+```
+
+---
+
+#### DELETE /serviceregistry/system-discovery/revoke?name={name}
+
+Removes the named system.
+
+**Note (G10):** AH5 identifies the system from the auth token. This implementation
+uses a `?name=` query parameter.
+
+**Response:**
+- `200 OK` — system removed
+- `204 No Content` — no matching system found
+- `400 Bad Request` — `name` parameter missing
+
+---
+
+### Service Discovery
+
+#### POST /serviceregistry/service-discovery/register
+
+Registers or updates a service instance (upsert by `systemName + serviceDefinitionName + version`).
+
+**Request:**
+```json
+{
+  "systemName":            "string",
+  "serviceDefinitionName": "string",
+  "version":               "string",
+  "expiresAt":             "RFC3339",
+  "metadata":              {},
+  "interfaces":            []
+}
+```
+
+**Note (G10):** The AH5 spec derives `systemName` from the auth token. This
+implementation requires it in the request body.
+
+**Response:**
+- `201 Created` — newly registered
+- `200 OK` — existing instance updated
+
+**Validation errors (400):** `systemName` or `serviceDefinitionName` empty.
+
+---
+
+#### POST /serviceregistry/service-discovery/lookup
+
+Returns service instances matching optional filter criteria.
+
+**Request (all fields optional):**
+```json
+{
+  "instanceIds":            [],
+  "providerNames":          [],
+  "serviceDefinitionNames": [],
+  "versions":               [],
+  "interfaceTemplateNames": []
+}
+```
+
+**Response: 200 OK:**
+```json
+{ "entries": [ /* AH5ServiceInstance[] */ ], "count": 0 }
+```
+
+---
+
+#### DELETE /serviceregistry/service-discovery/revoke/{instanceId}
+
+Removes the service instance with the given ID.
+
+**Response:**
+- `200 OK` — instance removed
+- `204 No Content` — no matching instance found
+
+---
+
+### Service Registry Management
+
+All management endpoints are under `/serviceregistry/mgmt/`.
+
+#### Devices
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/serviceregistry/mgmt/devices/query` | Query devices with optional filters |
+| `POST` | `/serviceregistry/mgmt/devices` | Create new devices (400 if any exist) |
+| `PUT`  | `/serviceregistry/mgmt/devices` | Update existing devices (400 if any not found) |
+| `DELETE` | `/serviceregistry/mgmt/devices?names=X&names=Y` | Remove devices by name |
+
+Create body: `{ "devices": [ { "name", "metadata", "addresses" } ] }`
+Response: `{ "devices": [], "count": 0 }`
+
+---
+
+#### Systems
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/serviceregistry/mgmt/systems/query` | Query systems with optional filters |
+| `POST` | `/serviceregistry/mgmt/systems` | Create new systems (400 if any exist) |
+| `PUT`  | `/serviceregistry/mgmt/systems` | Update existing systems (400 if any not found) |
+| `DELETE` | `/serviceregistry/mgmt/systems?names=X&names=Y` | Remove systems by name |
+
+Create body: `{ "systems": [ { "name", "metadata", "version", "addresses", "deviceName" } ] }`
+Response: `{ "systems": [], "count": 0 }`
+
+---
+
+#### Service Definitions
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/serviceregistry/mgmt/service-definitions/query` | List all service definitions |
+| `POST` | `/serviceregistry/mgmt/service-definitions` | Create new definitions (400 if any exist) |
+| `DELETE` | `/serviceregistry/mgmt/service-definitions?names=X&names=Y` | Remove by name |
+
+Create body: `{ "serviceDefinitionNames": ["string"] }`
+Response: `{ "serviceDefinitions": [], "count": 0 }`
+
+---
+
+#### Service Instances
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/serviceregistry/mgmt/service-instances/query` | Query instances with optional filters |
+| `POST` | `/serviceregistry/mgmt/service-instances` | Create new instances (400 if any exist) |
+| `PUT`  | `/serviceregistry/mgmt/service-instances` | Update by instanceId (400 if not found) |
+| `DELETE` | `/serviceregistry/mgmt/service-instances?serviceInstances=X` | Remove by instanceId |
+
+Create body: `{ "instances": [ { "systemName", "serviceDefinitionName", "version", "expiresAt", "metadata", "interfaces" } ] }`
+Update body: `{ "instances": [ { "instanceId", "expiresAt", "metadata", "interfaces" } ] }`
+Response: `{ "instances": [], "count": 0 }`
+
+---
+
+#### Interface Templates
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/serviceregistry/mgmt/interface-templates/query` | List all interface templates |
+| `POST` | `/serviceregistry/mgmt/interface-templates` | Create new templates (400 if any exist) |
+| `DELETE` | `/serviceregistry/mgmt/interface-templates?names=X&names=Y` | Remove by name |
+
+Create body: `{ "interfaceTemplates": [ { "name", "protocol", "propertyRequirements" } ] }`
+Response: `{ "interfaceTemplates": [], "count": 0 }`
+
+---
+
 ### POST /serviceregistry/query
 
 Queries registered services. All filters are ANDed; a zero value for a filter means "no filter".

@@ -69,13 +69,51 @@ However, DynamicOrchestration now connects the two when `ENABLE_IDENTITY_CHECK=t
 
 ### G7 — DynamicOrchestration uses the AH4-compatible query endpoint
 
-The DynamicOrchestrator calls `POST /serviceregistry/query`, which is the AH4-style endpoint kept for backward compatibility. AH5 defines `serviceDiscovery` as the canonical service name, but does not change the path structure in a way that would break this. The behavior is correct; only the endpoint naming is a minor alignment issue.
+The DynamicOrchestrator calls `POST /serviceregistry/query`, which is the AH4-style endpoint kept for backward compatibility. AH5 defines `serviceDiscovery` as the canonical service name with `POST /serviceregistry/service-discovery/lookup` as the aligned endpoint (now implemented). However, the DynamicOrchestrator has not been updated to use the new endpoint because:
+- The new AH5 service instance model (`AH5ServiceInstance` with string instanceId and structured addresses) differs from the legacy `ServiceInstance` expected by the orchestration response shape.
+- Migrating DynamicOrchestration would require updating the shared orchestration model, which is out of scope for this change.
+
+The legacy query endpoint remains available and the AH5 lookup endpoint is available for new consumers.
 
 ---
 
 ### G8 — No expired-token background cleanup
 
 The Authentication repository has a `DeleteExpired()` method but no background goroutine invokes it. Expired tokens are removed lazily on access. Under sustained load or long uptime, stale expired tokens accumulate in memory until they happen to be looked up.
+
+---
+
+### G10 — System and provider identity derived from request body, not auth token
+
+AH5 `systemDiscovery/register` and `serviceDiscovery/register` are designed for
+self-registration: the system name is derived from the caller's identity (mTLS
+certificate or verified auth token), not from the request body. This ensures a
+system cannot register under an arbitrary name.
+
+This implementation requires the name in the request body:
+
+- `POST /serviceregistry/system-discovery/register` — `name` field (required)
+- `POST /serviceregistry/service-discovery/register` — `systemName` field (required)
+- `DELETE /serviceregistry/system-discovery/revoke` — `?name=` query parameter
+
+Similarly, `serviceDiscovery/revoke` in AH5 identifies the caller from its token;
+here the instance is identified by `instanceId` in the path, which is AH5-aligned
+for revoke but ownership is not enforced.
+
+**Root cause:** Credential verification is a stub (G2). Until real auth is in place
+the server cannot derive the caller's name from a token.
+
+**Impact:** Any client can register or revoke under any name. This is acceptable for
+in-memory research use but must be resolved before any security-sensitive deployment.
+
+---
+
+### G11 — System revoke uses query parameter instead of auth-token identity
+
+AH5 `DELETE /serviceregistry/system-discovery/revoke` has no path or body parameter
+— the system to revoke is inferred from the Authorization header. Because credential
+verification is stubbed (G2, G10), this implementation uses `?name=<systemName>` as
+a query parameter. This deviates from the AH5 wire protocol for this endpoint.
 
 ---
 
@@ -161,6 +199,18 @@ AH5 does not specify that `POST /orchestration/dynamic` requires authentication.
 - Credential verification in login remains a stub (see G2). Until G2 is resolved, `ENABLE_IDENTITY_CHECK` prevents name spoofing but not token theft (since any system can log in as any name).
 - The verification protocol is the existing `GET /authentication/identity/verify` with `Authorization: Bearer <token>`, which is within the AH5 spec for the Authentication system.
 - `ENABLE_IDENTITY_CHECK` is independent of `ENABLE_AUTH`: identity verification and authorization grant checking can be combined or used separately.
+
+---
+
+### D10 — AH5 discovery and management run alongside the legacy endpoints
+
+The ServiceRegistry now exposes two parallel API surfaces on port 8080:
+
+1. **Legacy (AH4-compatible):** `POST /serviceregistry/register`, `POST /serviceregistry/query`, `GET /serviceregistry/lookup`, `DELETE /serviceregistry/unregister`. These operate on the existing `ServiceInstance` model (integer IDs, address+port system identity). Experiments 1–7 and DynamicOrchestration use these exclusively.
+
+2. **AH5:** `/serviceregistry/device-discovery/*`, `/serviceregistry/system-discovery/*`, `/serviceregistry/service-discovery/*`, `/serviceregistry/mgmt/*`. These operate on separate in-memory stores with the AH5 `Device`, `AH5System`, `ServiceDefinition`, `InterfaceTemplate`, and `AH5ServiceInstance` models (string IDs, structured address lists, timestamps).
+
+The two surfaces are independent at both the data and API layers — they do not share a store and operate on different model types. This avoids any risk of breaking existing experiments while adding full AH5 alignment. The stores are wired separately in `cmd/serviceregistry/main.go`.
 
 ---
 
