@@ -669,20 +669,35 @@ themselves; the failure was deferred to `tsc`, which tried to open the (dangling
 ### Fix
 
 The Dockerfile must explicitly copy the shared files and remove the dangling symlinks
-before the build runs:
+before the build runs.  **Use `cp -rn` (no-clobber), not plain `cp -r`** — otherwise the
+stubs in `support/dashboard-shared/components/` overwrite the real experiment-specific
+implementations (see secondary finding below):
 
 ```dockerfile
 COPY experiments/experiment-N/dashboard/ .
 COPY support/dashboard-shared/ /dashboard-shared/
-RUN find src -type l -delete && cp -r /dashboard-shared/. src/
+RUN find src -type l | while read link; do \
+      rel="${link#src/}"; \
+      rm "$link" && cp "/dashboard-shared/$rel" "$link"; \
+    done
 RUN npm run build
 ```
 
 Step-by-step:
-1. `COPY experiments/experiment-N/dashboard/ .` — copies the dashboard including dangling symlinks.
+1. `COPY experiments/experiment-N/dashboard/ .` — copies the dashboard; symlinks arrive as dangling and real component files are present.
 2. `COPY support/dashboard-shared/ /dashboard-shared/` — copies shared files to a scratch path.
-3. `find src -type l -delete` — removes all dangling symlinks from `src/`.
-4. `cp -r /dashboard-shared/. src/` — copies the real files into `src/`, mirroring the directory structure of `support/dashboard-shared/`.
+3. The `while read` loop iterates over every symlink in `src/`, removes it, and replaces it with the real file from `/dashboard-shared/` at the same relative path. Real (non-symlink) files are never touched.
+4. `npm run build` runs with all files in place.
+
+**Why `cp -r /dashboard-shared/. src/` is wrong** (original approach, now removed):
+`support/dashboard-shared/components/` contains stub implementations of `SystemHealthGrid`,
+`GrantsPanel`, `PolicyProjectionPanel`, and `ConsumerStatsPanel` (each returns `null`) so
+that the shared test suite can compile without the real experiment-specific implementations.
+A blanket `cp -r` overwrites the real experiment components with these stubs — the build
+succeeds silently, and those tabs render completely blank at runtime.
+
+**Why `cp -rn` is also wrong**: Alpine Linux uses BusyBox `cp`, which does not support the
+`-n` (no-clobber) flag reliably. The loop-based approach above is the portable, correct fix.
 
 Applied to both `experiments/experiment-5/dockerfiles/dashboard.Dockerfile` and
 `experiments/experiment-6/dockerfiles/dashboard.Dockerfile`.
@@ -715,6 +730,142 @@ Specific checks before shipping a dashboard Dockerfile:
 
 ---
 
+## EXP-011 — Local `npm run build` fails with "Could not resolve './App'" due to Vite symlink resolution (experiment-6, 2026-05-07)
+
+### Symptom
+
+Running `npm run build` locally in `experiments/experiment-6/dashboard/` failed with:
+
+```
+x Build failed in 73ms
+error during build:
+Could not resolve "./App" from "../../../support/dashboard-shared/main.tsx"
+```
+
+Confusingly:
+- `npm run typecheck` (`tsc --noEmit`) **passed** — the TypeScript compiler resolves symlinks correctly.
+- `docker compose up --build` **passed** — the Docker build worked fine.
+- The dashboard was **unreachable** in a browser at `http://localhost:3006/` because the Docker build was producing a stale image from a previous successful build (before the symlink issue was introduced), and the current Docker image was actually broken.
+
+### Root Cause
+
+Ten source files in `dashboard/src/` are symlinks to `support/dashboard-shared/` (e.g. `main.tsx → ../../../../support/dashboard-shared/main.tsx`).
+
+Vite uses Rollup for bundling. Without explicit configuration, Rollup **follows symlinks to their real path** before resolving relative imports. So when it processes `src/main.tsx` (a symlink), it treats the file as if it lives at `support/dashboard-shared/main.tsx` and resolves the `./App` import relative to `support/dashboard-shared/` — a directory that does not contain `App.tsx`.
+
+`tsc --noEmit` is unaffected because TypeScript resolves relative imports from the location of the symlink, not the real file.
+
+The Docker build avoided this problem because `dashboard.Dockerfile` explicitly removes all symlinks and replaces them with real copies before running `npm run build`:
+```dockerfile
+RUN find src -type l -delete && cp -r /dashboard-shared/. src/
+```
+This means a locally broken build can produce a working Docker image — or vice versa — making the failure invisible unless `npm run build` is tested directly.
+
+### Fix
+
+Add `resolve: { preserveSymlinks: true }` to `vite.config.ts`:
+
+```typescript
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    // src/main.tsx (and nine other shared files) are symlinks to support/dashboard-shared/.
+    // Without this, Rollup follows symlinks to the real path and resolves relative imports
+    // from dashboard-shared/ — causing "Could not resolve './App'" at build time.
+    // Docker builds are unaffected (Dockerfile removes symlinks before building).
+    preserveSymlinks: true,
+  },
+  server: { ... },
+  test: { ... },
+})
+```
+
+This tells Rollup to resolve imports relative to the symlink's location, not its real path.
+
+Applied to `experiments/experiment-6/dashboard/vite.config.ts`.
+
+### Guidance for Future Experiments
+
+**Any Vite project whose `src/` contains symlinks to files outside the project directory must set `resolve.preserveSymlinks: true` in `vite.config.ts`.**
+
+Specific checks:
+
+1. **After adding symlinks to `src/`**, always run both:
+   ```bash
+   npm run typecheck   # passes even without preserveSymlinks
+   npm run build       # reveals the Rollup symlink issue
+   ```
+   A passing typecheck does NOT guarantee a passing build when symlinks are involved.
+
+2. **The test-system.sh pre-flight** now verifies the main JS bundle URL returns HTTP 200 (not just that the HTML contains `<div id="root">`). This catches the case where Docker serves stale HTML referencing a non-existent bundle.
+
+3. **When adding a new experiment dashboard that symlinks from `support/dashboard-shared/`**, add `resolve: { preserveSymlinks: true }` to `vite.config.ts` from the start — do not copy the config from experiment-5 which predates this fix.
+
+4. **The three-step symlink-removal pattern in the Dockerfile** (EXP-010) and `preserveSymlinks: true` are complementary, not alternatives — the Dockerfile pattern keeps Docker builds correct; `preserveSymlinks` keeps local development builds correct.
+
+---
+
+## EXP-012 — Dashboard unreachable in Windows browser when using Docker Engine directly in WSL2 (experiment-6, 2026-05-08)
+
+### Symptom
+
+The dashboard is unreachable at `http://localhost:3006/` in a Windows browser, even though:
+- `curl http://localhost:3006/` from within WSL2 returns HTTP 200.
+- `bash test-system.sh` passes all tests (including the nginx pre-flight).
+- The Docker containers are running and healthy.
+
+### Root Cause
+
+Docker Engine installed directly inside WSL2 (not via Docker Desktop) binds container ports to the WSL2 VM's network interface. From within WSL2, `localhost` resolves to the WSL2 VM, so `curl localhost:3006` works. From Windows, `localhost` resolves to the Windows loopback (`127.0.0.1`), which has no listener on port 3006 — the port was never forwarded out of the WSL2 VM.
+
+Docker Desktop handles this automatically by registering a Windows-side port proxy for every exposed container port. Docker Engine in WSL2 does not.
+
+### Fix (immediate)
+
+Use the WSL2 VM IP address in the Windows browser:
+
+```bash
+# From a WSL2 terminal:
+hostname -I | awk '{print $1}'
+# Example output: 172.26.149.70
+# Then open: http://172.26.149.70:3006/
+```
+
+The WSL2 IP changes on every `wsl --shutdown` / restart cycle.
+
+### Fix (permanent)
+
+Enable WSL2 mirrored networking so all WSL2 ports appear on Windows `localhost`.
+Create (or edit) `C:\Users\<YourUsername>\.wslconfig` on the Windows filesystem:
+
+```ini
+[wsl2]
+networkingMode=mirrored
+```
+
+Then shut down and restart WSL2:
+
+```powershell
+# In Windows PowerShell / cmd:
+wsl --shutdown
+# Re-open WSL2 terminal — now localhost:3006 works from Windows browsers
+```
+
+After this, `localhost:3006` in a Windows browser works the same as Docker Desktop.
+
+### Guidance for Future Experiments
+
+**Document the WSL2 networking caveat in every experiment README.** The `test-system.sh` cannot detect this problem because it runs curl from within WSL2 where localhost always resolves correctly.
+
+Specific notes:
+
+1. **All experiment READMEs should include the WSL2 note** alongside the `localhost:<port>` browser instructions.
+2. **`test-system.sh` cannot verify Windows browser access** — the pre-flight only proves the server is reachable from within WSL2.
+3. **Docker Desktop users are unaffected** — port forwarding is automatic and `localhost` works from Windows browsers.
+4. **The `networkingMode=mirrored` setting** in `.wslconfig` is the cleanest permanent fix. It applies globally to all WSL2 port listeners, not just Docker containers.
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -735,4 +886,6 @@ Use this before marking an experiment implementation complete:
 - [ ] All Mermaid diagrams render without parse errors (no `\"` inside `|"..."|` edge label strings)
 - [ ] Dashboard `package.json` build script uses `tsc -p tsconfig.app.json` (not bare `tsc`) to exclude test files from production build (EXP-008)
 - [ ] Dashboard TypeScript types for core system API responses match field names in `core/SPEC.md` exactly (e.g. `serviceQueryData`/`unfilteredHits`, not `serviceInstances`/`count`) (EXP-009)
-- [ ] If any file in `dashboard/src/` is a symlink to `support/dashboard-shared/`, the dashboard Dockerfile uses the three-step pattern: `COPY support/dashboard-shared/ /dashboard-shared/` then `find src -type l -delete && cp -r /dashboard-shared/. src/` before `npm run build` (EXP-010)
+- [ ] If any file in `dashboard/src/` is a symlink to `support/dashboard-shared/`, the dashboard Dockerfile uses the loop pattern: `find src -type l | while read link; do rel="${link#src/}"; rm "$link" && cp "/dashboard-shared/$rel" "$link"; done` — never use `cp -r /dashboard-shared/. src/` (overwrites real components with stubs) or `cp -rn` (not supported in Alpine BusyBox) (EXP-010)
+- [ ] If any file in `dashboard/src/` is a symlink, `vite.config.ts` contains `resolve: { preserveSymlinks: true }` — run `npm run build` locally (not just `npm run typecheck`) to verify (EXP-011)
+- [ ] README.md includes the WSL2 networking note alongside browser access instructions — users running Docker Engine directly in WSL2 must use the WSL2 IP (`hostname -I`) or enable `networkingMode=mirrored` in `.wslconfig` (EXP-012)

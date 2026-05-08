@@ -191,7 +191,12 @@
       "Bash(grep -r \"replace arrowhead\" experiments/experiment-6/services/*/go.mod)",
       "Bash(bash /home/uffe/projects/ArrowheadCore/support/dashboard-shared/check-dashboard-shared.sh)",
       "Bash(grep -l \"func.*Handler\" /home/uffe/projects/ArrowheadCore/experiments/experiment-6/services/*/*.go)",
-      "Bash(xargs -I '{}' bash -c 'name=$\\(basename {}\\); [ -f \"{}/SPEC.md\" ] && echo \"✓ $name\" || echo \"✗ $name\"')"
+      "Bash(xargs -I '{}' bash -c 'name=$\\(basename {}\\); [ -f \"{}/SPEC.md\" ] && echo \"✓ $name\" || echo \"✗ $name\"')",
+      "Bash(curl -v http://localhost:3006/)",
+      "Bash(curl:*)",
+      "Bash(ip route:*)",
+      "Read(//mnt/c/Users/**)",
+      "Read(//home/uffe/**)"
     ]
   }
 }

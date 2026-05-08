@@ -23,7 +23,7 @@ Architecture and sequence diagrams: [`DIAGRAMS.md`](DIAGRAMS.md)
 2. **[`README.md`](README.md)** — service table with ports, startup order, architecture diagram.
 3. **[`DIAGRAMS.md`](DIAGRAMS.md)** — component diagram and the three REST-path sequence diagrams.
 4. **[`support/CLAUDE.md`](../../support/CLAUDE.md)** — stability status and spec file locations for all support modules used here.
-5. **[`/EXPERIENCES.md`](../../EXPERIENCES.md)** — pre-flight checklist. The most relevant entries for this experiment: EXP-001 (hardcoded AuthzForce domain), EXP-007 (Kafka partition reader), EXP-010 (Docker build context for dashboard symlinks).
+5. **[`/EXPERIENCES.md`](../../EXPERIENCES.md)** — pre-flight checklist. The most relevant entries for this experiment: EXP-001 (hardcoded AuthzForce domain), EXP-007 (Kafka partition reader), EXP-010 (Docker build context for dashboard symlinks), EXP-011 (Vite `preserveSymlinks` required for local builds).
 
 ---
 
@@ -195,6 +195,10 @@ views/HealthView.tsx  views/GrantsView.tsx  views/PolicyView.tsx  views/LiveData
 **Always edit the canonical file in `support/dashboard-shared/`** — never edit the symlinks.
 Run `bash support/dashboard-shared/check-dashboard-shared.sh` after any shared-file change to
 verify all 20 symlinks are intact (10 for experiment-5, 10 for experiment-6).
+
+**`vite.config.ts` must keep `resolve: { preserveSymlinks: true }`** — without it, Rollup
+follows symlinks to their real path in `dashboard-shared/` and fails to resolve `./App`
+(EXP-011). `tsc --noEmit` passes regardless; the failure only shows in `npm run build`.
 
 The shared layer has a full test suite: `cd support/dashboard-shared && npm test` (41 tests).
 

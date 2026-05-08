@@ -15,7 +15,10 @@ COPY experiments/experiment-6/dashboard/package.json ./
 RUN npm install
 COPY experiments/experiment-6/dashboard/ .
 COPY support/dashboard-shared/ /dashboard-shared/
-RUN find src -type l -delete && cp -r /dashboard-shared/. src/
+RUN find src -type l | while read link; do \
+      rel="${link#src/}"; \
+      rm "$link" && cp "/dashboard-shared/$rel" "$link"; \
+    done
 RUN npm run build
 
 FROM nginx:alpine

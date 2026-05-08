@@ -83,12 +83,12 @@ export function PolicyProjectionPanel() {
               <div style={s.row}>
                 <span style={s.rowLabel}>management UI</span>
                 <a
-                  href="http://localhost:15676"
+                  href={`http://${window.location.hostname}:15676`}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={s.link}
                 >
-                  localhost:15676 ↗
+                  {window.location.hostname}:15676 ↗
                 </a>
               </div>
               <div style={s.row}>

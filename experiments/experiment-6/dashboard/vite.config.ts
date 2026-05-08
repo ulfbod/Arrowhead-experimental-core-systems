@@ -18,6 +18,13 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    // src/main.tsx (and nine other shared files) are symlinks to support/dashboard-shared/.
+    // Without this, Rollup follows symlinks to the real path and resolves relative imports
+    // from dashboard-shared/ — causing "Could not resolve './App'" at build time.
+    // Docker builds are unaffected (Dockerfile removes symlinks before building).
+    preserveSymlinks: true,
+  },
   server: {
     port: 5177,
     proxy: {

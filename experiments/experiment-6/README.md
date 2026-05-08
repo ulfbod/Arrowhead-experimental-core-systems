@@ -131,6 +131,23 @@ rabbitmq + authzforce + kafka + serviceregistry + authentication + consumerauth 
 
 Open the dashboard at **http://localhost:3006**.
 
+> **WSL2 + Docker Engine note:** If you are running Docker Engine directly inside WSL2
+> (not Docker Desktop), container ports are bound inside the WSL2 VM and are not
+> automatically forwarded to Windows `localhost`. Use the WSL2 IP address instead:
+> ```powershell
+> # In WSL2 terminal — get the current IP:
+> hostname -I | awk '{print $1}'
+> # Then open http://<that-ip>:3006 in your Windows browser.
+> ```
+> The IP changes on every WSL2 restart. For a permanent fix, enable mirrored networking
+> by creating `C:\Users\<YourUsername>\.wslconfig` with:
+> ```ini
+> [wsl2]
+> networkingMode=mirrored
+> ```
+> Then run `wsl --shutdown` and restart WSL2. After that, `localhost:3006` works from
+> Windows browsers. Docker Desktop users are unaffected — port forwarding is automatic.
+
 AuthzForce API: **http://localhost:8186/authzforce-ce/domains**
 
 ---

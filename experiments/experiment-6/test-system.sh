@@ -68,6 +68,23 @@ else
   fail "Dashboard HTML contains React root element" '<div id="root">' "${html:0:120}"
 fi
 
+# Verify the JS bundle referenced in the HTML actually loads (EXP-011).
+# A broken local build that left a stale dist/index.html from a previous
+# successful build would pass the <div id="root"> check above but serve a
+# bundle that no longer exists in the Docker image.
+js_path=$(echo "$html" | grep -oP 'src="/assets/[^"]+\.js"' | head -1 | grep -oP '/assets/[^"]+')
+if [ -n "$js_path" ]; then
+  js_code=$(http_code "http://localhost:3006${js_path}" 2>/dev/null || echo "000")
+  if [ "$js_code" = "200" ]; then
+    pass "Dashboard JS bundle → 200 ($js_path)"
+  else
+    smoke_fail "Dashboard JS bundle → 200" \
+      "Got HTTP $js_code for $js_path — the Docker image may have been built from a broken local dist/. Run: docker compose up -d --build (EXP-011)"
+  fi
+else
+  fail "Dashboard JS bundle URL found in HTML" "/assets/*.js" "${html:0:120}"
+fi
+
 # Core and PEP service health — exit immediately on any failure so downstream
 # tests do not produce misleading cascades.
 smoke_http "ConsumerAuth /health"   http://localhost:8082/health

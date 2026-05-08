@@ -199,6 +199,25 @@ function PepCard({ status }: { status: RestAuthzStatus | null }) {
       <StatsRow label="requests total" value={status?.requestsTotal ?? '…'} />
       <StatsRow label="permitted"      value={<span style={{ color: '#166534' }}>{status?.permitted ?? '…'}</span>} />
       <StatsRow label="denied"         value={<span style={{ color: '#991b1b' }}>{status?.denied ?? '…'}</span>} />
+      <div style={{ borderTop: '1px solid #fde68a', margin: '8px 0' }} />
+      <StatsRow
+        label="endpoint"
+        value={
+          <a
+            href={`http://${window.location.hostname}:9093/telemetry/latest?consumer=rest-consumer`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={s.link}
+          >
+            {window.location.hostname}:9093 ↗
+          </a>
+        }
+      />
+      <p style={s.hint}>
+        Opens in a new browser tab. Uses <code>?consumer=rest-consumer</code> —
+        the browser-accessible equivalent of the <code>X-Consumer-Name</code> header.
+        Returns 200 with telemetry data when Permit, 403 when not authorized.
+      </p>
     </div>
   )
 }
@@ -428,6 +447,7 @@ const s: Record<string, React.CSSProperties> = {
   stat:         { display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4, fontSize: '0.78rem' },
   statLabel:    { color: '#888' },
   statValue:    { fontWeight: 'bold', color: '#333', fontFamily: 'monospace' },
+  link:         { color: '#92400e', textDecoration: 'none', fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 'bold' },
 
   demoWrap:     { background: '#f9f9ff', border: '1px solid #e0e0f0', borderRadius: 6, padding: 16, maxWidth: 640 },
   checkRow:     { display: 'flex', alignItems: 'center', gap: 0, marginBottom: 8, flexWrap: 'wrap' },
