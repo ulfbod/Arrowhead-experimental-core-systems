@@ -29,6 +29,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	gosync "sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +42,18 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// requireHTTPS returns an error if url is non-empty and does not use https://.
+// All inter-system calls to core services in experiment-7 must use mTLS (https://).
+func requireHTTPS(envName, url string) error {
+	if url == "" {
+		return nil // optional env vars are allowed to be empty
+	}
+	if !strings.HasPrefix(url, "https://") {
+		return fmt.Errorf("%s must use https:// scheme (got %q); experiment-7 requires mTLS for all core service calls", envName, url)
+	}
+	return nil
 }
 
 // ── CA helpers ────────────────────────────────────────────────────────────────
@@ -361,6 +374,15 @@ func main() {
 	}
 	if orchURL == "" {
 		log.Fatal("ORCHESTRATION_URL is required")
+	}
+	if err := requireHTTPS("AUTH_URL", authURL); err != nil {
+		log.Fatal(err)
+	}
+	if err := requireHTTPS("ORCHESTRATION_URL", orchURL); err != nil {
+		log.Fatal(err)
+	}
+	if err := requireHTTPS("CONSUMERAUTH_URL", consumerAuthURL); err != nil {
+		log.Fatal(err)
 	}
 
 	// Fetch CA cert with retry.

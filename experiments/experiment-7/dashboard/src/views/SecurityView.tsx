@@ -402,10 +402,15 @@ const GAPS: GapRow[] = [
   },
   {
     id:     '4.1',
-    title:  'Core systems remain on plain HTTP',
-    status: 'documented',
-    detail: 'Documented in GAP_ANALYSIS.md G4. Adding mTLS to all four core systems ' +
-            'requires significant architectural changes and is out of scope for this experiment.',
+    title:  'Core systems — optional mTLS via TLS_PORT',
+    status: 'partial',
+    detail: 'All four core systems (ServiceRegistry :8480, Authentication :8481, ' +
+            'ConsumerAuthorization :8482, DynamicOrchestration :8483) now expose an ' +
+            'optional HTTPS+mTLS listener via TLS_PORT. In experiment-7, cert-provisioner ' +
+            'provisions certs for each; all inter-system callers use https:// URLs. ' +
+            'Plain HTTP is retained on PORT for healthchecks and Docker bootstrap. ' +
+            'Remaining gap: plain HTTP port is still present (required for operational ' +
+            'infrastructure). Full AH5 compliance would require removing plain HTTP entirely.',
   },
   {
     id:     '4.5',
@@ -590,8 +595,14 @@ export function SecurityView() {
       GET  /ca/crl                → CA-signed CRL (PEM, valid 24h)
       POST /ca/certificate/verify → checks chain + revocation
 
+  Core system mTLS (G4 — partial fix in experiment-7):
+      ServiceRegistry  :8080 (HTTP, healthchecks) / :8480 (HTTPS+mTLS)
+      Authentication   :8081 (HTTP, healthchecks) / :8481 (HTTPS+mTLS)
+      ConsumerAuth     :8082 (HTTP, healthchecks) / :8482 (HTTPS+mTLS)
+      DynamicOrch      :8083 (HTTP, healthchecks) / :8483 (HTTPS+mTLS)
+      Inter-system callers use https:// URLs; plain HTTP retained for bootstrap only.
+
   Remaining documented gaps (see GAP_ANALYSIS.md):
-      · Core systems communicate over plain HTTP (G4)
       · XACML/ABAC replaces JWT authorization tokens (G3)
       · Flat single self-signed CA (not hierarchical AH5 PKI) (G9)
       · Revocation state is in-memory (G5 applies to CA too)

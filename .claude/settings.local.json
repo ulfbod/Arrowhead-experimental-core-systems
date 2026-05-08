@@ -218,7 +218,9 @@
       "Bash(ln -sf ../../../../support/dashboard-shared/config/defaults.ts config/defaults.ts)",
       "Bash(ln -sf ../../../../support/dashboard-shared/config/types.ts config/types.ts)",
       "Bash(cat /home/uffe/projects/ArrowheadCore/support/policy-sync/*.go)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(bash:*)",
+      "Bash(ls:*)"
     ]
   }
 }

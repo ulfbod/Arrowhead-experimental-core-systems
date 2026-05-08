@@ -30,16 +30,22 @@
 #   topic-auth-xacml → RabbitMQ management: HTTP management API
 #
 # Ports exposed to host:
-#   Dashboard:               http://localhost:3007
-#   cert-rest-authz (mTLS):  https://localhost:9098  (requires client cert)
-#   cert-rest-authz (HTTP):  http://localhost:9099   (health/status/check)
-#   kafka-authz SSE/check:   http://localhost:9091
-#   AuthzForce API:          http://localhost:8186/authzforce-ce
-#   RabbitMQ management UI:  http://localhost:15676  (admin/admin)
-#   robot-fleet control API: http://localhost:9106/config
-#   ServiceRegistry:         http://localhost:8080
-#   ConsumerAuthorization:   http://localhost:8082
-#   CertificateAuthority:    http://localhost:8086
+#   Dashboard:                      http://localhost:3007
+#   cert-rest-authz (mTLS):         https://localhost:9098  (requires client cert)
+#   cert-rest-authz (HTTP health):  http://localhost:9099   (health/status/check)
+#   kafka-authz SSE/check:          http://localhost:9091
+#   AuthzForce API:                 http://localhost:8186/authzforce-ce
+#   RabbitMQ management UI:         http://localhost:15676  (admin/admin)
+#   robot-fleet control API:        http://localhost:9106/config
+#   CertificateAuthority:           http://localhost:8086
+#   ServiceRegistry TLS:            https://localhost:8480  (mTLS — requires client cert)
+#   Authentication TLS:             https://localhost:8481  (mTLS — requires client cert)
+#   ConsumerAuthorization TLS:      https://localhost:8482  (mTLS — requires client cert)
+#   DynamicOrchestration TLS:       https://localhost:8483  (mTLS — requires client cert)
+#
+# Core plain HTTP ports (8080-8083) are NOT exposed to the host.
+# They remain available inside the Docker network for healthchecks and the
+# one-shot setup container (bootstrap-only traffic).
 
 services:
 
@@ -162,7 +168,6 @@ services:
       TLS_KEY_FILE:  "/certs/serviceregistry.key"
       TLS_CA_FILE:   "/certs/ca.crt"
     ports:
-      - "8080:8080"
       - "8480:8480"
     volumes:
       - certs:/certs:ro
@@ -188,7 +193,6 @@ services:
       TLS_KEY_FILE:  "/certs/authentication.key"
       TLS_CA_FILE:   "/certs/ca.crt"
     ports:
-      - "8081:8081"
       - "8481:8481"
     volumes:
       - certs:/certs:ro
@@ -214,7 +218,6 @@ services:
       TLS_KEY_FILE:  "/certs/consumerauth.key"
       TLS_CA_FILE:   "/certs/ca.crt"
     ports:
-      - "8082:8082"
       - "8482:8482"
     volumes:
       - certs:/certs:ro
@@ -246,7 +249,6 @@ services:
       ENABLE_AUTH: "true"
       ENABLE_IDENTITY_CHECK: "true"
     ports:
-      - "8083:8083"
       - "8483:8483"
     volumes:
       - certs:/certs:ro

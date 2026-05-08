@@ -53,34 +53,36 @@ CoreCA :8086 (plain HTTP — it IS the trust anchor)
 | All → AuthzForce | Plain HTTP | Docker network |
 | All → Core systems | Plain HTTP | Docker network |
 
-**Documented plain-HTTP services (limitations):**
-- Core systems: not modified (cross-experiment API stability)
-- AuthzForce: Java service, complex TLS config beyond scope
+**Plain HTTP — justified exceptions:**
+- CA: bootstrap trust anchor; services must reach it over plain HTTP to obtain their first certificate — it cannot authenticate itself with a certificate it has not yet issued
+- AuthzForce: external Java service, HTTP-only configuration; complex TLS setup is out of scope
 - policy-sync → AuthzForce: AuthzForce is HTTP-only
 - analytics-consumer → kafka-authz: SSE path is HTTP; TLS is on the Kafka layer
+- Docker healthchecks (container-internal only): plain HTTP on 8080-8083 inside each container; **not host-exposed**
+- `setup` bootstrap container: seeds authorization grants via HTTP to consumerauth:8082 (Docker-internal network only; not host-exposed)
 
 ## Services
 
-| Service | Port(s) | Role |
+| Service | Port(s) exposed to host | Role |
 |---|---|---|
-| ca | 8086 | Core CA: issues X.509 certs (plain HTTP) |
-| cert-provisioner | — | Init: issues Kafka/RabbitMQ certs to /certs volume |
-| serviceregistry | 8080 | Service registration |
-| authentication | 8081 | Identity tokens |
-| consumerauth | 8082 | Authorization grants (source of truth) |
-| dynamicorch | 8083 | Orchestration |
-| authzforce | 8186 (host) | XACML PDP/PAP (HTTP) |
-| policy-sync | 9095 | CA→XACML compiler; `/config` for SYNC_INTERVAL |
-| topic-auth-xacml | 9090 | AMQP PEP (manages RabbitMQ users) |
-| kafka-authz | 9091 | Kafka SSE PEP; TLS Kafka connection |
+| ca | **8086** (HTTP) | Core CA: issues X.509 certs (plain HTTP — bootstrap trust anchor) |
+| cert-provisioner | — | Init: issues Kafka/RabbitMQ/core certs to /certs volume |
+| serviceregistry | **8480** (HTTPS/mTLS) | Service registration — plain HTTP :8080 is Docker-internal only |
+| authentication | **8481** (HTTPS/mTLS) | Identity tokens — plain HTTP :8081 is Docker-internal only |
+| consumerauth | **8482** (HTTPS/mTLS) | Authorization grants — plain HTTP :8082 is Docker-internal only |
+| dynamicorch | **8483** (HTTPS/mTLS) | Orchestration — plain HTTP :8083 is Docker-internal only |
+| authzforce | **8186** (HTTP, host mapping) | XACML PDP/PAP (HTTP — external Java service) |
+| policy-sync | **9095** (HTTP) | CA→XACML compiler |
+| topic-auth-xacml | 9090 (internal) | AMQP PEP (manages RabbitMQ users) |
+| kafka-authz | **9091** (HTTP) | Kafka SSE PEP; TLS Kafka connection |
 | cert-rest-authz | **9098** (HTTPS/mTLS), **9099** (HTTP health) | REST mTLS PEP |
 | data-provider-tls | 9094 (HTTPS, internal) | HTTPS REST + TLS Kafka consumer |
-| cert-consumer | 9096 (HTTP health, internal) | mTLS polling client |
-| robot-fleet-tls | 9106→9003 | AMQPS + TLS Kafka publisher |
+| cert-consumer | **9096** (HTTP health) | mTLS polling client |
+| robot-fleet-tls | **9106**→9003 (HTTP) | AMQPS + TLS Kafka publisher |
 | consumer-1/2/3 | — | AMQPS consumers |
-| analytics-consumer | 9004 (health) | Kafka SSE consumer |
-| rabbitmq | 5671 (AMQPS), 15676 (mgmt) | AMQP broker with TLS |
-| kafka | 9092 (SSL) | Kafka broker with SSL |
+| analytics-consumer | **9004** (HTTP health) | Kafka SSE consumer |
+| rabbitmq | 5671 (AMQPS, internal), **15676** (mgmt HTTP) | AMQP broker with TLS |
+| kafka | 9092 (SSL, internal) | Kafka broker with SSL |
 
 ## Certificate Provisioning
 

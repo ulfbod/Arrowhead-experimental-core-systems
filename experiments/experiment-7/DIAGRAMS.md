@@ -166,7 +166,22 @@ consumer-direct-tls                    dynamicorch:8483
 | cert-consumer → cert-rest-authz | mTLS (unchanged) | mTLS (unchanged) |
 | cert-rest-authz → data-provider-tls | HTTPS (unchanged) | HTTPS (unchanged) |
 
+**Plain HTTP port exposure — host access:**
+
+| Service | Plain HTTP port | Host-exposed? | Used for |
+|---|---|---|---|
+| serviceregistry | 8080 | No (Docker-internal only) | Docker healthchecks |
+| authentication | 8081 | No (Docker-internal only) | Docker healthchecks |
+| consumerauth | 8082 | No (Docker-internal only) | Healthchecks + setup container bootstrap |
+| dynamicorch | 8083 | No (Docker-internal only) | Docker healthchecks |
+| ca | 8086 | Yes (required) | Bootstrap trust anchor; cannot self-authenticate |
+| authzforce | 8080 (host: 8186) | Yes (required) | External Java service, HTTP-only |
+
+The TLS ports (8480-8483) are the only host-accessible entry points for core systems.
+The `test-system.sh` section 14 verifies that ports 8080-8083 are connection-refused from the host.
+
 **Out of scope (documented):**
 - CA itself: plain HTTP — bootstrap trust anchor, cannot self-authenticate
 - AuthzForce: Java service on plain HTTP — external component
 - Kafka/RabbitMQ: server-only TLS — no client cert required by brokers (KAFKA_SSL_CLIENT_AUTH: none)
+- Docker internal healthchecks and `setup` bootstrap container: HTTP on Docker-internal network only

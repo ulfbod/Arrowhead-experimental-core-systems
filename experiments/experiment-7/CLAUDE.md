@@ -29,7 +29,8 @@ Full description: [`README.md`](README.md)
 ## Stack topology
 
 ```
-ConsumerAuth :8082 (HTTP) / :8482 (HTTPS/mTLS)
+ConsumerAuth :8482 (HTTPS/mTLS — host-exposed)
+    :8082 (HTTP — Docker-internal only: healthchecks + setup bootstrap)
     GET /authorization/lookup (every SYNC_INTERVAL) ← policy-sync (mTLS)
     ↓
 policy-sync :9095   PUT PolicySet → AuthzForce (HTTP)
@@ -40,16 +41,16 @@ AuthzForce :8186    ◄── single PDP for all three transports (HTTP)
     ├── kafka-authz :9091       →  Kafka :9092 (SSL)       → analytics-consumer
     └── cert-rest-authz :9098   →  data-provider-tls :9094 (HTTPS) → cert-consumer
 
-CoreCA :8086 (plain HTTP — trust anchor, bootstrap endpoint)
+CoreCA :8086 (plain HTTP — trust anchor, bootstrap endpoint; host-exposed)
     │
     ├── cert-provisioner → /certs volume → Kafka, RabbitMQ, core systems, policy-sync
     └── (all Go services call CA at startup to get own cert)
 
-Core systems (each has both plain HTTP and HTTPS/mTLS port):
-    ServiceRegistry       :8080 (HTTP) / :8480 (HTTPS/mTLS)
-    Authentication        :8081 (HTTP) / :8481 (HTTPS/mTLS)
-    ConsumerAuthorization :8082 (HTTP) / :8482 (HTTPS/mTLS)
-    DynamicOrchestration  :8083 (HTTP) / :8483 (HTTPS/mTLS, mTLS outbound)
+Core systems (TLS port host-exposed; plain HTTP port Docker-internal only):
+    ServiceRegistry       :8080 (HTTP, internal) / :8480 (HTTPS/mTLS, host-exposed)
+    Authentication        :8081 (HTTP, internal) / :8481 (HTTPS/mTLS, host-exposed)
+    ConsumerAuthorization :8082 (HTTP, internal) / :8482 (HTTPS/mTLS, host-exposed)
+    DynamicOrchestration  :8083 (HTTP, internal) / :8483 (HTTPS/mTLS, host-exposed)
 ```
 
 ---
@@ -198,6 +199,8 @@ Same as experiment-5's robot-fleet plus:
 - Do NOT change Kafka readers to consumer groups (EXP-007).
 - Do NOT hardcode `arrowhead-exp7` — always read from `AUTHZFORCE_DOMAIN` env var.
 - Do NOT modify files under `core/` — new CA API endpoints would go there if needed.
+- Do NOT add host port bindings for core plain HTTP ports (8080-8083) — they are Docker-internal only.
+- Do NOT use `http://` URLs for `AUTH_URL`, `ORCHESTRATION_URL`, `SR_URL`, or `CONSUMERAUTH_URL` in experiment-7 services — `requireHTTPS()` rejects them at startup.
 - Do NOT remove cert-provisioner's dependency on `ca` being healthy.
 
 ---
@@ -211,7 +214,7 @@ bash test-system.sh
 ```
 
 The script covers:
-1. Core and PEP service health + policy-sync domain check
+1. Core and PEP service health + shared TLS cert setup + policy-sync domain check
 2. CA issue/verify endpoints
 3. AuthzForce server endpoints
 4. policy-sync /status
@@ -221,8 +224,10 @@ The script covers:
 8. cert-consumer msgCount > 0 (mTLS polling works)
 9. analytics-consumer msgCount > 0 (Kafka TLS path works)
 10. cert-rest-authz /status counters
-11. Revocation propagation (cert-consumer Deny after grant removed)
+11. Revocation propagation via TLS port 8482 (cert-consumer Deny after grant removed)
 12. kafka-authz SSE stream
+13. G4 closure: mTLS on all four TLS ports (8480-8483)
+14. Security: plain HTTP ports 8080-8083 are NOT accessible from host
 
 Unit tests (no Docker required):
 ```bash
