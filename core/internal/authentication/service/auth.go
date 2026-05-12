@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	ErrMissingSystemName  = errors.New("systemName is required")
-	ErrInvalidToken       = errors.New("invalid or expired token")
+	ErrMissingSystemName = errors.New("systemName is required")
+	ErrInvalidToken      = errors.New("invalid or expired token")
 )
 
 // AuthService manages identity tokens.

@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ArrowheadCore — Code Quality Evolution</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:        #0f1117;
+    --surface:   #1a1d27;
+    --surface2:  #222636;
+    --border:    #2e3350;
+    --accent:    #5b7af7;
+    --accent2:   #38d9a9;
+    --accent3:   #f7c948;
+    --warn:      #f76b5b;
+    --text:      #e2e6f3;
+    --muted:     #8890b0;
+    --radius:    10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  /* ── Layout ── */
+  .page { max-width: 1100px; margin: 0 auto; padding: 0 24px 80px; }
+
+  /* ── Header ── */
+  header {
+    padding: 60px 0 48px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 52px;
+  }
+  header h1 {
+    font-size: 2.4rem;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 10px;
+  }
+  header p {
+    color: var(--muted);
+    max-width: 680px;
+    font-size: 1.05rem;
+  }
+  .meta { margin-top: 18px; display: flex; gap: 24px; flex-wrap: wrap; }
+  .meta-item { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.88rem; }
+  .meta-item strong { color: var(--text); }
+  .badge {
+    display: inline-block; padding: 2px 9px; border-radius: 99px;
+    font-size: 0.75rem; font-weight: 600; letter-spacing: 0.3px;
+  }
+  .badge-blue  { background: rgba(91,122,247,.18); color: #7ea0ff; border: 1px solid rgba(91,122,247,.3); }
+  .badge-green { background: rgba(56,217,169,.18); color: #38d9a9; border: 1px solid rgba(56,217,169,.3); }
+  .badge-amber { background: rgba(247,201,72,.18);  color: #f7c948; border: 1px solid rgba(247,201,72,.3); }
+  .badge-red   { background: rgba(247,107,91,.18);  color: #f78c7e; border: 1px solid rgba(247,107,91,.3); }
+
+  /* ── Section titles ── */
+  h2 {
+    font-size: 1.35rem; font-weight: 600;
+    margin-bottom: 28px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  h2 .icon { font-size: 1.2rem; }
+  section { margin-bottom: 60px; }
+
+  /* ── Timeline ── */
+  .timeline {
+    position: relative;
+    padding-left: 28px;
+  }
+  .timeline::before {
+    content: '';
+    position: absolute; left: 8px; top: 6px; bottom: 6px;
+    width: 2px; background: var(--border);
+    border-radius: 2px;
+  }
+  .tl-item {
+    position: relative;
+    margin-bottom: 36px;
+    padding-left: 24px;
+  }
+  .tl-dot {
+    position: absolute;
+    left: -20px; top: 6px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--bg);
+    z-index: 1;
+  }
+  .tl-date {
+    font-size: 0.8rem; color: var(--muted);
+    font-family: 'Courier New', monospace;
+    margin-bottom: 4px;
+  }
+  .tl-title {
+    font-size: 1.05rem; font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .tl-body {
+    color: var(--muted); font-size: 0.9rem;
+    max-width: 720px;
+    line-height: 1.55;
+  }
+  .tl-stats {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .tl-stat {
+    font-size: 0.8rem; color: var(--muted);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px; padding: 2px 10px;
+  }
+  .tl-stat strong { color: var(--text); }
+
+  /* ── Chart panels ── */
+  .chart-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  @media (max-width: 720px) { .chart-grid { grid-template-columns: 1fr; } }
+  .chart-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+  }
+  .chart-box h3 {
+    font-size: 0.95rem; font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .chart-box .chart-sub {
+    font-size: 0.8rem; color: var(--muted);
+    margin-bottom: 20px;
+  }
+  .chart-wrap { position: relative; height: 280px; }
+  .chart-wrap-tall { position: relative; height: 340px; }
+
+  /* ── Phase cards ── */
+  .phase-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 20px;
+  }
+  .phase-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .phase-header {
+    display: flex; align-items: flex-start;
+    justify-content: space-between; gap: 12px;
+  }
+  .phase-num {
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.5px;
+    color: var(--muted); text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+  .phase-title { font-size: 1rem; font-weight: 600; }
+  .phase-date  { font-size: 0.78rem; color: var(--muted); font-family: monospace; white-space: nowrap; }
+  .phase-body  { font-size: 0.88rem; color: var(--muted); }
+  .phase-lists { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+  .check-list  { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+  .check-list li { font-size: 0.84rem; display: flex; gap: 7px; align-items: flex-start; }
+  .check-list li::before { flex-shrink: 0; margin-top: 2px; }
+  .pros li::before { content: '✓'; color: var(--accent2); }
+  .cons li::before { content: '·'; color: var(--warn); }
+  .phase-score {
+    margin-top: auto;
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+
+  /* ── Score bars ── */
+  .scores-table { width: 100%; border-collapse: collapse; }
+  .scores-table th, .scores-table td {
+    text-align: left; padding: 10px 14px; font-size: 0.85rem;
+  }
+  .scores-table thead th {
+    color: var(--muted); font-weight: 600; font-size: 0.78rem;
+    text-transform: uppercase; letter-spacing: 0.4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .scores-table tbody tr:nth-child(odd) { background: var(--surface2); }
+  .bar-cell { min-width: 140px; }
+  .bar-wrap  { background: var(--border); border-radius: 3px; height: 6px; overflow: hidden; }
+  .bar-fill  { height: 100%; border-radius: 3px; }
+
+  /* ── Summary stats ── */
+  .stat-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px; margin-bottom: 32px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .stat-label { font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
+  .stat-value { font-size: 1.9rem; font-weight: 700; }
+  .stat-sub   { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+
+  /* ── Observations ── */
+  .obs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 720px) { .obs-grid { grid-template-columns: 1fr; } }
+  .obs-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .obs-card h4 { font-size: 0.9rem; font-weight: 600; margin-bottom: 10px; }
+  .obs-card ul  { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+  .obs-card li  { font-size: 0.85rem; color: var(--muted); display: flex; gap: 8px; }
+  .obs-card li::before { flex-shrink: 0; }
+  .strength li::before { content: '▲'; color: var(--accent2); font-size: 0.7rem; margin-top: 3px; }
+  .concern  li::before { content: '▽'; color: var(--accent3); font-size: 0.7rem; margin-top: 3px; }
+
+  /* colour helpers */
+  .c-blue  { color: var(--accent); }
+  .c-green { color: var(--accent2); }
+  .c-amber { color: var(--accent3); }
+  .c-red   { color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ═══════════════════════════════════════════════════════ HEADER -->
+<header>
+  <h1>ArrowheadCore — Code Quality Evolution</h1>
+  <p>A record of how the codebase progressed from a monolithic mining PoC through a fully governed, spec-driven, test-covered AH5 research platform — covering architecture, testing discipline, security, and specification alignment.</p>
+  <div class="meta">
+    <div class="meta-item">📅 <strong>Assessed: 2026-05-10</strong></div>
+    <div class="meta-item">📦 <strong>Commits analysed: 79</strong></div>
+    <div class="meta-item">📆 <strong>Span: 2026-03-28 → 2026-05-10</strong> (43 days)</div>
+    <div class="meta-item">🔤 <strong>Language: Go + TypeScript</strong></div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════ TIMELINE -->
+<section>
+  <h2><span class="icon">📍</span> Development Timeline</h2>
+  <div class="timeline">
+
+    <div class="tl-item">
+      <div class="tl-dot" style="background:#f76b5b"></div>
+      <div class="tl-date">2026-03-28</div>
+      <div class="tl-title">Initial implementation — Composable Digital Twins PoC
+        <span class="badge badge-red" style="margin-left:8px">PoC</span>
+      </div>
+      <div class="tl-body">
+        Single monolithic "Arrowhead-like" backend in one 411-line <code>cmd/arrowhead/main.go</code>. All registry, auth, and orchestration logic in one file. React+TypeScript frontend. 15 Go source files across 12 binaries (iDTs + cDTs). Zero tests. Commit message describes purpose clearly; code does not reflect that care.
+      </div>
+      <div class="tl-stats">
+        <span class="tl-stat">src: <strong>15</strong> (backend/)</span>
+        <span class="tl-stat">tests: <strong>0</strong></span>
+        <span class="tl-stat">test functions: <strong>0</strong></span>
+        <span class="tl-stat">module: <strong>mineio</strong></span>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot" style="background:#f7c948"></div>
+      <div class="tl-date">2026-04-28</div>
+      <div class="tl-title">AH5 5.2.0 compliance + repo restructure
+        <span class="badge badge-amber" style="margin-left:8px">Restructure</span>
+      </div>
+      <div class="tl-body">
+        <code>core/</code>, <code>support/</code>, <code>experiments/</code> top-level separation established. GAP_ANALYSIS.md and REPO_RULES.md introduced. Go workspace (<code>go.work</code>) wired. Module renamed to <code>arrowhead/core</code>. Large churn: 1310–2439 files changed in node_modules and generated code.
+      </div>
+      <div class="tl-stats">
+        <span class="tl-stat">core src: <strong>30</strong></span>
+        <span class="tl-stat">test files: <strong>2</strong></span>
+        <span class="tl-stat">GAP_ANALYSIS.md: <strong>added</strong></span>
+        <span class="tl-stat">module: <strong>arrowhead/core</strong></span>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot" style="background:#5b7af7"></div>
+      <div class="tl-date">2026-04-29</div>
+      <div class="tl-title">Complete Arrowhead Core (stages 1–6)
+        <span class="badge badge-blue" style="margin-left:8px">Foundation</span>
+      </div>
+      <div class="tl-body">
+        Six independent binaries with clean model/service/api/repository layering. SPEC.md, TEST_PLAN.md, CLAUDE.md governance files. React dashboard wired via HTTP only. E2E integration tests added (13 scenarios). FlexibleStore with metadata filtering. Authentication + ConsumerAuth fully implemented with table-driven unit tests.
+      </div>
+      <div class="tl-stats">
+        <span class="tl-stat">core src: <strong>30</strong></span>
+        <span class="tl-stat">test files: <strong>13</strong></span>
+        <span class="tl-stat">E2E scenarios: <strong>13</strong></span>
+        <span class="tl-stat">SPEC.md: <strong>506 lines</strong></span>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot" style="background:#38d9a9"></div>
+      <div class="tl-date">2026-05-04 → 2026-05-06</div>
+      <div class="tl-title">Experiments 1–6 + support modules + EXPERIENCES.md
+        <span class="badge badge-green" style="margin-left:8px">Maturity</span>
+      </div>
+      <div class="tl-body">
+        Seven progressively more complex experiments added, each with Docker Compose stack and a <code>test-system.sh</code> script. Support modules (<code>kafka-authz</code>, <code>rest-authz</code>, <code>policy-sync</code>, <code>authzforce-server</code>) factored out. EXPERIENCES.md established as a living incident log — documents real bugs and root causes with generalised lessons.
+      </div>
+      <div class="tl-stats">
+        <span class="tl-stat">experiments: <strong>6 complete</strong></span>
+        <span class="tl-stat">support modules: <strong>9</strong></span>
+        <span class="tl-stat">EXPERIENCES.md: <strong>started</strong></span>
+        <span class="tl-stat">Claude.md files: <strong>3 levels</strong></span>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot" style="background:#5b7af7"></div>
+      <div class="tl-date">2026-05-08 (stages 1–6)</div>
+      <div class="tl-title">Experiment-7: optional mTLS on all core systems
+        <span class="badge badge-blue" style="margin-left:8px">Security</span>
+      </div>
+      <div class="tl-body">
+        <code>tlsutil</code> package added for server and client TLS config loading. All four mandatory core systems (SR/Auth/ConsumerAuth/DynamicOrch) expose an additional <code>TLS_PORT</code> HTTPS listener. Certificate Authority binary added using stdlib-only X.509 (ECDSA P-256). AH5 hierarchical certificate naming. CRL revocation. TLS tests written first (TDD). GAP_ANALYSIS G4 partially closed.
+      </div>
+      <div class="tl-stats">
+        <span class="tl-stat">core src: <strong>34</strong></span>
+        <span class="tl-stat">test files: <strong>15</strong></span>
+        <span class="tl-stat">CA: <strong>stdlib X.509</strong></span>
+        <span class="tl-stat">mTLS: <strong>optional</strong></span>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot" style="background:#38d9a9"></div>
+      <div class="tl-date">2026-05-08 (stage 9) — HEAD</div>
+      <div class="tl-title">AH5 ServiceRegistry full surface expansion
+        <span class="badge badge-green" style="margin-left:8px">AH5 Aligned</span>
+      </div>
+      <div class="tl-body">
+        ServiceRegistry expanded from 4 legacy endpoints to 23 total endpoints covering all AH5 `serviceDiscovery`, `systemDiscovery`, `deviceDiscovery`, and `serviceRegistryManagement` interfaces. New AH5-native data models (Device, AH5System, ServiceDefinition, InterfaceTemplate) alongside existing legacy types. 82 new test functions across service and handler layers. Backward compatible: existing experiments unaffected.
+      </div>
+      <div class="tl-stats">
+        <span class="tl-stat">core src: <strong>39</strong></span>
+        <span class="tl-stat">test files: <strong>18</strong></span>
+        <span class="tl-stat">test functions: <strong>321</strong></span>
+        <span class="tl-stat">SR endpoints: <strong>4 → 23</strong></span>
+        <span class="tl-stat">test/src lines: <strong>1.31×</strong></span>
+        <span class="tl-stat">EXPERIENCES.md: <strong>19 incidents</strong></span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ CURRENT SNAPSHOT -->
+<section>
+  <h2><span class="icon">📊</span> Current State Snapshot (HEAD)</h2>
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">Test functions</div>
+      <div class="stat-value c-green">321</div>
+      <div class="stat-sub">across 18 test files</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Test / source line ratio</div>
+      <div class="stat-value c-blue">1.31×</div>
+      <div class="stat-sub">6 153 test : 4 674 src lines</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Core Go source files</div>
+      <div class="stat-value">39</div>
+      <div class="stat-sub">+ 18 test files</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">ServiceRegistry endpoints</div>
+      <div class="stat-value c-amber">23</div>
+      <div class="stat-sub">4 legacy + 19 AH5</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Incidents documented</div>
+      <div class="stat-value">19</div>
+      <div class="stat-sub">in EXPERIENCES.md (1 534 lines)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">GAP_ANALYSIS entries</div>
+      <div class="stat-value">25</div>
+      <div class="stat-sub">G1–G11, D1–D10, I1–I4, A1–A5</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Active experiments</div>
+      <div class="stat-value">7</div>
+      <div class="stat-sub">1–5 reference; 6 baseline; 7 active</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">E2E test scenarios</div>
+      <div class="stat-value">13</div>
+      <div class="stat-sub">in-process, no mocks</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ CHARTS -->
+<section>
+  <h2><span class="icon">📈</span> Quantitative Metrics Over Time</h2>
+  <div class="chart-grid">
+
+    <div class="chart-box">
+      <h3>Source vs Test File Count</h3>
+      <div class="chart-sub">core/ Go files only (backend/ used pre-Apr-29)</div>
+      <div class="chart-wrap">
+        <canvas id="filesChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-box">
+      <h3>ServiceRegistry Endpoint Count</h3>
+      <div class="chart-sub">Growth from PoC stub to AH5 full surface</div>
+      <div class="chart-wrap">
+        <canvas id="endpointsChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-box">
+      <h3>Quality Dimension Scores — PoC vs HEAD</h3>
+      <div class="chart-sub">Subjective 1–5 assessment per dimension</div>
+      <div class="chart-wrap">
+        <canvas id="radarChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-box">
+      <h3>Documentation Depth</h3>
+      <div class="chart-sub">Governance artefacts added over time</div>
+      <div class="chart-wrap">
+        <canvas id="docsChart"></canvas>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ PHASES -->
+<section>
+  <h2><span class="icon">🔍</span> Phase-by-Phase Analysis</h2>
+  <div class="phase-grid">
+
+    <!-- PHASE 1 -->
+    <div class="phase-card" style="border-color:#f76b5b44">
+      <div class="phase-header">
+        <div>
+          <div class="phase-num">Phase 1</div>
+          <div class="phase-title">Mining PoC — "Ship it"</div>
+        </div>
+        <div class="phase-date">Mar 28</div>
+      </div>
+      <div class="phase-body">
+        Rapid prototype to support a research paper on Composable Digital Twins.
+        All Arrowhead responsibilities (registry, auth, orchestration) folded into
+        a single <code>main.go</code>. Functional for demo purposes; not a template
+        for anything beyond.
+      </div>
+      <div class="phase-lists">
+        <ul class="check-list pros">
+          <li>Full stack working in a single day</li>
+          <li>Docker Compose deployment from day one</li>
+          <li>React frontend with real data</li>
+        </ul>
+        <ul class="check-list cons">
+          <li>CORS middleware in Go handler (mixed concern)</li>
+          <li>DELETE routed inside POST handler via <code>r.Method</code> branch</li>
+          <li>Global mutable <code>var registry = &Registry{}</code> package-level state</li>
+          <li>Zero tests — no validation, no error contract</li>
+          <li>Module path <code>mineio</code> — no AH5 alignment</li>
+          <li>Pre-compiled binaries committed to VCS</li>
+        </ul>
+      </div>
+      <div class="phase-score">
+        <span class="badge badge-red">arch: 1/5</span>
+        <span class="badge badge-red">tests: 0/5</span>
+        <span class="badge badge-amber">docs: 2/5</span>
+      </div>
+    </div>
+
+    <!-- PHASE 2 -->
+    <div class="phase-card" style="border-color:#f7c94844">
+      <div class="phase-header">
+        <div>
+          <div class="phase-num">Phase 2</div>
+          <div class="phase-title">Architecture established</div>
+        </div>
+        <div class="phase-date">Apr 28–29</div>
+      </div>
+      <div class="phase-body">
+        Complete redesign: six independent binaries, strict model/service/api/repository
+        layering, SPEC.md as the single source of truth. GAP_ANALYSIS.md introduces
+        the discipline of documenting what is and isn't implemented. CLAUDE.md files
+        give Claude explicit rules to follow in each session.
+      </div>
+      <div class="phase-lists">
+        <ul class="check-list pros">
+          <li>Clean package separation — no circular imports</li>
+          <li>SPEC.md: every endpoint contracted in writing</li>
+          <li>Table-driven tests in handler_test.go and registry_test.go</li>
+          <li>No CORS in Go handlers (explicit prohibition)</li>
+          <li><code>sync.RWMutex</code>-backed in-memory repository</li>
+        </ul>
+        <ul class="check-list cons">
+          <li>Only 2 test files — service layer and api layer for registry only</li>
+          <li>Auth/ConsumerAuth/Orchestration systems had no tests yet</li>
+          <li>No E2E integration coverage</li>
+          <li>GAP_ANALYSIS added but several gaps listed as "acceptable" without plan</li>
+        </ul>
+      </div>
+      <div class="phase-score">
+        <span class="badge badge-blue">arch: 4/5</span>
+        <span class="badge badge-amber">tests: 2/5</span>
+        <span class="badge badge-blue">docs: 3/5</span>
+      </div>
+    </div>
+
+    <!-- PHASE 3 -->
+    <div class="phase-card" style="border-color:#5b7af744">
+      <div class="phase-header">
+        <div>
+          <div class="phase-num">Phase 3</div>
+          <div class="phase-title">Test discipline matures</div>
+        </div>
+        <div class="phase-date">Apr 29 (stages 1–6)</div>
+      </div>
+      <div class="phase-body">
+        Tests added for every system in a single sprint. E2E integration tests
+        exercise all six systems in-process with <code>net/http/httptest</code>.
+        No external test dependencies. TEST_PLAN.md defines what coverage
+        is required. Commit discipline: test files appear in the same commit
+        as the implementation.
+      </div>
+      <div class="phase-lists">
+        <ul class="check-list pros">
+          <li>13 test files — all six systems covered</li>
+          <li>13 E2E scenarios: register→discover→orchestrate→auth</li>
+          <li>TEST_PLAN.md links scenarios to expected behaviour</li>
+          <li>FlexibleStore priority and metadata-filter tests</li>
+          <li>Identity check / impersonation prevention tested</li>
+        </ul>
+        <ul class="check-list cons">
+          <li>Test/source ratio still below 1.0</li>
+          <li>No CI pipeline — tests run manually</li>
+          <li>Token generation still <code>hex(time.Now().UnixNano())</code> (G3)</li>
+          <li>No mTLS (G4) — auth fields stored but not enforced</li>
+        </ul>
+      </div>
+      <div class="phase-score">
+        <span class="badge badge-blue">arch: 4/5</span>
+        <span class="badge badge-blue">tests: 4/5</span>
+        <span class="badge badge-green">docs: 4/5</span>
+      </div>
+    </div>
+
+    <!-- PHASE 4 -->
+    <div class="phase-card" style="border-color:#38d9a944">
+      <div class="phase-header">
+        <div>
+          <div class="phase-num">Phase 4</div>
+          <div class="phase-title">Experiments + EXPERIENCES.md</div>
+        </div>
+        <div class="phase-date">May 4–6</div>
+      </div>
+      <div class="phase-body">
+        Seven experiments (Docker Compose stacks) built on top of core. Each
+        experiment adds progressive complexity: Kafka, XACML/AuthzForce, policy-sync,
+        mTLS. EXPERIENCES.md starts recording real bugs encountered, their root
+        causes, and generalised lessons to prevent recurrence.
+      </div>
+      <div class="phase-lists">
+        <ul class="check-list pros">
+          <li>EXPERIENCES.md: 19 incidents with root cause + fix + lesson</li>
+          <li>test-system.sh: self-contained bash test suites per experiment</li>
+          <li>Support modules clearly separated from experiments</li>
+          <li>CLAUDE_EXPERIMENTS.md: rules to prevent cross-contamination</li>
+          <li>Experiments 1–5 preserved as historical reference</li>
+        </ul>
+        <ul class="check-list cons">
+          <li>Experiment test scripts use bash (fragile string matching) not Go</li>
+          <li>node_modules occasionally committed (large commit sizes)</li>
+          <li>Some experiments still have hard-coded environment values (EXP-001)</li>
+        </ul>
+      </div>
+      <div class="phase-score">
+        <span class="badge badge-green">arch: 5/5</span>
+        <span class="badge badge-blue">tests: 4/5</span>
+        <span class="badge badge-green">docs: 5/5</span>
+      </div>
+    </div>
+
+    <!-- PHASE 5 -->
+    <div class="phase-card" style="border-color:#5b7af744">
+      <div class="phase-header">
+        <div>
+          <div class="phase-num">Phase 5</div>
+          <div class="phase-title">Security layer (mTLS)</div>
+        </div>
+        <div class="phase-date">May 8, stages 1–6</div>
+      </div>
+      <div class="phase-body">
+        Optional mutual TLS added to all mandatory core systems via a shared
+        <code>tlsutil</code> package. Certificate Authority implemented with
+        stdlib-only X.509 (no external PKI libraries). AH5 hierarchical
+        certificate naming. TLS tests written before implementation (TDD).
+      </div>
+      <div class="phase-lists">
+        <ul class="check-list pros">
+          <li>tlsutil.LoadServerTLSConfig / LoadClientTLSConfig shared cleanly</li>
+          <li>CA uses only Go stdlib — no dependency risk</li>
+          <li>AH5 hierarchical CN naming: <code>sys.cloud.op.arrowhead.eu</code></li>
+          <li>CRL revocation implemented and tested</li>
+          <li>Plain HTTP ports internal-only — host access via TLS only</li>
+          <li>TLS disabled cleanly with no-op path (no env vars = plain HTTP)</li>
+        </ul>
+        <ul class="check-list cons">
+          <li>G4 only partially closed — CA itself still on plain HTTP (bootstrap)</li>
+          <li>Credential verification (G2) still a stub</li>
+          <li>Token generation (G3) still predictable</li>
+        </ul>
+      </div>
+      <div class="phase-score">
+        <span class="badge badge-green">arch: 5/5</span>
+        <span class="badge badge-blue">tests: 4/5</span>
+        <span class="badge badge-green">security: 4/5</span>
+      </div>
+    </div>
+
+    <!-- PHASE 6 -->
+    <div class="phase-card" style="border-color:#38d9a944">
+      <div class="phase-header">
+        <div>
+          <div class="phase-num">Phase 6</div>
+          <div class="phase-title">AH5 full alignment — HEAD</div>
+        </div>
+        <div class="phase-date">May 8, stage 9</div>
+      </div>
+      <div class="phase-body">
+        ServiceRegistry expanded to cover the full AH5 management and discovery
+        surface. New AH5 models live alongside legacy types — two independent
+        stores on one port. 82 new test functions; test lines now exceed source
+        lines (1.31×). GAP_ANALYSIS grows to 25 entries covering all known
+        deviations, decisions, interpretations, and ambiguities.
+      </div>
+      <div class="phase-lists">
+        <ul class="check-list pros">
+          <li>All 5 AH5 entity types: Device, System, ServiceDef, InterfaceTemplate, ServiceInstance</li>
+          <li>321 test functions; test/source line ratio = 1.31</li>
+          <li>Backward compatible — experiments 1–7 unaffected</li>
+          <li>Every deviation from spec documented in GAP_ANALYSIS (G10, G11)</li>
+          <li>TDD: handler tests written before handler implementation</li>
+          <li>go build + go vet + go test — all clean, no warnings</li>
+        </ul>
+        <ul class="check-list cons">
+          <li>G2/G3 (auth stub, weak tokens) still open</li>
+          <li>DynamicOrchestration not yet updated to use AH5 discovery endpoint</li>
+          <li>No pagination on management query endpoints</li>
+          <li>AH5 and legacy stores are independent — no cross-store consistency</li>
+        </ul>
+      </div>
+      <div class="phase-score">
+        <span class="badge badge-green">arch: 5/5</span>
+        <span class="badge badge-green">tests: 5/5</span>
+        <span class="badge badge-green">AH5: 5/5</span>
+        <span class="badge badge-green">docs: 5/5</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ DIMENSION SCORES TABLE -->
+<section>
+  <h2><span class="icon">🎯</span> Quality Dimension Scores by Phase</h2>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;">
+    <table class="scores-table">
+      <thead>
+        <tr>
+          <th>Dimension</th>
+          <th>PoC<br><small>Mar 28</small></th>
+          <th>Architecture<br><small>Apr 28–29</small></th>
+          <th>Testing<br><small>Apr 29</small></th>
+          <th>Experiments<br><small>May 4–6</small></th>
+          <th>Security<br><small>May 8</small></th>
+          <th>AH5 Full<br><small>May 8 HEAD</small></th>
+        </tr>
+      </thead>
+      <tbody id="scoresBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ PATTERNS -->
+<section>
+  <h2><span class="icon">🔬</span> Observed Patterns &amp; Assessment</h2>
+  <div class="obs-grid">
+
+    <div class="obs-card">
+      <h4 class="c-green">Consistent strengths</h4>
+      <ul class="strength">
+        <li>Architecture clarity improved rapidly and was maintained — no regression to monolith patterns once the six-binary structure was established.</li>
+        <li>SPEC.md as a contract is genuinely enforced. CLAUDE.md files explicitly prohibit endpoints not in SPEC.md, and the prohibition is effective.</li>
+        <li>Test-to-source ratio exceeded 1.0 — test code now outweighs implementation code, a rare property in research projects.</li>
+        <li>Every documented failure in EXPERIENCES.md has a corresponding generalised lesson. The pre-flight checklist prevents known regressions.</li>
+        <li>Dependency minimalism is strict. No external Go dependencies outside stdlib. Dashboard uses minimal npm. CA crypto is stdlib-only.</li>
+        <li>Backward compatibility was maintained across all API changes. Experiments 1–7 were not broken by the AH5 expansion.</li>
+      </ul>
+    </div>
+
+    <div class="obs-card">
+      <h4 class="c-amber">Areas warranting attention</h4>
+      <ul class="concern">
+        <li>G2/G3 (credential verification and token strength) remain open after 43 days. These are documented but not prioritised, which is appropriate for a research system — but worth a conscious decision before any external deployment.</li>
+        <li>No CI pipeline. Tests run manually via <code>go test ./...</code> and <code>test-system.sh</code>. A single <code>go test</code> invocation is fast but relies on developer discipline.</li>
+        <li>Bash test scripts in experiments use text-pattern matching (grep on HTTP responses), which is fragile. EXP-002 and EXP-004/006 document bugs caused by exactly this. Consider moving to Go-based integration tests in experiment-7 style.</li>
+        <li>The dual API surface in ServiceRegistry (legacy + AH5 on one port) is a clean short-term solution, but creates potential for consumer confusion. Long-term, migration guidance for new consumers to use AH5 endpoints would help.</li>
+        <li>No pagination on management query endpoints. Acceptable for in-memory use, but the AH5 spec mentions pagination. Noted in GAP_ANALYSIS but not scheduled.</li>
+        <li>node_modules were committed to VCS in several commits, inflating commit diffs (e.g., 6 186 files changed in one commit). This is inconvenient for history analysis.</li>
+      </ul>
+    </div>
+
+    <div class="obs-card">
+      <h4 class="c-blue">Architecture evolution pattern</h4>
+      <ul class="strength">
+        <li>The repository exhibits a "converge and govern" pattern: rapid exploration, then explicit governance rules codified in CLAUDE.md to prevent drift.</li>
+        <li>Experiments are used as disposable sandboxes that don't pollute core. The rule "no import of core/internal from experiments" is strictly enforced.</li>
+        <li>The GAP_ANALYSIS is a living document that distinguishes between gaps (things not yet done), decisions (deliberate design choices), interpretations (ambiguous spec, chosen reading), and ambiguities (still unclear). This taxonomy is unusually mature.</li>
+        <li>Security was added incrementally without breaking changes — tlsutil is opt-in via environment variables, not required. This is a good pattern for research infrastructure.</li>
+      </ul>
+    </div>
+
+    <div class="obs-card">
+      <h4 class="c-blue">What the commit history reveals</h4>
+      <ul class="strength">
+        <li>The "Claude optimization" commits (May 5, May 8) introduced governance files and workspace structure — not feature code. This shows maturation: the repository needs managing, not just building.</li>
+        <li>Stage commits within a day (experiment-7 had 9 stages in one day) indicate tight TDD loops: test → implement → verify → commit.</li>
+        <li>EXPERIENCES.md was created after the repo was well-established — the team recognised the value of a failure log from accumulated experience, not as an afterthought added on day one.</li>
+        <li>The separation of concerns is enforced not just architecturally but temporally: core was stable before experiments began, experiments were stable before mTLS was added.</li>
+      </ul>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ OPEN ITEMS -->
+<section>
+  <h2><span class="icon">🗂</span> Open Quality Items (as of HEAD)</h2>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;">
+    <table class="scores-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Item</th>
+          <th>Priority</th>
+          <th>Effort</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>G2</code></td>
+          <td>Credential verification in Authentication</td>
+          <td><span class="badge badge-amber">Medium</span></td>
+          <td>Medium</td>
+          <td>Acceptable for research; blocks production use</td>
+        </tr>
+        <tr>
+          <td><code>G3</code></td>
+          <td>Cryptographically secure tokens</td>
+          <td><span class="badge badge-amber">Medium</span></td>
+          <td>Low</td>
+          <td>Replace <code>hex(UnixNano)</code> with <code>crypto/rand</code></td>
+        </tr>
+        <tr>
+          <td><code>G4</code></td>
+          <td>CA on plain HTTP (bootstrap)</td>
+          <td><span class="badge badge-blue">Low</span></td>
+          <td>High</td>
+          <td>Architectural constraint; needs out-of-band trust mechanism</td>
+        </tr>
+        <tr>
+          <td><code>G7</code></td>
+          <td>DynamicOrchestration on legacy query endpoint</td>
+          <td><span class="badge badge-blue">Low</span></td>
+          <td>Medium</td>
+          <td>AH5 endpoint exists; orchestration model migration needed</td>
+        </tr>
+        <tr>
+          <td><code>G10/11</code></td>
+          <td>System identity from auth token</td>
+          <td><span class="badge badge-amber">Medium</span></td>
+          <td>High</td>
+          <td>Requires G2 closure first</td>
+        </tr>
+        <tr>
+          <td>–</td>
+          <td>CI pipeline</td>
+          <td><span class="badge badge-amber">Medium</span></td>
+          <td>Low</td>
+          <td>Tests exist; just needs a GitHub Actions workflow</td>
+        </tr>
+        <tr>
+          <td>–</td>
+          <td>Management query pagination</td>
+          <td><span class="badge badge-blue">Low</span></td>
+          <td>Low</td>
+          <td>Not needed for in-memory research use</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</div><!-- end .page -->
+
+<script>
+/* ───── shared theme ───── */
+const C = {
+  accent:  '#5b7af7',
+  green:   '#38d9a9',
+  amber:   '#f7c948',
+  red:     '#f76b5b',
+  border:  '#2e3350',
+  muted:   '#8890b0',
+  text:    '#e2e6f3',
+  surface: '#222636',
+};
+Chart.defaults.color = C.muted;
+Chart.defaults.borderColor = C.border;
+Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
+Chart.defaults.font.size = 12;
+
+const labels5 = [
+  'PoC\n(Mar 28)',
+  'Architecture\n(Apr 29)',
+  'Testing\n(Apr 29)',
+  'Experiments\n(May 5)',
+  'Security\n(May 8)',
+  'AH5 Full\n(May 8)',
+];
+
+/* ───── 1. Files chart ───── */
+new Chart(document.getElementById('filesChart'), {
+  type: 'bar',
+  data: {
+    labels: ['PoC\nMar 28', 'Architecture\nApr 29 s1', 'Testing\nApr 29 s6', 'Security\nMay 8 s1', 'AH5 Full\nMay 8 s9'],
+    datasets: [
+      {
+        label: 'Source files',
+        data: [15, 30, 30, 34, 39],
+        backgroundColor: C.accent + 'aa',
+        borderColor: C.accent,
+        borderWidth: 1,
+        borderRadius: 4,
+      },
+      {
+        label: 'Test files',
+        data: [0, 2, 13, 15, 18],
+        backgroundColor: C.green + 'aa',
+        borderColor: C.green,
+        borderWidth: 1,
+        borderRadius: 4,
+      },
+    ],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: 'bottom' } },
+    scales: {
+      x: { grid: { color: C.border + '60' } },
+      y: { grid: { color: C.border + '60' }, beginAtZero: true, ticks: { stepSize: 5 } },
+    },
+  },
+});
+
+/* ───── 2. Endpoints chart ───── */
+new Chart(document.getElementById('endpointsChart'), {
+  type: 'line',
+  data: {
+    labels: ['PoC\nMar 28', 'Architecture\nApr 29', 'mTLS\nMay 8 s1', 'AH5 Full\nMay 8 s9'],
+    datasets: [
+      {
+        label: 'Legacy endpoints',
+        data: [3, 4, 4, 4],
+        borderColor: C.accent,
+        backgroundColor: C.accent + '22',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 5,
+        pointBackgroundColor: C.accent,
+      },
+      {
+        label: 'AH5 endpoints',
+        data: [0, 0, 0, 19],
+        borderColor: C.green,
+        backgroundColor: C.green + '22',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 5,
+        pointBackgroundColor: C.green,
+      },
+    ],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: 'bottom' } },
+    scales: {
+      x: { grid: { color: C.border + '60' } },
+      y: { grid: { color: C.border + '60' }, beginAtZero: true, ticks: { stepSize: 5 } },
+    },
+  },
+});
+
+/* ───── 3. Radar chart ───── */
+const dims = ['Architecture', 'Test Coverage', 'API Contract', 'Security', 'Documentation', 'Spec Alignment'];
+new Chart(document.getElementById('radarChart'), {
+  type: 'radar',
+  data: {
+    labels: dims,
+    datasets: [
+      {
+        label: 'PoC (Mar 28)',
+        data: [1, 1, 1, 1, 2, 1],
+        borderColor: C.red,
+        backgroundColor: C.red + '22',
+        pointBackgroundColor: C.red,
+        borderWidth: 2,
+      },
+      {
+        label: 'HEAD (May 8)',
+        data: [5, 5, 5, 4, 5, 5],
+        borderColor: C.green,
+        backgroundColor: C.green + '22',
+        pointBackgroundColor: C.green,
+        borderWidth: 2,
+      },
+    ],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: 'bottom' } },
+    scales: {
+      r: {
+        min: 0, max: 5,
+        ticks: { stepSize: 1, color: C.muted, backdropColor: 'transparent' },
+        grid: { color: C.border },
+        pointLabels: { color: C.text, font: { size: 11 } },
+        angleLines: { color: C.border },
+      },
+    },
+  },
+});
+
+/* ───── 4. Docs chart ───── */
+new Chart(document.getElementById('docsChart'), {
+  type: 'bar',
+  data: {
+    labels: ['PoC', 'Architecture', 'Testing', 'Experiments', 'Security', 'AH5 Full'],
+    datasets: [
+      {
+        label: 'Governance docs',
+        data: [1, 4, 5, 7, 8, 9],
+        backgroundColor: C.amber + 'aa',
+        borderColor: C.amber,
+        borderWidth: 1,
+        borderRadius: 4,
+      },
+    ],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const docs = [
+              ['README'],
+              ['README', 'SPEC.md', 'CLAUDE.md', 'GAP_ANALYSIS.md'],
+              ['README', 'SPEC.md', 'CLAUDE.md', 'GAP_ANALYSIS.md', 'TEST_PLAN.md'],
+              ['+ REPO_RULES', '+ CLAUDE_EXPERIMENTS', '+ EXPERIENCES.md'],
+              ['+ DIAGRAMS.md (exp-7)', '+ TESTING.md'],
+              ['+ GAP_ANALYSIS G10/G11', '+ D10'],
+            ];
+            return docs[ctx.dataIndex] || [];
+          }
+        }
+      }
+    },
+    scales: {
+      x: { grid: { color: C.border + '60' } },
+      y: {
+        grid: { color: C.border + '60' },
+        beginAtZero: true,
+        ticks: { stepSize: 1 },
+        title: { display: true, text: 'Artefact count', color: C.muted },
+      },
+    },
+  },
+});
+
+/* ───── 5. Scores table ───── */
+const rows = [
+  { dim: 'Architecture',      scores: [1, 4, 4, 5, 5, 5] },
+  { dim: 'Test Coverage',     scores: [1, 2, 4, 4, 4, 5] },
+  { dim: 'API Contract',      scores: [1, 3, 3, 3, 3, 5] },
+  { dim: 'Security',          scores: [1, 1, 1, 1, 4, 4] },
+  { dim: 'Documentation',     scores: [2, 3, 4, 5, 5, 5] },
+  { dim: 'Spec Alignment',    scores: [1, 3, 3, 3, 3, 5] },
+  { dim: 'Separation of Concerns', scores: [1, 4, 4, 5, 5, 5] },
+];
+const colours = ['#f76b5b','#f7c948','#5b7af7','#38d9a9','#a56bf7','#38d9a9'];
+const tbody = document.getElementById('scoresBody');
+rows.forEach(row => {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${row.dim}</td>` + row.scores.map((s, i) => `
+    <td class="bar-cell">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="bar-wrap" style="flex:1">
+          <div class="bar-fill" style="width:${s*20}%;background:${colours[i]}"></div>
+        </div>
+        <span style="font-size:0.8rem;color:${colours[i]};font-weight:600;min-width:18px">${s}</span>
+      </div>
+    </td>`).join('');
+  tbody.appendChild(tr);
+});
+</script>
+</body>
+</html>

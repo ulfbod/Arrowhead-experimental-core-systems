@@ -4,10 +4,10 @@ package model
 
 // AuthRule represents a permission granting a consumer access to a provider's service.
 type AuthRule struct {
-	ID                   int64  `json:"id"`
-	ConsumerSystemName   string `json:"consumerSystemName"`
-	ProviderSystemName   string `json:"providerSystemName"`
-	ServiceDefinition    string `json:"serviceDefinition"`
+	ID                 int64  `json:"id"`
+	ConsumerSystemName string `json:"consumerSystemName"`
+	ProviderSystemName string `json:"providerSystemName"`
+	ServiceDefinition  string `json:"serviceDefinition"`
 }
 
 // GrantRequest is the body for POST /authorization/grant.
@@ -45,7 +45,7 @@ type TokenRequest struct {
 
 // TokenResponse is returned by POST /authorization/token/generate.
 type TokenResponse struct {
-	Token             string `json:"token"`
+	Token              string `json:"token"`
 	ConsumerSystemName string `json:"consumerSystemName"`
 	ServiceDefinition  string `json:"serviceDefinition"`
 }

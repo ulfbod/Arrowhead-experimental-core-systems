@@ -50,12 +50,12 @@ func main() {
 	if authSysURL == "" {
 		authSysURL = "http://localhost:8081"
 	}
-	checkAuth     := os.Getenv("ENABLE_AUTH") == "true"
+	checkAuth := os.Getenv("ENABLE_AUTH") == "true"
 	checkIdentity := os.Getenv("ENABLE_IDENTITY_CHECK") == "true"
 
 	certFile := os.Getenv("TLS_CERT_FILE")
-	keyFile  := os.Getenv("TLS_KEY_FILE")
-	caFile   := os.Getenv("TLS_CA_FILE")
+	keyFile := os.Getenv("TLS_KEY_FILE")
+	caFile := os.Getenv("TLS_CA_FILE")
 
 	// Build outbound HTTP client: use mTLS when TLS files are configured.
 	clientTLSCfg, err := tlsutil.LoadClientTLSConfig(certFile, keyFile, caFile)

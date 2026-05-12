@@ -46,7 +46,7 @@ type CAService struct {
 
 	// revocation: protected by revokedMu
 	revokedMu   sync.RWMutex
-	revokedList []revokedEntry // ordered by revocation time
+	revokedList []revokedEntry      // ordered by revocation time
 	revokedSet  map[string]struct{} // serial.String() → revoked; fast membership test
 }
 

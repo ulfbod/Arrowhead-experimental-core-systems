@@ -25,7 +25,7 @@ type LoginResponse struct {
 
 // VerifyResponse is returned by GET /authentication/identity/verify.
 type VerifyResponse struct {
-	Valid       bool      `json:"valid"`
-	SystemName  string    `json:"systemName,omitempty"`
-	ExpiresAt   time.Time `json:"expiresAt,omitempty"`
+	Valid      bool      `json:"valid"`
+	SystemName string    `json:"systemName,omitempty"`
+	ExpiresAt  time.Time `json:"expiresAt,omitempty"`
 }
