@@ -226,7 +226,18 @@
       "Bash(grep -E \"Initial implementation|stage 1 for complete|Claude optimization of repo|stage 1 arrowhead|stage 9 arrowhead|experiment-6$|stage 6 for complete|5.2.0|stage 2 arrowhead|stage 4 arrowhead|stage 6 arrowhead|stage 8 arrowhead\")",
       "Bash(grep \"backend.*\\\\.go$\")",
       "Bash(grep \"^core.*\\\\.go$\")",
-      "Bash(go fmt:*)"
+      "Bash(go fmt:*)",
+      "Bash(ln -s ../../../../support/dashboard-shared/main.tsx main.tsx)",
+      "Bash(ln -s ../../../../support/dashboard-shared/hooks/usePolling.ts hooks/usePolling.ts)",
+      "Bash(ln -s ../../../../support/dashboard-shared/config/context.tsx config/context.tsx)",
+      "Bash(ln -s ../../../../support/dashboard-shared/config/types.ts config/types.ts)",
+      "Bash(ln -s ../../../../support/dashboard-shared/config/defaults.ts config/defaults.ts)",
+      "Bash(node_modules/.bin/tsc -p tsconfig.app.json --noEmit)",
+      "Bash(rm src/hooks/usePolling.ts)",
+      "Bash(ln -s ../../../../../support/dashboard-shared/hooks/usePolling.ts src/hooks/usePolling.ts)",
+      "Bash(rm src/config/context.tsx src/config/types.ts src/config/defaults.ts)",
+      "Bash(ln -s ../../../../../support/dashboard-shared/config/context.tsx src/config/context.tsx)",
+      "Bash(ln -s ../../../../../support/dashboard-shared/config/types.ts src/config/types.ts)"
     ]
   }
 }

@@ -1,0 +1,159 @@
+// Types for the experiment-8 dashboard.
+
+// ── Core system health ────────────────────────────────────────────────────────
+
+export interface HealthResponse {
+  status: string
+}
+
+export type HealthStatus = 'ok' | 'error' | 'loading'
+
+export interface SystemDef {
+  id:    string
+  label: string
+  healthPath: string
+  healthFetcher?: (signal: AbortSignal) => Promise<HealthProbe>
+  layer: 'core' | 'support' | 'experiment'
+}
+
+export interface HealthProbe {
+  status:    'ok' | 'degraded' | 'down'
+  latencyMs: number
+  error?:    string
+}
+
+// ── ConsumerAuthorization ─────────────────────────────────────────────────────
+
+export interface AuthRule {
+  id:                  number
+  consumerSystemName:  string
+  providerSystemName:  string
+  serviceDefinition:   string
+}
+
+export interface LookupResponse {
+  rules: AuthRule[]
+  count: number
+}
+
+// ── RabbitMQ management API ───────────────────────────────────────────────────
+
+export interface RabbitUser {
+  name: string
+  tags: string[]
+}
+
+export interface RabbitTopicPermission {
+  user:     string
+  vhost:    string
+  exchange: string
+  write:    string
+  read:     string
+}
+
+export interface RabbitQueue {
+  name:      string
+  messages:  number
+  consumers: number
+  message_stats?: {
+    deliver_details?: { rate: number }
+    publish_details?: { rate: number }
+  }
+}
+
+// ── Consumer stats (from /stats endpoint on each consumer service) ─────
+
+export interface ConsumerStats {
+  name:           string
+  msgCount:       number
+  lastReceivedAt: string
+}
+
+export interface AnalyticsStats extends ConsumerStats {
+  transport:    string
+  lastDeniedAt: string
+}
+
+export interface PKIConsumerStats extends ConsumerStats {
+  transport:    string   // "rest-mtls-pki"
+  deniedCount:  number
+  lastDeniedAt: string
+}
+
+// ── policy-sync status ────────────────────────────────────────────────────────
+
+export interface PolicySyncStatus {
+  synced:       boolean
+  version:      number
+  lastSyncedAt: string
+  grants:       number
+  syncInterval: string
+  error?:       string
+}
+
+// ── kafka-authz status ────────────────────────────────────────────────────────
+
+export interface KafkaAuthzStatus {
+  totalServed:    number
+  activeStreams:  number
+}
+
+// ── pki-rest-authz status (HTTP port 9109) ────────────────────────────────────
+
+export interface PKIRestAuthzStatus {
+  requestsTotal: number
+  permitted:     number
+  denied:        number
+}
+
+// ── kafka-authz / pki-rest-authz authorization check ─────────────────────────
+
+export interface AuthCheckResult {
+  consumer: string
+  service:  string
+  permit:   boolean
+  decision: string
+}
+
+// ── data-provider-tls ─────────────────────────────────────────────────────────
+
+export interface DataProviderStats {
+  msgCount:       number
+  robotCount:     number
+  lastReceivedAt: string
+}
+
+// ── profile-ca ────────────────────────────────────────────────────────────────
+
+export interface CAInfo {
+  commonName:  string
+  certificate: string
+}
+
+export interface IssuedCert {
+  certificate: string
+  privateKey:  string
+  profile:     string   // "on" | "de" | "sy" — AH5.2 profile tag
+}
+
+// ── ServiceRegistry query ─────────────────────────────────────────────────────
+
+export interface ServiceRegistryProvider {
+  systemName: string
+  address:    string
+  port:       number
+}
+
+export interface ServiceInstance {
+  id:                number
+  serviceDefinition: string
+  providerSystem:    ServiceRegistryProvider
+  serviceUri:        string
+  interfaces:        string[]
+  version:           number
+}
+
+export interface ServiceQueryResponse {
+  serviceQueryData: ServiceInstance[]  // spec field name
+  unfilteredHits:   number
+}

@@ -545,5 +545,34 @@ services:
       robot-fleet-tls:
         condition: service_healthy
 
+  # ── Dashboard ─────────────────────────────────────────────────────────────────
+
+  dashboard:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-8/dockerfiles/dashboard.Dockerfile
+    ports:
+      - "3008:80"
+    volumes:
+      # Mount the shared cert volume so nginx can verify data-provider-tls server cert.
+      - certs:/certs:ro
+    depends_on:
+      cert-provisioner:
+        condition: service_completed_successfully
+      consumerauth:
+        condition: service_started
+      authzforce:
+        condition: service_started
+      policy-sync:
+        condition: service_started
+      kafka-authz:
+        condition: service_started
+      pki-rest-authz:
+        condition: service_started
+      pki-consumer:
+        condition: service_started
+      analytics-consumer:
+        condition: service_started
+
 volumes:
   certs:

@@ -1,0 +1,1 @@
+../../../../../support/dashboard-shared/config/types.ts
