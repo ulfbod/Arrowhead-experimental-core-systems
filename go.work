@@ -30,14 +30,20 @@ use (
 	// Experiment 6
 	./experiments/experiment-6/services/data-provider
 	./experiments/experiment-6/services/rest-consumer
+	./experiments/experiment-7/services/cert-consumer
 
 	// Experiment 7
 	./experiments/experiment-7/services/cert-provisioner
 	./experiments/experiment-7/services/cert-rest-authz
-	./experiments/experiment-7/services/cert-consumer
+	./experiments/experiment-7/services/consumer-direct-tls
 	./experiments/experiment-7/services/data-provider-tls
 	./experiments/experiment-7/services/robot-fleet-tls
-	./experiments/experiment-7/services/consumer-direct-tls
+	// Experiment 8
+	./experiments/experiment-8/services/cert-provisioner
+	./experiments/experiment-8/services/data-provider-tls
+	./experiments/experiment-8/services/pki-consumer
+	./experiments/experiment-8/services/pki-rest-authz
+	./experiments/experiment-8/services/profile-ca
 
 	// Support modules
 	./support/authzforce
