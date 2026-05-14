@@ -36,6 +36,12 @@ const (
 	subjectID  = "urn:oasis:names:tc:xacml:1.0:subject:subject-id"
 	resourceID = "urn:oasis:names:tc:xacml:1.0:resource:resource-id"
 	actionID   = "urn:oasis:names:tc:xacml:1.0:action:action-id"
+
+	// providerID is an Arrowhead-specific XACML resource attribute that carries
+	// the provider system name alongside resource-id (the service definition).
+	// Using a separate attribute instead of "service@provider" concatenation keeps
+	// each field typed and lets policy targets match on either field independently.
+	providerID = "urn:arrowhead:attribute:provider-id"
 )
 
 // Client is an AuthzForce CE REST API client.
@@ -194,8 +200,24 @@ func (c *Client) setRootPolicy(domainID, policySetID, version string) error {
 
 // Decide evaluates an access-control request against the domain PDP.
 // Returns true for Permit, false for Deny/Indeterminate/NotApplicable.
+// This is the service-level form: resource-id = service, no provider attribute.
+// For per-provider orchestration decisions use DecideWithProvider.
 func (c *Client) Decide(domainID, subject, resource, action string) (bool, error) {
-	reqXML := buildXACMLRequest(subject, resource, action)
+	return c.DecideWithProvider(domainID, subject, resource, "", action)
+}
+
+// DecideWithProvider evaluates an access-control request that includes an
+// optional provider system name as a separate XACML resource attribute.
+//
+// When provider is non-empty the XACML request carries two resource attributes:
+//
+//	resource-id              = service  (the service definition name)
+//	urn:arrowhead:attribute:provider-id = provider (the provider system name)
+//
+// This matches per-provider orchestration policies without string encoding.
+// When provider is empty the behaviour is identical to Decide.
+func (c *Client) DecideWithProvider(domainID, subject, service, provider, action string) (bool, error) {
+	reqXML := buildXACMLRequest(subject, service, provider, action)
 	url := fmt.Sprintf("%s/domains/%s/pdp", c.base, domainID)
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte(reqXML)))
@@ -223,23 +245,41 @@ func (c *Client) Decide(domainID, subject, resource, action string) (bool, error
 }
 
 // buildXACMLRequest returns a XACML 3.0 Request XML for the given attributes.
-func buildXACMLRequest(subject, resource, action string) string {
+// When provider is non-empty a second resource attribute (providerID) is added.
+func buildXACMLRequest(subject, service, provider, action string) string {
+	// Build resource attributes: resource-id always present; provider-id optional.
+	var resourceAttrs string
+	if provider != "" {
+		resourceAttrs = fmt.Sprintf(
+			`<Attribute AttributeId=%q IncludeInResult="false">`+
+				`<AttributeValue DataType=%q>%s</AttributeValue></Attribute>`+
+				`<Attribute AttributeId=%q IncludeInResult="false">`+
+				`<AttributeValue DataType=%q>%s</AttributeValue></Attribute>`,
+			resourceID, xsString, service,
+			providerID, xsString, provider,
+		)
+	} else {
+		resourceAttrs = fmt.Sprintf(
+			`<Attribute AttributeId=%q IncludeInResult="false">`+
+				`<AttributeValue DataType=%q>%s</AttributeValue></Attribute>`,
+			resourceID, xsString, service,
+		)
+	}
+
 	return fmt.Sprintf(
 		`<?xml version="1.0" encoding="UTF-8"?>`+
 			`<Request xmlns=%q CombinedDecision="false" ReturnPolicyIdList="false">`+
 			`<Attributes Category=%q>`+
 			`<Attribute AttributeId=%q IncludeInResult="false">`+
 			`<AttributeValue DataType=%q>%s</AttributeValue></Attribute></Attributes>`+
-			`<Attributes Category=%q>`+
-			`<Attribute AttributeId=%q IncludeInResult="false">`+
-			`<AttributeValue DataType=%q>%s</AttributeValue></Attribute></Attributes>`+
+			`<Attributes Category=%q>%s</Attributes>`+
 			`<Attributes Category=%q>`+
 			`<Attribute AttributeId=%q IncludeInResult="false">`+
 			`<AttributeValue DataType=%q>%s</AttributeValue></Attribute></Attributes>`+
 			`</Request>`,
 		xacmlNS,
 		subjectCat, subjectID, xsString, subject,
-		resourceCat, resourceID, xsString, resource,
+		resourceCat, resourceAttrs,
 		actionCat, actionID, xsString, action,
 	)
 }
@@ -271,13 +311,13 @@ func parseDecision(body []byte) (string, error) {
 }
 
 // BuildPolicy generates a XACML 3.0 PolicySet XML from a list of grants.
-// Each grant is (consumerSystemName, serviceDefinition).
+// Each Grant may be service-level (Provider empty) or per-provider (Provider set).
 // The PolicySet uses deny-unless-permit combining: any consumer with a
 // matching grant is Permitted; all others are Denied.
 func BuildPolicy(policySetID, version string, grants []Grant) string {
 	var policies strings.Builder
 	for _, g := range grants {
-		policies.WriteString(buildGrantPolicy(g.Consumer, g.Service))
+		policies.WriteString(buildGrantPolicy(g.Consumer, g.Service, g.Provider))
 	}
 
 	return fmt.Sprintf(
@@ -286,8 +326,7 @@ func BuildPolicy(policySetID, version string, grants []Grant) string {
 			` PolicySetId=%q`+
 			` Version=%q`+
 			` PolicyCombiningAlgId="urn:oasis:names:tc:xacml:3.0:policy-combining-algorithm:deny-unless-permit">`+
-			`<Description>Arrowhead experiment-5 unified telemetry access policy. `+
-			`Generated from ConsumerAuthorization grants. Version %s.</Description>`+
+			`<Description>Arrowhead unified access policy. Version %s.</Description>`+
 			`<Target/>`+
 			`%s`+
 			`</PolicySet>`,
@@ -297,9 +336,31 @@ func BuildPolicy(policySetID, version string, grants []Grant) string {
 }
 
 // buildGrantPolicy generates one XACML Policy element permitting the given
-// consumer to perform action "subscribe" on the given service resource.
-func buildGrantPolicy(consumer, service string) string {
-	policyID := fmt.Sprintf("urn:arrowhead:grant:%s:%s", consumer, service)
+// consumer to access the given service.
+//
+// When provider is non-empty the policy target additionally matches
+// urn:arrowhead:attribute:provider-id, scoping the grant to that specific
+// provider. When provider is empty the policy is service-level only.
+func buildGrantPolicy(consumer, service, provider string) string {
+	var policyID string
+	if provider != "" {
+		policyID = fmt.Sprintf("urn:arrowhead:grant:%s:%s:%s", consumer, service, provider)
+	} else {
+		policyID = fmt.Sprintf("urn:arrowhead:grant:%s:%s", consumer, service)
+	}
+
+	// Provider match element — present only when provider is set.
+	var providerMatch string
+	if provider != "" {
+		providerMatch = fmt.Sprintf(
+			`<Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">`+
+				`<AttributeValue DataType=%q>%s</AttributeValue>`+
+				`<AttributeDesignator MustBePresent="true" Category=%q AttributeId=%q DataType=%q/>`+
+				`</Match>`,
+			xsString, provider, resourceCat, providerID, xsString,
+		)
+	}
+
 	return fmt.Sprintf(
 		`<Policy PolicyId=%q Version="1.0"`+
 			` RuleCombiningAlgId="urn:oasis:names:tc:xacml:3.0:rule-combining-algorithm:deny-unless-permit">`+
@@ -312,17 +373,23 @@ func buildGrantPolicy(consumer, service string) string {
 			`<AttributeValue DataType=%q>%s</AttributeValue>`+
 			`<AttributeDesignator MustBePresent="true" Category=%q AttributeId=%q DataType=%q/>`+
 			`</Match>`+
+			`%s`+
 			`</AllOf></AnyOf></Target>`+
 			`<Rule RuleId="permit" Effect="Permit"/>`+
 			`</Policy>`,
 		policyID,
 		xsString, consumer, subjectCat, subjectID, xsString,
 		xsString, service, resourceCat, resourceID, xsString,
+		providerMatch,
 	)
 }
 
-// Grant is a (consumer, service) pair derived from a ConsumerAuthorization rule.
+// Grant is an access-control rule used to build a XACML PolicySet.
+// Provider is optional; when set, the generated XACML policy matches both
+// resource-id (Service) and provider-id (Provider) as separate attributes.
+// When Provider is empty the policy matches on Service alone (service-level).
 type Grant struct {
 	Consumer string
 	Service  string
+	Provider string // optional; set for per-provider orchestration policies
 }

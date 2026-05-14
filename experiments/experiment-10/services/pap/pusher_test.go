@@ -103,7 +103,7 @@ func TestStatus_MethodNotAllowed(t *testing.T) {
 
 func TestPoliciesByID_MethodNotAllowed(t *testing.T) {
 	srv, store, _ := newTestServer()
-	p, _ := store.Add("sp1", "svc", "consume", "Permit")
+	p, _ := store.Add("sp1", "svc", "", "consume", "Permit")
 	req := httptest.NewRequest(http.MethodPut, "/policies/"+p.ID, strings.NewReader(""))
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)

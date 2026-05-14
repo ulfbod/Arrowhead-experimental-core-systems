@@ -12,10 +12,11 @@ var validEffects = map[string]bool{"Permit": true, "Deny": true}
 // Policy is a single access-control rule managed by the PAP.
 type Policy struct {
 	ID        string    `json:"id"`
-	Subject   string    `json:"subject"`   // consumer system name (XACML subject-id)
-	Resource  string    `json:"resource"`  // service definition (XACML resource-id)
-	Action    string    `json:"action"`    // e.g. "consume"
-	Effect    string    `json:"effect"`    // "Permit" or "Deny"
+	Subject   string    `json:"subject"`            // consumer system name (XACML subject-id)
+	Resource  string    `json:"resource"`           // service definition (XACML resource-id)
+	Provider  string    `json:"provider,omitempty"` // provider system name (optional; XACML provider-id)
+	Action    string    `json:"action"`             // "orchestrate" (per-provider) or "consume" (enforcement)
+	Effect    string    `json:"effect"`             // "Permit" or "Deny"
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -35,8 +36,8 @@ func NewPolicyStore() *PolicyStore {
 }
 
 // Add validates and stores a new Policy, returning a pointer to the stored
-// copy. Effect defaults to "Permit" when empty.
-func (s *PolicyStore) Add(subject, resource, action, effect string) (*Policy, error) {
+// copy. Effect defaults to "Permit" when empty. Provider is optional.
+func (s *PolicyStore) Add(subject, resource, provider, action, effect string) (*Policy, error) {
 	if effect == "" {
 		effect = "Permit"
 	}
@@ -62,6 +63,7 @@ func (s *PolicyStore) Add(subject, resource, action, effect string) (*Policy, er
 		ID:        id,
 		Subject:   subject,
 		Resource:  resource,
+		Provider:  provider,
 		Action:    action,
 		Effect:    effect,
 		CreatedAt: time.Now().UTC(),

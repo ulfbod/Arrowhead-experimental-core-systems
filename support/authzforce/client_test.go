@@ -129,10 +129,26 @@ func TestDecide_pdpError(t *testing.T) {
 // ── buildXACMLRequest ─────────────────────────────────────────────────────────
 
 func TestBuildXACMLRequest_containsAllFields(t *testing.T) {
-	req := buildXACMLRequest("consumer-1", "telemetry", "subscribe")
+	req := buildXACMLRequest("consumer-1", "telemetry", "", "subscribe")
 	for _, want := range []string{"consumer-1", "telemetry", "subscribe", "Request"} {
 		if !strings.Contains(req, want) {
 			t.Fatalf("buildXACMLRequest: missing %q", want)
 		}
+	}
+}
+
+func TestBuildXACMLRequest_withProvider(t *testing.T) {
+	req := buildXACMLRequest("consumer-1", "telemetry", "site-1", "orchestrate")
+	for _, want := range []string{"consumer-1", "telemetry", "site-1", "orchestrate", "provider-id"} {
+		if !strings.Contains(req, want) {
+			t.Fatalf("buildXACMLRequest with provider: missing %q in:\n%s", want, req)
+		}
+	}
+}
+
+func TestBuildXACMLRequest_withoutProvider_noProviderAttr(t *testing.T) {
+	req := buildXACMLRequest("consumer-1", "telemetry", "", "consume")
+	if strings.Contains(req, "provider-id") {
+		t.Fatalf("buildXACMLRequest without provider: unexpected provider-id in:\n%s", req)
 	}
 }

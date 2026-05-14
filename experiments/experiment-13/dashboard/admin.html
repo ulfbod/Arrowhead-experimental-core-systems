@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Experiment 13 — Policy Admin</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #1a1d27;
+      --border: #2d3148;
+      --ok: #22c55e;
+      --err: #ef4444;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --accent: #6366f1;
+      --teal: #0d9488;
+      --danger: #dc2626;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+    header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+    header h1 { font-size: 18px; font-weight: 600; }
+    header span { color: var(--muted); font-size: 13px; }
+    header a { color: var(--accent); font-size: 13px; text-decoration: none; margin-left: auto; padding: 6px 14px; border: 1px solid var(--accent); border-radius: 4px; }
+    header a:hover { background: var(--accent); color: white; }
+    main { display: grid; grid-template-columns: 1fr 1fr 360px; gap: 16px; padding: 16px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .card.highlight { border-color: var(--teal); }
+    .card h2 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+    .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 8px; }
+    form { display: flex; flex-direction: column; gap: 8px; }
+    input, select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 7px 10px; font-size: 13px; width: 100%; }
+    label { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+    .field { display: flex; flex-direction: column; gap: 2px; }
+    .btn { border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-danger  { background: var(--danger); color: white; }
+    .btn:hover { opacity: 0.88; }
+    .btn-row { display: flex; gap: 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { text-align: left; padding: 6px 8px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+    td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .badge { padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .permit-badge  { background: #14532d; color: var(--ok); }
+    .deny-badge    { background: #450a0a; color: var(--err); }
+    .valid-badge   { background: #14532d; color: var(--ok); }
+    .invalid-badge { background: #450a0a; color: var(--err); }
+    .delete-btn { background: none; border: 1px solid var(--border); color: var(--err); border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 11px; }
+    .delete-btn:hover { background: #450a0a; }
+    .msg { padding: 8px 12px; border-radius: 4px; font-size: 12px; margin-top: 8px; }
+    .msg-ok  { background: #14532d; color: var(--ok); }
+    .msg-err { background: #450a0a; color: var(--err); }
+    .empty { color: var(--muted); font-size: 12px; padding: 12px 0; text-align: center; }
+    .status-bar { display: flex; gap: 20px; padding: 8px 0 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+    .stat { font-size: 12px; color: var(--muted); }
+    .stat strong { color: var(--text); font-size: 20px; display: block; }
+    .info-box { background: #134e4a22; border: 1px solid #0d948833; border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #5eead4; margin-bottom: 12px; line-height: 1.5; }
+    .info-box-blue { background: #1e3a5f22; border: 1px solid #3b82f633; border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #93c5fd; margin-bottom: 12px; line-height: 1.5; }
+    .result { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px; font-size: 12px; font-family: monospace; white-space: pre-wrap; word-break: break-all; max-height: 180px; overflow-y: auto; margin-top: 4px; }
+    .permit { color: var(--ok); }
+    .deny   { color: var(--err); }
+    code { font-family: monospace; font-size: 11px; background: #0f1117; padding: 1px 4px; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Experiment 13 — Policy Admin</h1>
+    <span>PAP · PIP (gRPC-populated) · cert revocation via profile-ca</span>
+    <a href="/">Monitoring Dashboard</a>
+  </header>
+  <main>
+
+    <!-- ── Column 1: PAP ─────────────────────────────────────────────────── -->
+    <div>
+      <div class="card">
+        <h2>PAP — Policy Administration Point</h2>
+        <div class="info-box-blue">
+          PAP is the single authority for both orchestration (DynamicOrch-XACML)
+          and enforcement (Kafka PEP, AMQP PEP, REST mTLS PEP). No ConsumerAuth
+          grants are needed. Policies can condition on <code>cert-level</code>.
+        </div>
+        <div class="status-bar">
+          <div class="stat"><strong id="pap-count">—</strong>policies</div>
+          <div class="stat"><strong id="pap-version">—</strong>version</div>
+          <div class="stat"><strong id="pap-domain">—</strong>domain</div>
+        </div>
+
+        <div class="section-title">Create Policy</div>
+        <form onsubmit="createPolicy(event)">
+          <div class="btn-row">
+            <div class="field" style="flex:2">
+              <label>Subject (consumer system)</label>
+              <input id="pol-subject" placeholder="e.g. service-partner-1" required />
+            </div>
+            <div class="field" style="flex:2">
+              <label>Resource (service)</label>
+              <input id="pol-resource" placeholder="e.g. telemetry-rest" required />
+            </div>
+          </div>
+          <div class="btn-row">
+            <div class="field" style="flex:2">
+              <label>Action</label>
+              <input id="pol-action" value="consume" required />
+            </div>
+            <div class="field" style="flex:1">
+              <label>Effect</label>
+              <select id="pol-effect">
+                <option value="Permit">Permit</option>
+                <option value="Deny">Deny</option>
+              </select>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary">Create Policy</button>
+          <div id="pol-msg" style="display:none" class="msg"></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h2 style="margin:0">Policies</h2>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" onclick="loadPolicies()">Refresh</button>
+        </div>
+        <div id="policy-table"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- ── Column 2: PIP (read-only, gRPC-populated) ─────────────────────── -->
+    <div>
+      <div class="card highlight">
+        <h2>PIP — Policy Information Point</h2>
+        <div class="info-box">
+          <strong>New in exp-13:</strong> PIP is auto-populated by the
+          <code>CertificateLifecycle</code> gRPC stream from profile-ca.
+          Subjects appear when a system cert is issued; <code>certValid</code>
+          becomes <code>false</code> when <code>DELETE /ca/certificates/{cn}</code> is called.
+          No manual registration is required or needed.
+        </div>
+        <div class="status-bar">
+          <div class="stat"><strong id="pip-count">—</strong>subjects</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h2 style="margin:0">Subjects (auto-populated)</h2>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" onclick="loadSubjects()">Refresh</button>
+        </div>
+        <div id="subject-table"><div class="empty">Loading…</div></div>
+      </div>
+
+      <div class="card">
+        <h2>Attribute Lookup (PIP)</h2>
+        <form onsubmit="lookupAttributes(event)" style="flex-direction:row;gap:8px;display:flex;align-items:flex-end">
+          <div class="field" style="flex:1">
+            <label>System name (cert CN)</label>
+            <input id="attr-name" placeholder="e.g. service-partner-1" required />
+          </div>
+          <button type="submit" class="btn btn-primary" style="white-space:nowrap">Look Up</button>
+        </form>
+        <div id="attr-result" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px;font-size:12px;font-family:monospace;white-space:pre-wrap"></div>
+      </div>
+    </div>
+
+    <!-- ── Column 3: Profile-CA cert revocation + DynamicOrch test ───────── -->
+    <div>
+      <div class="card highlight">
+        <h2>Profile-CA — Certificate Revocation</h2>
+        <div class="info-box">
+          <code>DELETE /ca/certificates/{cn}</code> → gRPC stream event →
+          PIP sets <code>certValid=false</code> → next PEP request →
+          AuthzForce DENY. Propagation: one stream event + one HTTP round-trip.
+        </div>
+
+        <div class="section-title">Revoke Certificate</div>
+        <form onsubmit="revokeCert(event)" style="gap:8px;display:flex;flex-direction:column">
+          <div class="field">
+            <label>System name (cert CN)</label>
+            <input id="revoke-cn" placeholder="e.g. service-partner-2" required />
+          </div>
+          <button type="submit" class="btn btn-danger">Revoke Certificate</button>
+          <div id="revoke-msg" style="display:none" class="msg"></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>DynamicOrch-XACML</h2>
+        <div class="info-box-blue">
+          One XACML call per orchestration request — same AuthzForce domain as all PEPs.
+          ConsumerAuth is <em>not</em> queried.
+        </div>
+
+        <div class="section-title">Test Orchestration</div>
+        <form onsubmit="testOrch(event)" style="gap:8px;display:flex;flex-direction:column">
+          <div class="field">
+            <label>Consumer system name</label>
+            <input id="orch-consumer" value="service-partner-1" required />
+          </div>
+          <div class="field">
+            <label>Service definition</label>
+            <input id="orch-service" value="telemetry-rest" required />
+          </div>
+          <button type="submit" class="btn btn-primary">Request Orchestration</button>
+          <div id="orch-result" class="result" style="display:none"></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>DynamicOrch Status</h2>
+        <div id="orch-status"><div class="empty">Loading…</div></div>
+        <button class="btn btn-primary" style="padding:5px 12px;font-size:12px;margin-top:8px" onclick="loadOrchStatus()">Refresh</button>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    // ── PAP ──────────────────────────────────────────────────────────────────────
+
+    async function loadPolicies() {
+      try {
+        const [status, list] = await Promise.all([
+          fetch('/api/pap/status').then(r => r.json()),
+          fetch('/api/pap/policies').then(r => r.json()),
+        ]);
+        document.getElementById('pap-count').textContent = status.policies ?? '—';
+        document.getElementById('pap-version').textContent = status.version ?? '—';
+        document.getElementById('pap-domain').textContent = status.domainExternalId ?? '—';
+
+        const policies = list.policies ?? [];
+        const el = document.getElementById('policy-table');
+        if (policies.length === 0) {
+          el.innerHTML = '<div class="empty">No policies</div>';
+          return;
+        }
+        el.innerHTML = `
+          <table>
+            <thead><tr>
+              <th>ID</th><th>Subject</th><th>Resource</th><th>Action</th><th>Effect</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${policies.map(p => `
+                <tr>
+                  <td>${p.id}</td>
+                  <td>${p.subject}</td>
+                  <td>${p.resource}</td>
+                  <td><code>${p.action ?? ''}</code></td>
+                  <td><span class="badge ${p.effect === 'Permit' ? 'permit-badge' : 'deny-badge'}">${p.effect}</span></td>
+                  <td><button class="delete-btn" onclick="deletePolicy('${p.id}')">Delete</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch(e) {
+        document.getElementById('policy-table').innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function createPolicy(e) {
+      e.preventDefault();
+      const body = {
+        subject:  document.getElementById('pol-subject').value.trim(),
+        resource: document.getElementById('pol-resource').value.trim(),
+        action:   document.getElementById('pol-action').value.trim(),
+        effect:   document.getElementById('pol-effect').value,
+      };
+      const msg = document.getElementById('pol-msg');
+      msg.style.display = 'none';
+      try {
+        const r = await fetch('/api/pap/policies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (r.ok) {
+          showMsg('pol-msg', `Created policy ${d.id}`, true);
+          loadPolicies();
+        } else {
+          showMsg('pol-msg', d.error ?? JSON.stringify(d), false);
+        }
+      } catch(e) { showMsg('pol-msg', e.message, false); }
+    }
+
+    async function deletePolicy(id) {
+      if (!confirm(`Delete policy ${id}?`)) return;
+      try {
+        const r = await fetch('/api/pap/policies/' + id, { method: 'DELETE' });
+        if (r.ok || r.status === 204) loadPolicies();
+        else alert('Delete failed: ' + r.status);
+      } catch(e) { alert('Error: ' + e.message); }
+    }
+
+    // ── PIP (read-only) ──────────────────────────────────────────────────────────
+
+    async function loadSubjects() {
+      try {
+        const [status, list] = await Promise.all([
+          fetch('/api/pip/status').then(r => r.json()),
+          fetch('/api/pip/subjects').then(r => r.json()),
+        ]);
+        document.getElementById('pip-count').textContent = status.subjects ?? '—';
+
+        const subjects = list.subjects ?? [];
+        const el = document.getElementById('subject-table');
+        if (subjects.length === 0) {
+          el.innerHTML = '<div class="empty">No subjects (waiting for gRPC stream events)</div>';
+          return;
+        }
+        el.innerHTML = `
+          <table>
+            <thead><tr><th>CN</th><th>Level</th><th>Valid</th></tr></thead>
+            <tbody>
+              ${subjects.map(s => `
+                <tr>
+                  <td>${s.name}</td>
+                  <td><code>${s.certLevel ?? s.level ?? '—'}</code></td>
+                  <td><span class="badge ${(s.valid === true || s.valid === 'true') ? 'valid-badge' : 'invalid-badge'}">${(s.valid === true || s.valid === 'true') ? 'Valid' : 'Revoked'}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch(e) {
+        document.getElementById('subject-table').innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function lookupAttributes(e) {
+      e.preventDefault();
+      const name = document.getElementById('attr-name').value.trim();
+      const el = document.getElementById('attr-result');
+      el.style.display = 'block';
+      el.textContent = 'Looking up…';
+      try {
+        const r = await fetch('/api/pip/pip/attributes/' + encodeURIComponent(name));
+        const d = await r.json();
+        el.textContent = JSON.stringify(d, null, 2);
+      } catch(e) { el.textContent = 'Error: ' + e.message; }
+    }
+
+    // ── Profile-CA revocation ────────────────────────────────────────────────────
+
+    async function revokeCert(e) {
+      e.preventDefault();
+      const cn = document.getElementById('revoke-cn').value.trim();
+      try {
+        const r = await fetch('/api/profile-ca/ca/certificates/' + encodeURIComponent(cn), {
+          method: 'DELETE',
+        });
+        if (r.ok || r.status === 204) {
+          showMsg('revoke-msg', `Revoked ${cn} — PIP will update via gRPC stream`, true);
+          setTimeout(loadSubjects, 1500);
+        } else {
+          const d = await r.json().catch(() => ({}));
+          showMsg('revoke-msg', `HTTP ${r.status}: ${d.error ?? 'revocation failed'}`, false);
+        }
+      } catch(e) { showMsg('revoke-msg', e.message, false); }
+    }
+
+    // ── DynamicOrch-XACML ────────────────────────────────────────────────────────
+
+    async function testOrch(e) {
+      e.preventDefault();
+      const consumer = document.getElementById('orch-consumer').value.trim();
+      const service = document.getElementById('orch-service').value.trim();
+      const el = document.getElementById('orch-result');
+      el.style.display = 'block';
+      el.textContent = 'Requesting orchestration…';
+      try {
+        const r = await fetch('/api/dynamicorch/orchestration/dynamic', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requesterSystem: { systemName: consumer, address: '127.0.0.1', port: 8000 },
+            requestedService: { serviceDefinition: service },
+          }),
+        });
+        const d = await r.json();
+        const count = d.response ? d.response.length : 0;
+        el.textContent = `Providers returned: ${count}\n\n` + JSON.stringify(d, null, 2);
+        el.className = 'result ' + (count > 0 ? 'permit' : 'deny');
+      } catch(e) { el.textContent = 'Error: ' + e.message; }
+    }
+
+    async function loadOrchStatus() {
+      try {
+        const d = await fetch('/api/dynamicorch/status').then(r => r.json());
+        document.getElementById('orch-status').innerHTML =
+          Object.entries(d).map(([k, v]) => `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px"><span style="color:var(--muted)">${k}</span><span>${v}</span></div>`).join('');
+      } catch(e) {
+        document.getElementById('orch-status').innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+      }
+    }
+
+    function showMsg(id, text, ok) {
+      const el = document.getElementById(id);
+      el.style.display = 'block';
+      el.textContent = text;
+      el.className = 'msg ' + (ok ? 'msg-ok' : 'msg-err');
+      setTimeout(() => { el.style.display = 'none'; }, 4000);
+    }
+
+    loadPolicies();
+    loadSubjects();
+    loadOrchStatus();
+    setInterval(loadPolicies, 10000);
+    setInterval(loadSubjects, 10000);
+  </script>
+</body>
+</html>

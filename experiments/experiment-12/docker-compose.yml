@@ -1,17 +1,23 @@
-# Experiment 12 — DynamicOrchestration-XACML (Approach B)
+# Experiment 12 — DynamicOrchestration-XACML (Approach B) with gRPC PDP interface
 #
-# Extends experiment-10 by replacing the AH5 DynamicOrchestration (per-provider
-# ConsumerAuth.verify) with DynamicOrchestration-XACML: a single AuthzForce PDP
-# call per orchestration request — the same authority as the data-plane PEPs.
+# Architecture:
+#   dynamicorch-xacml (gRPC client)
+#     → authz-pdp (gRPC server, authorize.proto)
+#     → authzforce (XACML PDP, HTTP/XML)
 #
-# Key change from experiment-10:
-#   dynamicorch (core/) → dynamicorch-xacml (core-evol/)
+# Key changes from the original experiment-12 design:
+#   - authz-pdp is a new gRPC service implementing authorize.proto
+#   - dynamicorch-xacml connects to authz-pdp over gRPC instead of calling
+#     AuthzForce directly; AUTH_BACKEND=consumerauth switches to AH5 CA
+#   - XACML requests use separate resource-id (service) and provider-id attributes
+#     instead of "service@provider" string concatenation
+#   - Orchestration policies use action="orchestrate"; enforcement uses action="consume"
+#     — clean namespace separation without string encoding
+#   - authorize.proto is the canonical interface spec; grpcurl reflection enabled
 #
-#   - dynamicorch-xacml calls AuthzForce.Decide(domain, consumer, service, "consume")
-#     instead of N × ConsumerAuth.verify
-#   - ConsumerAuth remains in the stack for AH5 spec compliance, but is NOT called
-#     for authorization decisions — orchestration + enforcement use the same authority
-#   - Setup does NOT need to seed ConsumerAuth grants (PAP policies are sufficient)
+# grpcurl inspection (requires grpcurl installed):
+#   grpcurl -plaintext localhost:9550 list
+#   grpcurl -plaintext localhost:9550 describe arrowhead.authz.v1.AuthorizationPDP
 #
 # All ports incremented by 100 from experiment-11 to avoid conflict.
 #
@@ -23,6 +29,7 @@
 #   Authentication TLS:           https://localhost:8891
 #   ConsumerAuthorization TLS:    https://localhost:8892
 #   DynamicOrch-XACML HTTP:       http://localhost:8893
+#   authz-pdp gRPC:               localhost:9550
 #   PAP:                          http://localhost:9505
 #   PIP:                          http://localhost:9506
 #   kafka-authz:                  http://localhost:9501
@@ -220,9 +227,39 @@ services:
       timeout: 3s
       retries: 10
 
+  # ── authz-pdp — AuthorizationPDP gRPC service ────────────────────────────────
+  # Implements proto/authorize/authorize.proto.
+  # Translates gRPC DecisionRequests to XACML with separate service/provider
+  # attributes and evaluates them against AuthzForce CE.
+  # gRPC reflection is enabled: grpcurl -plaintext localhost:9550 list
+
+  authz-pdp:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-12/dockerfiles/authz-pdp.Dockerfile
+    environment:
+      AUTHZFORCE_URL: "http://authzforce:8080/authzforce-ce"
+      AUTHZFORCE_DOMAIN: "arrowhead-exp12"
+      PORT: "9550"
+    ports:
+      - "9550:9550"
+    depends_on:
+      authzforce:
+        condition: service_healthy
+      pap:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "printf '' > /dev/tcp/localhost/9550 2>/dev/null && echo ok || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # ── DynamicOrchestration-XACML (Approach B — core-evol) ──────────────────────
-  # Replaces the AH5 dynamicorch. Uses a single AuthzForce.Decide call instead
-  # of N × ConsumerAuth.verify. Fail-closed: AF unavailable → empty result.
+  # Calls authz-pdp over gRPC (AUTH_BACKEND=grpc, default).
+  # Set AUTH_BACKEND=consumerauth + CA_URL=http://consumerauth:8082 to switch
+  # to the AH5 ConsumerAuthorization backend for side-by-side comparison.
 
   dynamicorch-xacml:
     build:
@@ -230,21 +267,18 @@ services:
       dockerfile: experiments/experiment-12/dockerfiles/dynamicorch-xacml.Dockerfile
     environment:
       SR_URL: "http://serviceregistry:8080"
-      AUTHZFORCE_URL: "http://authzforce:8080/authzforce-ce"
-      AUTHZFORCE_DOMAIN: "arrowhead-exp12"
+      AUTH_BACKEND: "grpc"
+      AUTHZ_PDP_ADDR: "authz-pdp:9550"
+      CA_URL: "http://consumerauth:8082"
       ENABLE_AUTH: "true"
       PORT: "8083"
     ports:
       - "8893:8083"
     depends_on:
-      authzforce:
+      authz-pdp:
         condition: service_healthy
       serviceregistry:
         condition: service_healthy
-      pap:
-        condition: service_healthy
-      setup:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8083/status || exit 1"]
       interval: 5s
@@ -306,7 +340,29 @@ services:
       - sh
       - -c
       - |-
-        # XACML policies via PAP (single authority for orchestration + data plane)
+        # Per-provider orchestration policies: resource=service, provider=system, action=orchestrate
+        # These are evaluated by authz-pdp when DynamicOrch-XACML makes a gRPC Decide call.
+        # action=orchestrate cleanly separates this namespace from enforcement (action=consume).
+        # Grant portal-cloud-ml access to telemetry from each robot fleet site:
+        curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
+          -d '{"subject":"portal-cloud-ml","resource":"telemetry","provider":"robot-fleet-site-1","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
+        curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
+          -d '{"subject":"portal-cloud-ml","resource":"telemetry","provider":"robot-fleet-site-2","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
+        curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
+          -d '{"subject":"portal-cloud-ml","resource":"telemetry","provider":"robot-fleet-site-3","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
+        # Grant service-partner-1/2 access to telemetry-rest from portal-cloud-ml:
+        curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
+          -d '{"subject":"service-partner-1","resource":"telemetry-rest","provider":"portal-cloud-ml","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
+        curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
+          -d '{"subject":"service-partner-2","resource":"telemetry-rest","provider":"portal-cloud-ml","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
+        # Grant test-probe per-provider orchestration access (for system tests):
+        curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
+          -d '{"subject":"test-probe","resource":"telemetry-rest","provider":"portal-cloud-ml","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
+        curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
+          -d '{"subject":"test-probe","resource":"telemetry","provider":"robot-fleet-site-1","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
+        # Service-level enforcement policies: resource=service, no provider, action=consume
+        # Used by kafka-authz, topic-auth-xacml, pki-rest-authz. These PEPs enforce at the
+        # service boundary and do not carry provider identity in the request.
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
           -d '{"subject":"portal-cloud-ml","resource":"telemetry","action":"consume","effect":"Permit"}' | grep -q '"id"' &&
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \

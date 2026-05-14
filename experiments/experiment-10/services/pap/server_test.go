@@ -40,7 +40,7 @@ func TestHealth_OK(t *testing.T) {
 
 func TestStatus_Fields(t *testing.T) {
 	srv, store, _ := newTestServer()
-	store.Add("sp1", "svc", "consume", "Permit")
+	store.Add("sp1", "svc", "", "consume", "Permit")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/status", nil))
 	if w.Code != http.StatusOK {
@@ -148,8 +148,8 @@ func TestListPolicies_Empty(t *testing.T) {
 
 func TestListPolicies_WithEntries(t *testing.T) {
 	srv, store, _ := newTestServer()
-	store.Add("sp1", "svc", "consume", "Permit")
-	store.Add("sp2", "svc", "consume", "Permit")
+	store.Add("sp1", "svc", "", "consume", "Permit")
+	store.Add("sp2", "svc", "", "consume", "Permit")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/policies", nil))
 	var body map[string]interface{}
@@ -163,7 +163,7 @@ func TestListPolicies_WithEntries(t *testing.T) {
 
 func TestDeletePolicy_204(t *testing.T) {
 	srv, store, pusher := newTestServer()
-	p, _ := store.Add("sp1", "svc", "consume", "Permit")
+	p, _ := store.Add("sp1", "svc", "", "consume", "Permit")
 	pusher.pushCount = 0 // reset counter
 	req := httptest.NewRequest(http.MethodDelete, "/policies/"+p.ID, nil)
 	w := httptest.NewRecorder()
@@ -190,7 +190,7 @@ func TestDeletePolicy_404(t *testing.T) {
 
 func TestGetPolicy_200(t *testing.T) {
 	srv, store, _ := newTestServer()
-	p, _ := store.Add("sp1", "svc", "consume", "Permit")
+	p, _ := store.Add("sp1", "svc", "", "consume", "Permit")
 	req := httptest.NewRequest(http.MethodGet, "/policies/"+p.ID, nil)
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)

@@ -1,0 +1,136 @@
+// authorize.proto — canonical API contract for the Arrowhead AuthorizationPDP service.
+//
+// This file is the single source of truth for the interface between a Policy
+// Enforcement Point (PEP, e.g. DynamicOrchestration) and a Policy Decision
+// Point (PDP, e.g. AuthzForce CE or any XACML-compatible engine).
+//
+// Design basis: OASIS XACML 3.0 Request/Response model, expressed as gRPC.
+// Reference: https://docs.oasis-open.org/xacml/xacml-json-http/v1.1/
+//
+// XACML attribute mapping:
+//   subject  → XACML subject-category / subject-id
+//   service  → XACML resource-category / resource-id
+//   provider → XACML resource-category / urn:arrowhead:attribute:provider-id (optional)
+//   action   → XACML action-category   / action-id
+//
+// Namespace separation (no string-encoding hacks):
+//   Orchestration decisions  →  action = "orchestrate", provider set
+//   Enforcement decisions    →  action = "consume",     provider empty
+//
+// Code generation (requires protoc + plugins):
+//   make -C core-evol/proto/authorize gen
+//
+// grpcurl inspection (requires running authz-pdp with GRPC_REFLECTION=true):
+//   grpcurl -plaintext localhost:9550 list
+//   grpcurl -plaintext localhost:9550 describe arrowhead.authz.v1.AuthorizationPDP
+//   grpcurl -plaintext -d '{"subject":"portal-cloud-ml","service":"telemetry","provider":"robot-fleet-site-1","action":"orchestrate"}' \
+//     localhost:9550 arrowhead.authz.v1.AuthorizationPDP/Decide
+
+syntax = "proto3";
+
+package arrowhead.authz.v1;
+
+option go_package = "arrowhead/core-evol/proto/authorize;authorize";
+
+// AuthorizationPDP is the Policy Decision Point interface.
+//
+// A PEP (e.g. DynamicOrchestration, kafka-authz, pki-rest-authz) calls Decide
+// once per resource access attempt. The PDP evaluates the request against its
+// policy store and returns a Decision.
+//
+// Implementations:
+//   - authz-pdp (core-evol/cmd/authz-pdp): gRPC adapter backed by AuthzForce CE
+//   - Any XACML-compatible PDP that implements this interface
+service AuthorizationPDP {
+  // Decide evaluates a single access-control request.
+  //
+  // The PEP sends a DecisionRequest describing who is accessing what with which
+  // action. The PDP evaluates the applicable policies and returns a Decision.
+  //
+  // Failure semantics (fail-closed): if the PDP returns an error or
+  // INDETERMINATE, the PEP MUST treat it as DENY and exclude the resource.
+  //
+  // Latency / caching: the PDP MAY cache decisions. The recommended TTL is
+  // 0 (no cache) for orchestration decisions — stale permits survive revocation.
+  // Enforcement PEPs MAY use a short TTL (e.g. 5 s) to reduce latency under
+  // high throughput, accepting a bounded revocation lag.
+  rpc Decide(DecisionRequest) returns (DecisionResponse);
+}
+
+// DecisionRequest carries the access-control context for a single evaluation.
+// Corresponds to the XACML 3.0 <Request> element.
+message DecisionRequest {
+  // domain_id is the XACML policy domain identifier (AuthzForce domain UUID or
+  // external name). Used in multi-tenant deployments. May be left empty if the
+  // PDP is pre-configured with a single domain.
+  string domain_id = 1;
+
+  // subject is the XACML subject-id — the system requesting access.
+  // Typically the consumer's systemName as registered in the ServiceRegistry.
+  // Maps to: XACML subject-category urn:oasis:names:tc:xacml:1.0:subject:subject-id
+  string subject = 2;
+
+  // service is the service definition name — the resource being accessed.
+  // Maps to: XACML resource-category urn:oasis:names:tc:xacml:1.0:resource:resource-id
+  // Example: "telemetry", "telemetry-rest"
+  string service = 3;
+
+  // provider is the provider system name. When set, the PDP evaluates a
+  // per-provider policy. When empty, the decision is service-level only.
+  //
+  // Sending provider allows the policy to distinguish:
+  //   Permit(consumer, telemetry, robot-fleet-site-1)   ← allow site-1 only
+  //   Deny  (consumer, telemetry, robot-fleet-site-2)   ← deny site-2
+  //
+  // Maps to: XACML resource-category urn:arrowhead:attribute:provider-id
+  // Set by:  orchestration PEPs (DynamicOrchestration)
+  // Absent:  enforcement PEPs (kafka-authz, pki-rest-authz, topic-auth-xacml)
+  string provider = 4;
+
+  // action is the operation being requested.
+  // Maps to: XACML action-category urn:oasis:names:tc:xacml:1.0:action:action-id
+  //
+  // Conventional values:
+  //   "orchestrate" — orchestration PEP requesting provider endpoint disclosure
+  //   "consume"     — enforcement PEP requesting data-plane access
+  //
+  // Using distinct action values provides clean namespace separation: an
+  // orchestration policy (action=orchestrate) never matches an enforcement
+  // request (action=consume) and vice versa.
+  string action = 5;
+}
+
+// DecisionResponse carries the PDP's evaluation result.
+// Corresponds to the XACML 3.0 <Response> element.
+message DecisionResponse {
+  // decision is the PDP's access-control decision.
+  // A PEP MUST treat any value other than PERMIT as denial.
+  Decision decision = 1;
+
+  // status_code is the XACML status code URN for the evaluation.
+  // Informational; PEPs should act on decision, not status_code.
+  // Example: "urn:oasis:names:tc:xacml:1.0:status:ok"
+  //          "urn:oasis:names:tc:xacml:1.0:status:processing-error"
+  string status_code = 2;
+}
+
+// Decision mirrors the XACML 3.0 Decision element values.
+// Reference: XACML 3.0 §7.17
+enum Decision {
+  // DECISION_UNSPECIFIED is the zero value; treat as DENY.
+  DECISION_UNSPECIFIED = 0;
+
+  // PERMIT: the PDP grants the requested access. The PEP may proceed.
+  PERMIT = 1;
+
+  // DENY: the PDP denies the requested access. The PEP must block.
+  DENY = 2;
+
+  // INDETERMINATE: the PDP could not evaluate the request (error, missing
+  // attribute, policy syntax error). PEPs MUST treat as DENY (fail-closed).
+  INDETERMINATE = 3;
+
+  // NOT_APPLICABLE: no policy matched the request. Typically treated as DENY
+  // under a deny-unless-permit combining algorithm.
+  NOT_APPLICABLE = 4;
+}

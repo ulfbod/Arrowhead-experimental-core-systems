@@ -4,9 +4,20 @@ use (
 	// Core systems
 	./core
 
+	// Core-evol (AH5-evolved systems)
+	./core-evol
+
 	// Experiment 1
 	./experiments/experiment-1/example-client
 	./experiments/experiment-1/service
+
+	// Experiment 10
+	./experiments/experiment-10/services/pap
+	./experiments/experiment-10/services/pip
+
+	// Experiment 11
+	./experiments/experiment-11/services/pap
+	./experiments/experiment-11/services/pip
 
 	// Experiment 2
 	./experiments/experiment-2/services/consumer
@@ -38,6 +49,7 @@ use (
 	./experiments/experiment-7/services/consumer-direct-tls
 	./experiments/experiment-7/services/data-provider-tls
 	./experiments/experiment-7/services/robot-fleet-tls
+
 	// Experiment 8
 	./experiments/experiment-8/services/cert-provisioner
 	./experiments/experiment-8/services/data-provider-tls
@@ -49,16 +61,12 @@ use (
 	./experiments/experiment-9/services/portal-cloud-ml
 	./experiments/experiment-9/services/service-partner
 
-	// Experiment 10
-	./experiments/experiment-10/services/pap
-	./experiments/experiment-10/services/pip
-
-	// Experiment 11
-	./experiments/experiment-11/services/pip
-	./experiments/experiment-11/services/pap
-
-	// Core-evol (AH5-evolved systems)
-	./core-evol
+	// Experiment 13
+	./experiments/experiment-13/services/kafka-authz
+	./experiments/experiment-13/services/pki-rest-authz
+	./experiments/experiment-13/services/pip
+	./experiments/experiment-13/services/profile-ca
+	./experiments/experiment-13/services/topic-auth-xacml
 
 	// Support modules
 	./support/authzforce

@@ -28,6 +28,7 @@ smoke_http "profile-ca /health"              http://localhost:8487/health
 smoke_http "AuthzForce /health"              http://localhost:8596/health
 smoke_http "PAP /health"                     http://localhost:9505/health
 smoke_http "PIP /health"                     http://localhost:9506/health
+smoke_http "authz-pdp TCP :9550"             "tcp://localhost:9550" || true
 smoke_http "dynamicorch-xacml /status"       http://localhost:8893/status
 smoke_http "kafka-authz /health"             http://localhost:9501/health
 smoke_http "pki-rest-authz /health (HTTP)"   http://localhost:9509/health
@@ -112,7 +113,7 @@ echo
 echo "=== 6. AuthzForce (localhost:8596) ==="
 check_eq "GET /health → 200" "200" "$(http_code http://localhost:8596/health)"
 
-# ── Section 7: DynamicOrch-XACML — Approach B tests ─────────────────────────
+# ── Section 7: DynamicOrch-XACML — per-provider Approach B tests ─────────────
 echo
 echo "=== 7. DynamicOrch-XACML (localhost:8893) ==="
 
@@ -127,24 +128,46 @@ check_eq "GET /orchestration/dynamic → 405" "405" \
   "$(http_code http://localhost:8893/orchestration/dynamic)"
 
 # Missing requester → 400
-check_eq "POST /orchestration/dynamic missing requester → 400" "400" \
+check_eq "POST missing requester → 400" "400" \
   "$(http_code -X POST http://localhost:8893/orchestration/dynamic \
     -H 'Content-Type: application/json' \
     -d '{"requesterSystem":{"systemName":""},"requestedService":{"serviceDefinition":"telemetry"}}')"
 
 # Missing service → 400
-check_eq "POST /orchestration/dynamic missing service → 400" "400" \
+check_eq "POST missing service → 400" "400" \
   "$(http_code -X POST http://localhost:8893/orchestration/dynamic \
     -H 'Content-Type: application/json' \
     -d '{"requesterSystem":{"systemName":"test-probe"},"requestedService":{"serviceDefinition":""}}')"
 
-# Unauthorized consumer → empty list (XACML Deny)
+# Unauthorized consumer → empty list (no matching per-provider policy)
 orch_unauth=$(http_body -X POST http://localhost:8893/orchestration/dynamic \
   -H 'Content-Type: application/json' \
   -d '{"requesterSystem":{"systemName":"unauthorized","address":"1.1.1.1","port":8000},"requestedService":{"serviceDefinition":"telemetry"}}')
 assert_json_field "Unauthorized consumer → response field exists" "response" "$orch_unauth"
-# Response should be empty array (Deny)
 assert_contains   "Unauthorized consumer → empty response" '"response":[]' "$(echo "$orch_unauth" | tr -d ' \n')"
+
+# Per-provider: test-probe has policy for telemetry@robot-fleet-site-1 only
+# → should return robot-fleet-site-1 but not site-2 or site-3
+orch_probe=$(http_body -X POST http://localhost:8893/orchestration/dynamic \
+  -H 'Content-Type: application/json' \
+  -d '{"requesterSystem":{"systemName":"test-probe","address":"1.1.1.1","port":8000},"requestedService":{"serviceDefinition":"telemetry"}}')
+assert_json_field "test-probe telemetry → response field" "response" "$orch_probe"
+# test-probe only has telemetry@robot-fleet-site-1, so at most 1 provider returned
+probe_count=$(echo "$orch_probe" | grep -o '"systemName"' | wc -l || echo 0)
+if [ "$probe_count" -gt 1 ]; then
+  echo "  FAIL: test-probe got more than 1 provider ($probe_count) — per-provider policy not enforced"
+  FAIL=$((FAIL+1))
+else
+  echo "  PASS: test-probe orchestration limited to permitted provider(s)"
+  PASS=$((PASS+1))
+fi
+
+# Per-provider: service-partner-1 has policy for telemetry-rest@portal-cloud-ml
+orch_sp1=$(http_body -X POST http://localhost:8893/orchestration/dynamic \
+  -H 'Content-Type: application/json' \
+  -d '{"requesterSystem":{"systemName":"service-partner-1","address":"1.1.1.1","port":8000},"requestedService":{"serviceDefinition":"telemetry-rest"}}')
+assert_json_field "service-partner-1 telemetry-rest → response field" "response" "$orch_sp1"
+assert_contains   "service-partner-1 → portal-cloud-ml returned" "portal-cloud-ml" "$orch_sp1"
 
 # ── Section 8: kafka-authz ────────────────────────────────────────────────────
 echo
@@ -184,34 +207,42 @@ assert_contains "pki-rest-authz Deny → permit=false" "false" "$rest_deny"
 echo
 echo "=== 10. Unified revocation (PAP → AuthzForce → both planes) ==="
 
-# Find test-probe policy for telemetry-rest
+# Find the test-probe orchestration policy for telemetry/robot-fleet-site-1
+# Policy now has provider field set; resource="telemetry", provider="robot-fleet-site-1"
 tp_pol=$(http_body http://localhost:9505/policies)
-tp_id=$(echo "$tp_pol" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+tp_id=$(echo "$tp_pol" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for p in data.get('policies', []):
+    if p.get('subject') == 'test-probe' and p.get('resource') == 'telemetry' and p.get('provider') == 'robot-fleet-site-1':
+        print(p['id'])
+        break
+" 2>/dev/null || echo "")
 
 if [ -n "$tp_id" ]; then
-  # Delete test-probe/telemetry-rest
-  tp_policies_before="$tp_pol"
   tp_del=$(http_code -X DELETE "http://localhost:9505/policies/$tp_id")
-  check_eq "PAP DELETE policy → 204 or 200" "204" "$tp_del" || \
-    check_eq "PAP DELETE policy → 200"       "200" "$tp_del"
+  check_eq "PAP DELETE orchestration policy → 204" "204" "$tp_del"
 
   # Verify PAP count decreased
   tp_pol_after=$(http_body http://localhost:9505/policies)
   assert_contains "PAP policy list changed after delete" "policies" "$tp_pol_after"
 
   echo "  PASS: PAP delete propagates to AuthzForce (instant — no sync)"
+else
+  echo "  SKIP: test-probe/telemetry/robot-fleet-site-1 policy not found"
 fi
 
 # ── Section 11: PAP CRUD ──────────────────────────────────────────────────────
 echo
 echo "=== 11. PAP CRUD ==="
 
-# Create
+# Create — with optional provider field
 create_resp=$(http_body -X POST http://localhost:9505/policies \
   -H 'Content-Type: application/json' \
-  -d '{"subject":"crud-test","resource":"svc-test","action":"consume","effect":"Permit"}')
+  -d '{"subject":"crud-test","resource":"svc-test","provider":"crud-provider","action":"orchestrate","effect":"Permit"}')
 assert_json_field "POST /policies → id"       "id"       "$create_resp"
 assert_json_value "POST /policies → subject"  "subject"  "crud-test"  "$create_resp"
+assert_contains   "POST /policies → provider" "crud-provider" "$create_resp"
 crud_id=$(echo "$create_resp" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
 
 # Read

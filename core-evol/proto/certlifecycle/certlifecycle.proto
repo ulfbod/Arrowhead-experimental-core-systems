@@ -1,0 +1,125 @@
+// certlifecycle.proto — canonical API contract for the Arrowhead
+// CertificateLifecycle service.
+//
+// This file is the single source of truth for the interface between the
+// profile-ca (certificate authority, server) and any subscriber (e.g. PIP,
+// audit log, monitoring). It is the second gRPC interface in the ADAPT stack,
+// following authorize.proto.
+//
+// Design basis: event-driven certificate lifecycle — issued, revoked, expired.
+// Subscribers receive a snapshot of current state on connect, then live events.
+//
+// XACML attribute mapping for cert-level enrichment:
+//   cn → XACML subject-category / subject-id
+//   ou → XACML subject-category / urn:arrowhead:attribute:cert-level
+//        values: "lo" (Local Cloud CA), "on" (Onboarding),
+//                "de" (Device), "sy" (System — used for service mTLS)
+//
+// Code generation (requires protoc + plugins):
+//   make -C core-evol/proto/certlifecycle gen
+//
+// grpcurl inspection (requires running profile-ca with GRPC reflection enabled):
+//   grpcurl -plaintext localhost:8089 list
+//   grpcurl -plaintext localhost:8089 describe arrowhead.ca.v1.CertificateLifecycle
+//   grpcurl -plaintext -d '{"include_snapshot":true}' \
+//     localhost:8089 arrowhead.ca.v1.CertificateLifecycle/Subscribe
+
+syntax = "proto3";
+
+package arrowhead.ca.v1;
+
+option go_package = "arrowhead/core-evol/proto/certlifecycle;certlifecycle";
+
+// CertificateLifecycle is the profile-ca → subscriber event stream interface.
+//
+// A subscriber (e.g. PIP) calls Subscribe once. The server streams CertEvents
+// as they occur. If include_snapshot=true in the request, the server first
+// streams all currently valid certificates (type=SNAPSHOT) before switching to
+// live events. This allows subscribers to bootstrap from scratch without a
+// separate REST call.
+//
+// Reconnect semantics: if the stream is interrupted, the subscriber SHOULD
+// reconnect with include_snapshot=true to re-baseline its state. The server
+// imposes no rate limit on reconnects.
+//
+// Failure semantics (fail-closed): if the subscriber cannot reach profile-ca,
+// it MUST continue serving its last known state and NOT purge its store.
+// Authorization decisions made while the stream is down use stale-but-not-empty
+// cert-level attributes, which is safer than denying everything.
+service CertificateLifecycle {
+  // Subscribe opens a persistent server-side stream of CertEvents.
+  //
+  // The stream remains open until the client cancels or the server shuts down.
+  // Subscribers should run this in a loop with exponential backoff reconnect.
+  rpc Subscribe(SubscribeRequest) returns (stream CertEvent);
+}
+
+// SubscribeRequest controls the initial delivery behaviour.
+message SubscribeRequest {
+  // include_snapshot controls whether the server pre-populates the stream with
+  // current state before switching to live events.
+  //
+  // true  — server sends one SNAPSHOT event per currently valid certificate,
+  //         then continues with live ISSUED/REVOKED/EXPIRED events.
+  //         Use on first connect or after a reconnect to re-baseline.
+  //
+  // false — server sends only live events from this point forward.
+  //         Use when the subscriber already has accurate state and only wants
+  //         incremental updates.
+  bool include_snapshot = 1;
+}
+
+// CertEvent describes a certificate lifecycle transition.
+// Each event is self-contained — subscribers do not need to maintain
+// history to interpret it.
+message CertEvent {
+  // cn is the certificate Common Name — the system identity.
+  // Maps to: XACML subject-id
+  // Example: "service-partner-1", "portal-cloud-ml"
+  string cn = 1;
+
+  // ou is the Arrowhead certificate profile tier encoded in the Subject OU.
+  // Maps to: XACML urn:arrowhead:attribute:cert-level
+  // Values (ordered by privilege):
+  //   "lo" — Local Cloud CA (root; not used for service identity)
+  //   "on" — Onboarding (may request Device certs)
+  //   "de" — Device (may request System certs)
+  //   "sy" — System (used for service-to-service mTLS)
+  string ou = 2;
+
+  // type is the certificate lifecycle event type.
+  EventType type = 3;
+
+  // issued_at is the certificate issuance time in RFC3339 format.
+  // Present for ISSUED and SNAPSHOT events. Empty for REVOKED/EXPIRED.
+  string issued_at = 4;
+
+  // expires_at is the certificate expiry time in RFC3339 format.
+  // Present for ISSUED and SNAPSHOT events. Used by subscribers to schedule
+  // proactive cleanup. Empty for REVOKED/EXPIRED.
+  string expires_at = 5;
+}
+
+// EventType classifies the certificate lifecycle transition.
+enum EventType {
+  // EVENT_UNSPECIFIED is the zero value; subscribers MUST ignore it.
+  EVENT_UNSPECIFIED = 0;
+
+  // ISSUED: a new certificate was issued by the CA.
+  // Subscriber action: Register(cn, ou, valid=true)
+  ISSUED = 1;
+
+  // REVOKED: the certificate was explicitly revoked (DELETE /ca/certificates/{cn}).
+  // Subscriber action: Register(cn, ou, valid=false)
+  REVOKED = 2;
+
+  // EXPIRED: the certificate passed its NotAfter time.
+  // Subscriber action: Register(cn, ou, valid=false)
+  EXPIRED = 3;
+
+  // SNAPSHOT: current-state snapshot event sent before live events when
+  // include_snapshot=true. Semantically identical to ISSUED but indicates
+  // it is part of the initial baseline, not a real-time issuance.
+  // Subscriber action: Register(cn, ou, valid=true)
+  SNAPSHOT = 4;
+}

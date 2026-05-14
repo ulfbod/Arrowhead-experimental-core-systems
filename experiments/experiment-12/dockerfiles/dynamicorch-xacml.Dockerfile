@@ -1,6 +1,11 @@
-# Builds the DynamicOrchestration-XACML service (core-evol).
-# This is the AH5-evolved DynamicOrch that replaces ConsumerAuth.verify with
-# a single AuthzForce XACML decision (Approach B — see AH5_EVOL.md).
+# Builds the DynamicOrchestration-XACML service (core-evol/cmd/dynamicorch-xacml).
+#
+# This is the AH5-evolved DynamicOrch that calls authz-pdp over gRPC
+# (authorize.proto) instead of ConsumerAuth.verify.
+#
+# Auth backends (AUTH_BACKEND env var):
+#   grpc         — calls authz-pdp gRPC service (default, Approach B)
+#   consumerauth — calls AH5 ConsumerAuthorization (for comparison)
 #
 # Build context: repo root (ArrowheadCore/)
 

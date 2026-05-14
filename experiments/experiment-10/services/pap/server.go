@@ -90,6 +90,7 @@ func (s *server) createPolicy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Subject  string `json:"subject"`
 		Resource string `json:"resource"`
+		Provider string `json:"provider"` // optional: provider system name for per-provider policies
 		Action   string `json:"action"`
 		Effect   string `json:"effect"`
 	}
@@ -97,7 +98,7 @@ func (s *server) createPolicy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	p, err := s.store.Add(req.Subject, req.Resource, req.Action, req.Effect)
+	p, err := s.store.Add(req.Subject, req.Resource, req.Provider, req.Action, req.Effect)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

@@ -48,6 +48,7 @@ func (p *authzforcePusher) Push(policies []*Policy, version int) error {
 			grants = append(grants, authzforce.Grant{
 				Consumer: pol.Subject,
 				Service:  pol.Resource,
+				Provider: pol.Provider, // empty for service-level; set for per-provider
 			})
 		}
 	}
