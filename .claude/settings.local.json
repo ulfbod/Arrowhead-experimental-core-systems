@@ -237,7 +237,10 @@
       "Bash(ln -s ../../../../../support/dashboard-shared/hooks/usePolling.ts src/hooks/usePolling.ts)",
       "Bash(rm src/config/context.tsx src/config/types.ts src/config/defaults.ts)",
       "Bash(ln -s ../../../../../support/dashboard-shared/config/context.tsx src/config/context.tsx)",
-      "Bash(ln -s ../../../../../support/dashboard-shared/config/types.ts src/config/types.ts)"
+      "Bash(ln -s ../../../../../support/dashboard-shared/config/types.ts src/config/types.ts)",
+      "Bash(gh api:*)",
+      "Bash(gs --version)",
+      "Bash(convert --version)"
     ]
   }
 }

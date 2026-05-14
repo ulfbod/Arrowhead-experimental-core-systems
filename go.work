@@ -45,6 +45,10 @@ use (
 	./experiments/experiment-8/services/pki-rest-authz
 	./experiments/experiment-8/services/profile-ca
 
+	// Experiment 9
+	./experiments/experiment-9/services/portal-cloud-ml
+	./experiments/experiment-9/services/service-partner
+
 	// Support modules
 	./support/authzforce
 	./support/authzforce-server
