@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Experiment 10 — UC3 PAP/PIP/PDP</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #1a1d27;
+      --border: #2d3148;
+      --ok: #22c55e;
+      --err: #ef4444;
+      --warn: #f59e0b;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --accent: #6366f1;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+    header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+    header h1 { font-size: 18px; font-weight: 600; }
+    header span { color: var(--muted); font-size: 13px; }
+    header a { color: var(--accent); font-size: 13px; text-decoration: none; margin-left: auto; padding: 6px 14px; border: 1px solid var(--accent); border-radius: 4px; }
+    header a:hover { background: var(--accent); color: white; }
+    main { display: grid; grid-template-columns: 1fr 300px; gap: 16px; padding: 16px; height: calc(100vh - 57px); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; align-content: start; overflow-y: auto; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .card-title { font-weight: 600; font-size: 13px; }
+    .badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .ok { background: #14532d; color: var(--ok); }
+    .err { background: #450a0a; color: var(--err); }
+    .loading { background: #1c1917; color: var(--muted); }
+    .kv { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .kv:last-child { border-bottom: none; }
+    .kv .k { color: var(--muted); }
+    .kv .v { font-weight: 500; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sidebar { overflow-y: auto; }
+    .sidebar .card { margin-bottom: 12px; }
+    .auth-form { display: flex; flex-direction: column; gap: 8px; }
+    .auth-form input, .auth-form select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 6px 10px; font-size: 13px; }
+    .auth-form button { background: var(--accent); color: white; border: none; border-radius: 4px; padding: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .auth-form button:hover { opacity: 0.9; }
+    .result { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px; font-size: 12px; font-family: monospace; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; margin-top: 4px; }
+    .permit { color: var(--ok); }
+    .deny { color: var(--err); }
+    .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 8px; }
+    .narrative { font-size: 12px; line-height: 1.6; color: var(--muted); }
+    .narrative strong { color: var(--text); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Experiment 10 — UC3 PAP/PIP/PDP</h1>
+    <span>Arrowhead 5.2 · XACML · PAP/PIP/PDP · mTLS · Multi-Site UC3</span>
+    <span id="clock"></span>
+    <a href="/admin.html">Policy Admin</a>
+  </header>
+  <main>
+    <div class="grid" id="grid"></div>
+    <div class="sidebar">
+      <!-- Scenario narrative -->
+      <div class="card">
+        <div class="section-title">UC3 Scenario</div>
+        <div class="narrative">
+          <strong>Equipment owner</strong> deploys Husqvarna-style robots at three partner sites.<br><br>
+          <strong>Robot Sites 1/2/3</strong> publish IMU telemetry to Kafka (TLS) and AMQP (TLS).<br><br>
+          <strong>Portal &amp; Cloud ML</strong> subscribes to the Kafka stream via <em>kafka-authz</em> (XACML PEP) and aggregates all site data.<br><br>
+          <strong>Service Partners SP1/SP2</strong> consume the aggregated REST API via <em>pki-rest-authz</em> (mTLS + XACML PEP).<br><br>
+          Policies are managed by <strong>PAP</strong> (source of truth), pushed directly to <strong>AuthzForce PDP</strong>. Subject attributes are resolved by <strong>PIP</strong>. No sync delay.
+        </div>
+      </div>
+
+      <!-- Auth check tool -->
+      <div class="card">
+        <div class="section-title">Auth Check (pki-rest-authz)</div>
+        <div class="auth-form">
+          <select id="consumer">
+            <option value="service-partner-1">service-partner-1</option>
+            <option value="service-partner-2">service-partner-2</option>
+            <option value="portal-cloud-ml">portal-cloud-ml</option>
+            <option value="test-probe">test-probe</option>
+            <option value="unauthorized">unauthorized</option>
+          </select>
+          <select id="service">
+            <option value="telemetry-rest">telemetry-rest</option>
+            <option value="telemetry">telemetry</option>
+          </select>
+          <button onclick="checkAuth()">Check Authorization</button>
+          <div id="auth-result" class="result" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Kafka SSE auth check -->
+      <div class="card">
+        <div class="section-title">Kafka Auth Check (kafka-authz)</div>
+        <div class="auth-form">
+          <select id="kafka-consumer">
+            <option value="portal-cloud-ml">portal-cloud-ml</option>
+            <option value="test-probe">test-probe</option>
+            <option value="unauthorized">unauthorized</option>
+          </select>
+          <button onclick="checkKafkaAuth()">Check Kafka Authorization</button>
+          <div id="kafka-result" class="result" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Instant PAP revoke/regrant demo -->
+      <div class="card">
+        <div class="section-title">Demo: Revoke &amp; Re-grant SP1 via PAP</div>
+        <div class="auth-form">
+          <button onclick="revokeAndRegrant()">Revoke SP1 → instant effect → Re-grant</button>
+          <div id="revoke-result" class="result" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const components = [
+      { id: 'profile-ca',        label: 'Profile CA',           group: 'Core PKI',       url: '/api/profile-ca/health',        stats: null },
+      { id: 'serviceregistry',   label: 'Service Registry',     group: 'Core Systems',   url: '/api/serviceregistry/health',   stats: null },
+      { id: 'authentication',    label: 'Authentication',       group: 'Core Systems',   url: '/api/authentication/health',    stats: null },
+      { id: 'consumerauth',      label: 'Consumer Auth',        group: 'Core Systems',   url: '/api/consumerauth/health',      stats: null },
+      { id: 'dynamicorch',       label: 'Dynamic Orch.',        group: 'Core Systems',   url: '/api/dynamicorch/health',       stats: null },
+      { id: 'authzforce',        label: 'AuthzForce PDP',       group: 'Policy Engine',  url: '/api/authzforce/health',        stats: null },
+      { id: 'pap',               label: 'PAP',                  group: 'Policy Engine',  url: '/api/pap/health',               stats: '/api/pap/status' },
+      { id: 'pip',               label: 'PIP',                  group: 'Policy Engine',  url: '/api/pip/health',               stats: '/api/pip/status' },
+      { id: 'topic-auth-xacml',  label: 'AMQP PEP',            group: 'Enforcement',    url: '/api/topic-auth-xacml/health',  stats: null },
+      { id: 'kafka-authz',       label: 'Kafka Authz PEP',      group: 'Enforcement',    url: '/api/kafka-authz/health',       stats: '/api/kafka-authz/status' },
+      { id: 'pki-rest-authz',    label: 'REST mTLS PEP',        group: 'Enforcement',    url: '/api/pki-rest-authz/health',    stats: '/api/pki-rest-authz/status' },
+      { id: 'portal-cloud-ml',   label: 'Portal & Cloud ML',    group: 'UC3 Services',   url: '/api/portal-cloud-ml/health',   stats: '/api/portal-cloud-ml/stats' },
+      { id: 'service-partner-1', label: 'Service Partner SP1',  group: 'UC3 Services',   url: '/api/service-partner-1/health', stats: '/api/service-partner-1/stats' },
+      { id: 'service-partner-2', label: 'Service Partner SP2',  group: 'UC3 Services',   url: '/api/service-partner-2/health', stats: '/api/service-partner-2/stats' },
+      { id: 'robot-fleet-site-1',label: 'Robot Fleet Site 1',   group: 'Robot Sites',    url: '/api/robot-fleet-site-1/health',stats: '/api/robot-fleet-site-1/stats' },
+      { id: 'robot-fleet-site-2',label: 'Robot Fleet Site 2',   group: 'Robot Sites',    url: '/api/robot-fleet-site-2/health',stats: '/api/robot-fleet-site-2/stats' },
+      { id: 'robot-fleet-site-3',label: 'Robot Fleet Site 3',   group: 'Robot Sites',    url: '/api/robot-fleet-site-3/health',stats: '/api/robot-fleet-site-3/stats' },
+    ];
+
+    const grid = document.getElementById('grid');
+    for (const c of components) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.id = 'card-' + c.id;
+      card.innerHTML = `
+        <div class="card-header">
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${c.group}</div>
+            <div class="card-title">${c.label}</div>
+          </div>
+          <span class="badge loading" id="badge-${c.id}">…</span>
+        </div>
+        <div id="stats-${c.id}"></div>
+      `;
+      grid.appendChild(card);
+    }
+
+    async function fetchJSON(url) {
+      const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+      return r.ok ? r.json() : null;
+    }
+
+    async function refresh() {
+      for (const c of components) {
+        const badge = document.getElementById('badge-' + c.id);
+        const statsEl = document.getElementById('stats-' + c.id);
+        try {
+          const health = await fetchJSON(c.url);
+          const ok = health && (health.status === 'ok' || health.status === 'up');
+          badge.textContent = ok ? 'OK' : 'DOWN';
+          badge.className = 'badge ' + (ok ? 'ok' : 'err');
+          if (c.stats) {
+            const data = await fetchJSON(c.stats);
+            if (data) {
+              statsEl.innerHTML = Object.entries(data)
+                .slice(0, 6)
+                .map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span class="v" title="${v}">${v}</span></div>`)
+                .join('');
+            }
+          }
+        } catch {
+          badge.textContent = 'ERR';
+          badge.className = 'badge err';
+        }
+      }
+    }
+
+    async function checkAuth() {
+      const consumer = document.getElementById('consumer').value;
+      const service = document.getElementById('service').value;
+      const el = document.getElementById('auth-result');
+      el.style.display = 'block';
+      el.textContent = 'Checking…';
+      try {
+        const r = await fetch('/api/pki-rest-authz/auth/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ consumer, service }),
+        });
+        const d = await r.json();
+        el.textContent = JSON.stringify(d, null, 2);
+        el.className = 'result ' + (d.permit ? 'permit' : 'deny');
+      } catch(e) { el.textContent = 'Error: ' + e.message; }
+    }
+
+    async function checkKafkaAuth() {
+      const consumer = document.getElementById('kafka-consumer').value;
+      const el = document.getElementById('kafka-result');
+      el.style.display = 'block';
+      el.textContent = 'Checking…';
+      try {
+        const r = await fetch('/api/kafka-authz/auth/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ consumer, service: 'telemetry' }),
+        });
+        const d = await r.json();
+        el.textContent = JSON.stringify(d, null, 2);
+        el.className = 'result ' + (d.decision === 'Permit' ? 'permit' : 'deny');
+      } catch(e) { el.textContent = 'Error: ' + e.message; }
+    }
+
+    // Revoke SP1 via PAP, verify immediate effect, then re-grant.
+    // No waiting for sync — PAP pushes to AuthzForce instantly.
+    async function revokeAndRegrant() {
+      const el = document.getElementById('revoke-result');
+      el.style.display = 'block';
+      el.className = 'result';
+      el.textContent = 'Fetching policies from PAP…\n';
+      try {
+        const listResp = await fetch('/api/pap/policies');
+        const list = await listResp.json();
+        const policies = list.policies ?? [];
+        const pol = policies.find(p =>
+          p.subject === 'service-partner-1' && p.resource === 'telemetry-rest'
+        );
+        if (!pol) {
+          el.textContent += 'No PAP policy found for service-partner-1 → telemetry-rest.\n';
+          return;
+        }
+        el.textContent += `Found policy id=${pol.id}. Deleting via PAP…\n`;
+
+        const del = await fetch('/api/pap/policies/' + pol.id, { method: 'DELETE' });
+        el.textContent += `Delete response: ${del.status} (AuthzForce updated immediately)\n`;
+
+        el.textContent += 'Checking auth (should be Deny)…\n';
+        const check = await fetch('/api/pki-rest-authz/auth/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ consumer: 'service-partner-1', service: 'telemetry-rest' }),
+        });
+        const d = await check.json();
+        el.textContent += `Auth after revoke: ${JSON.stringify(d)}\n`;
+
+        el.textContent += 'Re-granting via PAP…\n';
+        const regrant = await fetch('/api/pap/policies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subject: 'service-partner-1', resource: 'telemetry-rest', action: 'consume', effect: 'Permit' }),
+        });
+        const rd = await regrant.json();
+        el.textContent += `Re-grant: ${JSON.stringify(rd)}\n`;
+
+        el.textContent += 'Checking auth (should be Permit)…\n';
+        const check2 = await fetch('/api/pki-rest-authz/auth/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ consumer: 'service-partner-1', service: 'telemetry-rest' }),
+        });
+        const d2 = await check2.json();
+        el.textContent += `Auth after re-grant: ${JSON.stringify(d2)}\n`;
+      } catch(e) {
+        el.textContent += 'Error: ' + e.message;
+      }
+    }
+
+    setInterval(() => {
+      document.getElementById('clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ') + ' UTC';
+    }, 1000);
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

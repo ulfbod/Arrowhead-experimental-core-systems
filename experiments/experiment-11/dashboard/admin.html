@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Experiment 11 — Policy Admin</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #1a1d27;
+      --border: #2d3148;
+      --ok: #22c55e;
+      --err: #ef4444;
+      --warn: #f59e0b;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --accent: #6366f1;
+      --danger: #dc2626;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+    header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+    header h1 { font-size: 18px; font-weight: 600; }
+    header span { color: var(--muted); font-size: 13px; }
+    header a { color: var(--accent); font-size: 13px; text-decoration: none; margin-left: auto; padding: 6px 14px; border: 1px solid var(--accent); border-radius: 4px; }
+    header a:hover { background: var(--accent); color: white; }
+    main { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; padding: 16px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .card h2 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+    .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 8px; }
+    form { display: flex; flex-direction: column; gap: 8px; }
+    input, select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 7px 10px; font-size: 13px; width: 100%; }
+    label { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+    .field { display: flex; flex-direction: column; gap: 2px; }
+    .btn { border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-danger  { background: var(--danger); color: white; }
+    .btn:hover { opacity: 0.88; }
+    .btn-row { display: flex; gap: 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { text-align: left; padding: 6px 8px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+    td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .badge { padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .permit-badge { background: #14532d; color: var(--ok); }
+    .deny-badge   { background: #450a0a; color: var(--err); }
+    .native-badge { background: #1e1b4b; color: var(--accent); }
+    .pip-badge    { background: #451a03; color: var(--warn); }
+    .delete-btn { background: none; border: 1px solid var(--border); color: var(--err); border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 11px; }
+    .delete-btn:hover { background: #450a0a; }
+    .msg { padding: 8px 12px; border-radius: 4px; font-size: 12px; margin-top: 8px; }
+    .msg-ok  { background: #14532d; color: var(--ok); }
+    .msg-err { background: #450a0a; color: var(--err); }
+    .empty { color: var(--muted); font-size: 12px; padding: 12px 0; text-align: center; }
+    .status-bar { display: flex; gap: 20px; padding: 8px 0 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; flex-wrap: wrap; }
+    .stat { font-size: 12px; color: var(--muted); }
+    .stat strong { color: var(--text); font-size: 20px; display: block; }
+    .pip-note { font-size: 11px; color: var(--muted); margin-top: 8px; padding: 6px 8px; background: var(--bg); border-radius: 4px; border: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Experiment 11 — Policy Admin</h1>
+    <span>Hybrid PAP/PIP/PDP · Strategy A · Two Policy Sources</span>
+    <a href="/">Monitoring Dashboard</a>
+  </header>
+  <main>
+
+    <!-- ── Column 1: PAP native policies ────────────────────────────────── -->
+    <div>
+      <div class="card">
+        <h2>PAP — Native Policies <span class="badge native-badge">INSTANT</span></h2>
+        <div class="status-bar">
+          <div class="stat"><strong id="pap-count">—</strong>policies</div>
+          <div class="stat"><strong id="pap-pip-grants">—</strong>PIP grants</div>
+          <div class="stat"><strong id="pap-version">—</strong>version</div>
+          <div class="stat"><strong id="pap-domain">—</strong>domain</div>
+        </div>
+        <div class="pip-note">PAP-native Permit policies push to AuthzForce immediately on Create/Delete.</div>
+
+        <div class="section-title" style="margin-top:12px">Create Native Policy</div>
+        <form onsubmit="createPolicy(event)">
+          <div class="btn-row">
+            <div class="field" style="flex:2">
+              <label>Subject (consumer system)</label>
+              <input id="pol-subject" placeholder="e.g. service-partner-1" required />
+            </div>
+            <div class="field" style="flex:2">
+              <label>Resource (service)</label>
+              <input id="pol-resource" placeholder="e.g. telemetry-rest" required />
+            </div>
+          </div>
+          <div class="btn-row">
+            <div class="field" style="flex:2">
+              <label>Action</label>
+              <input id="pol-action" value="consume" required />
+            </div>
+            <div class="field" style="flex:1">
+              <label>Effect</label>
+              <select id="pol-effect">
+                <option value="Permit">Permit</option>
+                <option value="Deny">Deny</option>
+              </select>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary">Create Policy</button>
+          <div id="pol-msg" style="display:none" class="msg"></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h2 style="margin:0">Native Policies</h2>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" onclick="loadPolicies()">Refresh</button>
+        </div>
+        <div id="policy-table"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- ── Column 2: PIP grant cache ────────────────────────────────────── -->
+    <div>
+      <div class="card">
+        <h2>PIP — ConsumerAuth Grant Cache <span class="badge pip-badge">≤10 s</span></h2>
+        <div class="status-bar">
+          <div class="stat"><strong id="pip-count">—</strong>grants</div>
+          <div class="stat"><strong id="pip-version">—</strong>version</div>
+          <div class="stat"><strong id="pip-synced">—</strong>synced</div>
+        </div>
+        <div class="pip-note">PIP polls ConsumerAuth /authorization/lookup every 10 s. PAP rebuilds XACML when PIP version changes.</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;margin-bottom:8px">
+          <div class="section-title" style="margin:0">Cached Grants</div>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" onclick="loadPIPGrants()">Refresh</button>
+        </div>
+        <div id="pip-grant-table"><div class="empty">Loading…</div></div>
+      </div>
+
+      <!-- Grant lookup by subject -->
+      <div class="card">
+        <h2>Grant Lookup (PIP)</h2>
+        <form onsubmit="lookupGrants(event)" style="flex-direction:row;gap:8px;display:flex;align-items:flex-end">
+          <div class="field" style="flex:1">
+            <label>Consumer system name</label>
+            <input id="grant-subject" placeholder="e.g. service-partner-1" required />
+          </div>
+          <button type="submit" class="btn btn-primary" style="white-space:nowrap">Look Up</button>
+        </form>
+        <div id="grant-result" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px;font-size:12px;font-family:monospace;white-space:pre-wrap"></div>
+      </div>
+    </div>
+
+    <!-- ── Column 3: ConsumerAuth grants ────────────────────────────────── -->
+    <div>
+      <div class="card">
+        <h2>ConsumerAuth — Authorization Grants</h2>
+        <div class="pip-note">Grants here are picked up by PIP within ~10 s. They flow into the PAP XACML policy via the PIP sync loop.</div>
+
+        <div class="section-title" style="margin-top:12px">Add Grant</div>
+        <form onsubmit="addCAGrant(event)">
+          <div class="field">
+            <label>Consumer system name</label>
+            <input id="ca-consumer" placeholder="e.g. service-partner-1" required />
+          </div>
+          <div class="field">
+            <label>Provider system name</label>
+            <input id="ca-provider" placeholder="e.g. portal-cloud-ml" required />
+          </div>
+          <div class="field">
+            <label>Service definition</label>
+            <input id="ca-service" placeholder="e.g. telemetry-rest" required />
+          </div>
+          <button type="submit" class="btn btn-primary">Add Grant</button>
+          <div id="ca-msg" style="display:none" class="msg"></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h2 style="margin:0">Current Grants</h2>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" onclick="loadCAGrants()">Refresh</button>
+        </div>
+        <div id="ca-grant-table"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    // ── PAP ──────────────────────────────────────────────────────────────────────
+
+    async function loadPolicies() {
+      try {
+        const [status, list] = await Promise.all([
+          fetch('/api/pap/status').then(r => r.json()),
+          fetch('/api/pap/policies').then(r => r.json()),
+        ]);
+        document.getElementById('pap-count').textContent = status.policies ?? '—';
+        document.getElementById('pap-pip-grants').textContent = status.pipGrants ?? '—';
+        document.getElementById('pap-version').textContent = status.version ?? '—';
+        document.getElementById('pap-domain').textContent = status.domainExternalId ?? '—';
+
+        const policies = list.policies ?? [];
+        const el = document.getElementById('policy-table');
+        if (policies.length === 0) {
+          el.innerHTML = '<div class="empty">No native policies</div>';
+          return;
+        }
+        el.innerHTML = `
+          <table>
+            <thead><tr>
+              <th>ID</th><th>Subject</th><th>Resource</th><th>Effect</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${policies.map(p => `
+                <tr>
+                  <td>${p.id}</td>
+                  <td>${p.subject}</td>
+                  <td>${p.resource}</td>
+                  <td><span class="badge ${p.effect === 'Permit' ? 'permit-badge' : 'deny-badge'}">${p.effect}</span></td>
+                  <td><button class="delete-btn" onclick="deletePolicy('${p.id}')">Delete</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch(e) {
+        document.getElementById('policy-table').innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function createPolicy(e) {
+      e.preventDefault();
+      const body = {
+        subject:  document.getElementById('pol-subject').value.trim(),
+        resource: document.getElementById('pol-resource').value.trim(),
+        action:   document.getElementById('pol-action').value.trim(),
+        effect:   document.getElementById('pol-effect').value,
+      };
+      const msg = document.getElementById('pol-msg');
+      msg.style.display = 'none';
+      try {
+        const r = await fetch('/api/pap/policies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (r.ok) {
+          showMsg('pol-msg', `Created policy ${d.id} (instant effect)`, true);
+          loadPolicies();
+        } else {
+          showMsg('pol-msg', d.error ?? JSON.stringify(d), false);
+        }
+      } catch(e) { showMsg('pol-msg', e.message, false); }
+    }
+
+    async function deletePolicy(id) {
+      if (!confirm(`Delete policy ${id}?`)) return;
+      try {
+        const r = await fetch('/api/pap/policies/' + id, { method: 'DELETE' });
+        if (r.ok || r.status === 204) {
+          loadPolicies();
+        } else {
+          alert('Delete failed: ' + r.status);
+        }
+      } catch(e) { alert('Error: ' + e.message); }
+    }
+
+    // ── PIP ──────────────────────────────────────────────────────────────────────
+
+    async function loadPIPGrants() {
+      try {
+        const [status, grants] = await Promise.all([
+          fetch('/api/pip/status').then(r => r.json()),
+          fetch('/api/pip/grants').then(r => r.json()),
+        ]);
+        document.getElementById('pip-count').textContent = status.grants ?? '—';
+        document.getElementById('pip-version').textContent = status.version ?? '—';
+        document.getElementById('pip-synced').textContent = status.synced ? 'yes' : 'no';
+
+        const items = grants.grants ?? [];
+        const el = document.getElementById('pip-grant-table');
+        if (items.length === 0) {
+          el.innerHTML = '<div class="empty">No cached grants (PIP not yet synced?)</div>';
+          return;
+        }
+        el.innerHTML = `
+          <table>
+            <thead><tr>
+              <th>Consumer</th><th>Service</th><th>Provider</th>
+            </tr></thead>
+            <tbody>
+              ${items.map(g => `
+                <tr>
+                  <td>${g.consumerSystemName ?? g.subject ?? ''}</td>
+                  <td>${g.serviceDefinition ?? g.resource ?? ''}</td>
+                  <td>${g.providerSystemName ?? ''}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch(e) {
+        document.getElementById('pip-grant-table').innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function lookupGrants(e) {
+      e.preventDefault();
+      const subject = document.getElementById('grant-subject').value.trim();
+      const el = document.getElementById('grant-result');
+      el.style.display = 'block';
+      el.textContent = 'Looking up…';
+      try {
+        const r = await fetch('/api/pip/grants?subject=' + encodeURIComponent(subject));
+        const d = await r.json();
+        el.textContent = JSON.stringify(d, null, 2);
+      } catch(e) { el.textContent = 'Error: ' + e.message; }
+    }
+
+    // ── ConsumerAuth ─────────────────────────────────────────────────────────────
+
+    async function loadCAGrants() {
+      try {
+        const resp = await fetch('/api/consumerauth/authorization/lookup');
+        const data = await resp.json();
+        const rules = data.rules ?? [];
+        const el = document.getElementById('ca-grant-table');
+        if (rules.length === 0) {
+          el.innerHTML = '<div class="empty">No grants in ConsumerAuth</div>';
+          return;
+        }
+        el.innerHTML = `
+          <table>
+            <thead><tr>
+              <th>ID</th><th>Consumer</th><th>Service</th><th>Provider</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${rules.map(g => `
+                <tr>
+                  <td>${g.id}</td>
+                  <td>${g.consumerSystemName}</td>
+                  <td>${g.serviceDefinition}</td>
+                  <td>${g.providerSystemName ?? ''}</td>
+                  <td><button class="delete-btn" onclick="revokeCAGrant(${g.id})">Revoke</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch(e) {
+        document.getElementById('ca-grant-table').innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function addCAGrant(e) {
+      e.preventDefault();
+      const body = {
+        consumerSystemName: document.getElementById('ca-consumer').value.trim(),
+        providerSystemName: document.getElementById('ca-provider').value.trim(),
+        serviceDefinition:  document.getElementById('ca-service').value.trim(),
+      };
+      try {
+        const r = await fetch('/api/consumerauth/authorization/grant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (r.ok) {
+          showMsg('ca-msg', `Granted id=${d.id} (PIP will sync within ~10 s)`, true);
+          loadCAGrants();
+        } else {
+          showMsg('ca-msg', d.error ?? JSON.stringify(d), false);
+        }
+      } catch(e) { showMsg('ca-msg', e.message, false); }
+    }
+
+    async function revokeCAGrant(id) {
+      if (!confirm(`Revoke ConsumerAuth grant id=${id}? PIP will sync the change within ~10 s.`)) return;
+      try {
+        await fetch('/api/consumerauth/authorization/revoke/' + id, { method: 'DELETE' });
+        loadCAGrants();
+        setTimeout(loadPIPGrants, 1000);
+      } catch(e) { alert('Error: ' + e.message); }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────────
+
+    function showMsg(id, text, ok) {
+      const el = document.getElementById(id);
+      el.style.display = 'block';
+      el.textContent = text;
+      el.className = 'msg ' + (ok ? 'msg-ok' : 'msg-err');
+      setTimeout(() => { el.style.display = 'none'; }, 5000);
+    }
+
+    // Initial load
+    loadPolicies();
+    loadPIPGrants();
+    loadCAGrants();
+    setInterval(loadPolicies, 10000);
+    setInterval(loadPIPGrants, 5000);
+    setInterval(loadCAGrants, 10000);
+  </script>
+</body>
+</html>

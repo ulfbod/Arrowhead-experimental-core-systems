@@ -49,6 +49,14 @@ use (
 	./experiments/experiment-9/services/portal-cloud-ml
 	./experiments/experiment-9/services/service-partner
 
+	// Experiment 10
+	./experiments/experiment-10/services/pap
+	./experiments/experiment-10/services/pip
+
+	// Experiment 11
+	./experiments/experiment-11/services/pip
+	./experiments/experiment-11/services/pap
+
 	// Support modules
 	./support/authzforce
 	./support/authzforce-server

@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Experiment 10 — Policy Admin</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #1a1d27;
+      --border: #2d3148;
+      --ok: #22c55e;
+      --err: #ef4444;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --accent: #6366f1;
+      --danger: #dc2626;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+    header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+    header h1 { font-size: 18px; font-weight: 600; }
+    header span { color: var(--muted); font-size: 13px; }
+    header a { color: var(--accent); font-size: 13px; text-decoration: none; margin-left: auto; padding: 6px 14px; border: 1px solid var(--accent); border-radius: 4px; }
+    header a:hover { background: var(--accent); color: white; }
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .card h2 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+    .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 8px; }
+    form { display: flex; flex-direction: column; gap: 8px; }
+    input, select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 7px 10px; font-size: 13px; width: 100%; }
+    label { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+    .field { display: flex; flex-direction: column; gap: 2px; }
+    .btn { border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-danger  { background: var(--danger); color: white; }
+    .btn:hover { opacity: 0.88; }
+    .btn-row { display: flex; gap: 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { text-align: left; padding: 6px 8px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+    td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .badge { padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .permit-badge { background: #14532d; color: var(--ok); }
+    .deny-badge   { background: #450a0a; color: var(--err); }
+    .valid-badge  { background: #14532d; color: var(--ok); }
+    .invalid-badge { background: #450a0a; color: var(--err); }
+    .delete-btn { background: none; border: 1px solid var(--border); color: var(--err); border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 11px; }
+    .delete-btn:hover { background: #450a0a; }
+    .msg { padding: 8px 12px; border-radius: 4px; font-size: 12px; margin-top: 8px; }
+    .msg-ok  { background: #14532d; color: var(--ok); }
+    .msg-err { background: #450a0a; color: var(--err); }
+    .empty { color: var(--muted); font-size: 12px; padding: 12px 0; text-align: center; }
+    .status-bar { display: flex; gap: 20px; padding: 8px 0 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+    .stat { font-size: 12px; color: var(--muted); }
+    .stat strong { color: var(--text); font-size: 20px; display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Experiment 10 — Policy Admin</h1>
+    <span>PAP · PIP · XACML Policy Management</span>
+    <a href="/">Monitoring Dashboard</a>
+  </header>
+  <main>
+
+    <!-- ── Left column: PAP ───────────────────────────────────────────── -->
+    <div>
+      <!-- PAP status -->
+      <div class="card">
+        <h2>PAP — Policy Administration Point</h2>
+        <div class="status-bar">
+          <div class="stat"><strong id="pap-count">—</strong>policies</div>
+          <div class="stat"><strong id="pap-version">—</strong>version</div>
+          <div class="stat"><strong id="pap-domain">—</strong>domain</div>
+        </div>
+
+        <!-- Create policy -->
+        <div class="section-title">Create Policy</div>
+        <form onsubmit="createPolicy(event)">
+          <div class="btn-row">
+            <div class="field" style="flex:2">
+              <label>Subject (consumer system)</label>
+              <input id="pol-subject" placeholder="e.g. service-partner-1" required />
+            </div>
+            <div class="field" style="flex:2">
+              <label>Resource (service)</label>
+              <input id="pol-resource" placeholder="e.g. telemetry-rest" required />
+            </div>
+          </div>
+          <div class="btn-row">
+            <div class="field" style="flex:2">
+              <label>Action</label>
+              <input id="pol-action" value="consume" required />
+            </div>
+            <div class="field" style="flex:1">
+              <label>Effect</label>
+              <select id="pol-effect">
+                <option value="Permit">Permit</option>
+                <option value="Deny">Deny</option>
+              </select>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary">Create Policy</button>
+          <div id="pol-msg" style="display:none" class="msg"></div>
+        </form>
+      </div>
+
+      <!-- Policy list -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h2 style="margin:0">Policies</h2>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" onclick="loadPolicies()">Refresh</button>
+        </div>
+        <div id="policy-table"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- ── Right column: PIP ──────────────────────────────────────────── -->
+    <div>
+      <!-- PIP status -->
+      <div class="card">
+        <h2>PIP — Policy Information Point</h2>
+        <div class="status-bar">
+          <div class="stat"><strong id="pip-count">—</strong>subjects</div>
+        </div>
+
+        <!-- Register subject -->
+        <div class="section-title">Register Subject</div>
+        <form onsubmit="registerSubject(event)">
+          <div class="btn-row">
+            <div class="field" style="flex:2">
+              <label>System name</label>
+              <input id="sub-name" placeholder="e.g. service-partner-1" required />
+            </div>
+            <div class="field" style="flex:1">
+              <label>Cert level</label>
+              <select id="sub-level">
+                <option value="sy">sy — System</option>
+                <option value="de">de — Device</option>
+                <option value="on">on — Onboarding</option>
+                <option value="lo">lo — Local Cloud</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label>
+              <input type="checkbox" id="sub-valid" checked style="width:auto;margin-right:6px" />
+              Certificate valid (not revoked)
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary">Register / Update Subject</button>
+          <div id="sub-msg" style="display:none" class="msg"></div>
+        </form>
+      </div>
+
+      <!-- Subject list -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h2 style="margin:0">Subjects</h2>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" onclick="loadSubjects()">Refresh</button>
+        </div>
+        <div id="subject-table"><div class="empty">Loading…</div></div>
+      </div>
+
+      <!-- Attribute lookup -->
+      <div class="card">
+        <h2>Attribute Lookup (PIP)</h2>
+        <form onsubmit="lookupAttributes(event)" style="flex-direction:row;gap:8px;display:flex;align-items:flex-end">
+          <div class="field" style="flex:1">
+            <label>System name</label>
+            <input id="attr-name" placeholder="e.g. service-partner-1" required />
+          </div>
+          <button type="submit" class="btn btn-primary" style="white-space:nowrap">Look Up</button>
+        </form>
+        <div id="attr-result" style="display:none;margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px;font-size:12px;font-family:monospace;white-space:pre-wrap"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    // ── PAP ──────────────────────────────────────────────────────────────────────
+
+    async function loadPolicies() {
+      try {
+        const [status, list] = await Promise.all([
+          fetch('/api/pap/status').then(r => r.json()),
+          fetch('/api/pap/policies').then(r => r.json()),
+        ]);
+        document.getElementById('pap-count').textContent = status.policies ?? '—';
+        document.getElementById('pap-version').textContent = status.version ?? '—';
+        document.getElementById('pap-domain').textContent = status.domainExternalId ?? '—';
+
+        const policies = list.policies ?? [];
+        const el = document.getElementById('policy-table');
+        if (policies.length === 0) {
+          el.innerHTML = '<div class="empty">No policies</div>';
+          return;
+        }
+        el.innerHTML = `
+          <table>
+            <thead><tr>
+              <th>ID</th><th>Subject</th><th>Resource</th><th>Action</th><th>Effect</th><th>Created</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${policies.map(p => `
+                <tr>
+                  <td>${p.id}</td>
+                  <td>${p.subject}</td>
+                  <td>${p.resource}</td>
+                  <td>${p.action}</td>
+                  <td><span class="badge ${p.effect === 'Permit' ? 'permit-badge' : 'deny-badge'}">${p.effect}</span></td>
+                  <td>${new Date(p.createdAt).toLocaleTimeString()}</td>
+                  <td><button class="delete-btn" onclick="deletePolicy('${p.id}')">Delete</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch(e) {
+        document.getElementById('policy-table').innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function createPolicy(e) {
+      e.preventDefault();
+      const body = {
+        subject:  document.getElementById('pol-subject').value.trim(),
+        resource: document.getElementById('pol-resource').value.trim(),
+        action:   document.getElementById('pol-action').value.trim(),
+        effect:   document.getElementById('pol-effect').value,
+      };
+      const msg = document.getElementById('pol-msg');
+      msg.style.display = 'none';
+      try {
+        const r = await fetch('/api/pap/policies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (r.ok) {
+          showMsg('pol-msg', `Created policy ${d.id}`, true);
+          loadPolicies();
+        } else {
+          showMsg('pol-msg', d.error ?? JSON.stringify(d), false);
+        }
+      } catch(e) { showMsg('pol-msg', e.message, false); }
+    }
+
+    async function deletePolicy(id) {
+      if (!confirm(`Delete policy ${id}?`)) return;
+      try {
+        const r = await fetch('/api/pap/policies/' + id, { method: 'DELETE' });
+        if (r.ok || r.status === 204) {
+          loadPolicies();
+        } else {
+          alert('Delete failed: ' + r.status);
+        }
+      } catch(e) { alert('Error: ' + e.message); }
+    }
+
+    // ── PIP ──────────────────────────────────────────────────────────────────────
+
+    async function loadSubjects() {
+      try {
+        const [status, list] = await Promise.all([
+          fetch('/api/pip/status').then(r => r.json()),
+          fetch('/api/pip/subjects').then(r => r.json()),
+        ]);
+        document.getElementById('pip-count').textContent = status.subjects ?? '—';
+
+        const subjects = list.subjects ?? [];
+        const el = document.getElementById('subject-table');
+        if (subjects.length === 0) {
+          el.innerHTML = '<div class="empty">No subjects registered</div>';
+          return;
+        }
+        el.innerHTML = `
+          <table>
+            <thead><tr>
+              <th>Name</th><th>Cert Level</th><th>Valid</th><th>Registered</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${subjects.map(s => `
+                <tr>
+                  <td>${s.name}</td>
+                  <td><code>${s.certLevel}</code></td>
+                  <td><span class="badge ${s.valid ? 'valid-badge' : 'invalid-badge'}">${s.valid ? 'Valid' : 'Invalid'}</span></td>
+                  <td>${new Date(s.registeredAt).toLocaleTimeString()}</td>
+                  <td><button class="delete-btn" onclick="deleteSubject('${s.name}')">Remove</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch(e) {
+        document.getElementById('subject-table').innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function registerSubject(e) {
+      e.preventDefault();
+      const body = {
+        name:      document.getElementById('sub-name').value.trim(),
+        certLevel: document.getElementById('sub-level').value,
+        valid:     document.getElementById('sub-valid').checked,
+      };
+      try {
+        const r = await fetch('/api/pip/subjects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (r.ok) {
+          showMsg('sub-msg', `Registered ${d.name} (${d.certLevel})`, true);
+          loadSubjects();
+        } else {
+          showMsg('sub-msg', d.error ?? JSON.stringify(d), false);
+        }
+      } catch(e) { showMsg('sub-msg', e.message, false); }
+    }
+
+    async function deleteSubject(name) {
+      if (!confirm(`Remove subject ${name}?`)) return;
+      try {
+        const r = await fetch('/api/pip/subjects/' + name, { method: 'DELETE' });
+        if (r.ok || r.status === 204) {
+          loadSubjects();
+        } else {
+          alert('Delete failed: ' + r.status);
+        }
+      } catch(e) { alert('Error: ' + e.message); }
+    }
+
+    async function lookupAttributes(e) {
+      e.preventDefault();
+      const name = document.getElementById('attr-name').value.trim();
+      const el = document.getElementById('attr-result');
+      el.style.display = 'block';
+      el.textContent = 'Looking up…';
+      try {
+        const r = await fetch('/api/pip/attributes/' + encodeURIComponent(name));
+        const d = await r.json();
+        el.textContent = JSON.stringify(d, null, 2);
+      } catch(e) { el.textContent = 'Error: ' + e.message; }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────────
+
+    function showMsg(id, text, ok) {
+      const el = document.getElementById(id);
+      el.style.display = 'block';
+      el.textContent = text;
+      el.className = 'msg ' + (ok ? 'msg-ok' : 'msg-err');
+      setTimeout(() => { el.style.display = 'none'; }, 4000);
+    }
+
+    // Initial load
+    loadPolicies();
+    loadSubjects();
+    setInterval(loadPolicies, 10000);
+    setInterval(loadSubjects, 10000);
+  </script>
+</body>
+</html>

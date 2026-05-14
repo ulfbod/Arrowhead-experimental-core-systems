@@ -1,0 +1,13 @@
+# Builds the PIP (Policy Information Point) service for experiment-10.
+# Build context: repo root (ArrowheadCore/)
+
+FROM golang:1.22-alpine AS builder
+WORKDIR /build/experiments/experiment-10/services/pip
+COPY experiments/experiment-10/services/pip/ .
+RUN CGO_ENABLED=0 go build -o /app .
+
+FROM alpine:3.19
+RUN apk add --no-cache wget
+COPY --from=builder /app /app
+EXPOSE 9306
+ENTRYPOINT ["/app"]
