@@ -1496,6 +1496,333 @@ probe_key=$(echo "$probe_resp_json"  | python3 -c 'import sys,json; d=json.load(
 
 ---
 
+## EXP-020 — Docker `ARG` declared before `FROM` is out of scope inside the build stage (experiment-9, 2026-05-14)
+
+### Symptom
+
+`docker compose up --build` failed for all four Arrowhead core system services
+(`serviceregistry`, `authentication`, `consumerauth`, `dynamicorch`) with the same error:
+
+```
+ > [consumerauth builder 4/4] RUN CGO_ENABLED=0 go build -o /app ./cmd/${CMD}:
+0.345 no Go files in /src/cmd
+------
+failed to solve: process "/bin/sh -c CGO_ENABLED=0 go build -o /app ./cmd/${CMD}" did not complete successfully: exit code: 1
+```
+
+The `${CMD}` variable expanded to an empty string, so Go tried to build `./cmd/` (the
+directory itself) — which contains no `.go` files.
+
+### Root Cause
+
+`core.Dockerfile` declared `ARG CMD` **before** the `FROM` instruction:
+
+```dockerfile
+ARG CMD                          # ← declared in global scope
+FROM golang:1.22-alpine AS builder
+WORKDIR /src
+...
+RUN CGO_ENABLED=0 go build -o /app ./cmd/${CMD}   # ← CMD is empty here
+```
+
+In Docker's multi-stage build model, `ARG` instructions before `FROM` define
+**global build args** that are only in scope for `FROM` instructions (e.g., to
+parameterise the base image tag). They are **not automatically available** inside
+any subsequent build stage. After a `FROM` line, the arg is out of scope and expands
+to an empty string unless it is re-declared inside that stage.
+
+The experiment-8 `core.Dockerfile` had the correct order — `ARG CMD` after `FROM` —
+and was copied incorrectly when creating the experiment-9 equivalent.
+
+### Fix
+
+Move `ARG CMD` to after `FROM golang:1.22-alpine AS builder`:
+
+```dockerfile
+# BEFORE (broken):
+ARG CMD
+FROM golang:1.22-alpine AS builder
+WORKDIR /src
+...
+
+# AFTER (correct):
+FROM golang:1.22-alpine AS builder
+ARG CMD
+WORKDIR /src
+...
+```
+
+Applied to `experiments/experiment-9/dockerfiles/core.Dockerfile`.
+
+### Guidance for Future Iterations
+
+**`ARG` declared before `FROM` is only visible in `FROM` statements — for example,
+to parameterise the base image tag. Any `ARG` used inside a build stage (in `RUN`,
+`COPY`, `ENV`, etc.) must be declared after the `FROM` that opens that stage.**
+
+Quick reference:
+
+```dockerfile
+# Valid use of global ARG (base image parameterisation):
+ARG GO_VERSION=1.22
+FROM golang:${GO_VERSION}-alpine AS builder
+
+# Correct use for build-time variables inside a stage:
+FROM golang:1.22-alpine AS builder
+ARG CMD                        # ← re-declare (or declare for first time) after FROM
+RUN go build ./cmd/${CMD}      # ← CMD is now in scope
+```
+
+Specific checks:
+
+1. **Search all Dockerfiles for `ARG` lines that appear before any `FROM`:**
+   ```bash
+   grep -n "^ARG\|^FROM" experiments/experiment-9/dockerfiles/*.Dockerfile \
+     | awk -F: '{print $1, $2, $3}' | sort
+   ```
+   Any `ARG` that appears at a lower line number than the first `FROM` and is also
+   used in a `RUN`/`COPY`/`ENV` line is almost certainly a scoping bug.
+
+2. **When copying a Dockerfile from a previous experiment**, diff it against the
+   source to confirm `ARG` / `FROM` ordering was not accidentally reversed.
+
+3. **The symptom is always a variable expanding to empty string** — `${CMD}` becomes
+   `""`, so `./cmd/` is built instead of `./cmd/serviceregistry`. The error message
+   `no Go files in /src/cmd` is the tell.
+
+---
+
+## EXP-021 — nginx exits at startup with "host not found in upstream" when backend containers are not yet running (experiment-9, 2026-05-14)
+
+### Symptom
+
+`http://localhost:3009/` (the experiment-9 dashboard) returns **connection refused**.
+The dashboard container exits immediately after starting with exit code 1:
+
+```
+[emerg] 1#1: host not found in upstream "serviceregistry" in /etc/nginx/conf.d/default.conf:9
+nginx: [emerg] host not found in upstream "serviceregistry" ...
+```
+
+This happens even though the dashboard is a static HTML page that has no functional
+dependency on the ServiceRegistry.
+
+### Root Cause
+
+When nginx parses a `proxy_pass http://hostname/;` directive with a **literal hostname**
+(not a variable), it resolves that hostname via DNS **at startup**, before it serves any
+requests. If the hostname does not resolve — because the backend container has not yet
+been registered in Docker's DNS — nginx aborts with `host not found in upstream` and exits.
+
+Docker's embedded DNS only registers a container name once Docker has started (or at least
+scheduled) that container. If the dashboard starts before any of the backend services, all
+their hostnames are unknown to Docker DNS and every `proxy_pass` target fails to resolve.
+
+This is compounded by the earlier `depends_on` fix (see EXP-021b): once the dashboard no
+longer waits for slow-starting services, it can start early — before backends are up —
+which is exactly when the startup-resolution problem triggers.
+
+### Fix
+
+Three rules must all hold together:
+
+**1. Add `resolver 127.0.0.11 valid=5s ipv6=off;` at server-block level.**
+`127.0.0.11` is Docker's embedded DNS, always present inside containers on a user-defined
+network. `valid=5s` re-checks DNS frequently so newly started backends become reachable.
+
+**2. Use a `set $upstream` variable in every `proxy_pass`** so nginx defers DNS resolution
+to request time instead of startup time.
+
+**3. Use `rewrite ... break` to strip the location prefix**, and put `set $upstream`
+**before** the `rewrite` — `rewrite ... break` stops processing subsequent `set`
+directives in the same rewrite phase, so a `set` after `rewrite` is silently skipped,
+leaving `$upstream` uninitialized and causing a 500 error.
+
+**Do NOT use `$request_uri` in `proxy_pass`** — `$request_uri` is the full original URI
+including the location prefix (e.g. `/api/serviceregistry/health`), so the backend
+receives the wrong path and returns 404.
+
+```nginx
+# BEFORE (resolves at startup — nginx crashes if backend is not up):
+location /api/serviceregistry/ {
+    proxy_pass http://serviceregistry:8080/;
+}
+
+# WRONG variable attempt 1 — $request_uri includes /api/serviceregistry/ prefix → 404:
+location /api/serviceregistry/ {
+    set $upstream http://serviceregistry:8080;
+    proxy_pass $upstream$request_uri;
+}
+
+# WRONG variable attempt 2 — set after rewrite break → $upstream uninitialized → 500:
+location /api/serviceregistry/ {
+    rewrite ^/api/serviceregistry/(.*) /$1 break;
+    set $upstream http://serviceregistry:8080;   # never executed!
+    proxy_pass $upstream;
+}
+
+# CORRECT — set before rewrite, rewrite strips prefix, proxy_pass uses rewritten URI:
+resolver 127.0.0.11 valid=5s ipv6=off;
+
+location /api/serviceregistry/ {
+    set $upstream http://serviceregistry:8080;      # 1. assign variable first
+    rewrite ^/api/serviceregistry/(.*) /$1 break;  # 2. strip prefix, stop rewrites
+    proxy_pass         $upstream;                  # 3. forward rewritten URI to backend
+    proxy_set_header   Host serviceregistry:8080;
+    proxy_read_timeout 5s;
+}
+```
+
+Applied to `experiments/experiment-9/dashboard/nginx.conf`.
+
+### Guidance for Future Iterations
+
+**Any nginx dashboard that uses `proxy_pass` with Docker service hostnames must use the
+variable pattern — never a literal hostname — so nginx starts independently of whether
+the backends are up.**
+
+Template for every proxied location:
+
+```nginx
+resolver 127.0.0.11 valid=5s ipv6=off;  # declare once at server block level
+
+location /api/myservice/ {
+    set $target http://myservice:8080;
+    proxy_pass         $target$request_uri;
+    proxy_set_header   Host myservice:8080;
+    proxy_read_timeout 5s;
+}
+```
+
+Specific checks:
+
+1. **Test the dashboard container in isolation** (no compose network, no backend services):
+   ```bash
+   docker build -t test-dashboard .
+   docker run --rm -p 3099:80 test-dashboard
+   curl http://localhost:3099/   # must return 200, not connection refused
+   ```
+   If nginx exits, run `docker logs <id>` — "host not found in upstream" is this bug.
+
+2. **Never use a literal hostname in `proxy_pass`** in a dashboard nginx.conf. The rule
+   applies even if `depends_on` ensures backends are started first — container startup order
+   and DNS registration are not perfectly synchronised.
+
+3. **`resolver 127.0.0.11`** is the Docker embedded DNS address. It is always present
+   inside any container on a user-defined Docker network. It is NOT available outside Docker
+   (e.g. in `nginx -t` on the host). Do not use `resolver 8.8.8.8` — that resolves public
+   DNS, not Docker service names.
+
+4. **`$request_uri` preserves the full original path and query string** after stripping the
+   location prefix via `proxy_pass`. Use it instead of bare `$target/` to avoid
+   double-path or dropped query-string bugs.
+
+---
+
+## EXP-021b — Dashboard unreachable because `depends_on` propagates slow service chains (experiment-9, 2026-05-14)
+
+### Symptom
+
+`http://localhost:3009/` (the experiment-9 dashboard) returns **connection refused** even
+after all core services are reported healthy and `docker compose ps` shows them running.
+The dashboard container has not started at all — it is stuck waiting on dependencies.
+
+### Root Cause
+
+The dashboard's `depends_on` block listed `pki-rest-authz: condition: service_started`
+and `portal-cloud-ml: condition: service_started`.
+
+`condition: service_started` sounds lightweight, but Docker only considers a container
+"started" once Docker has actually run it. Docker will not run `pki-rest-authz` until its
+own `depends_on` conditions are met:
+
+```
+dashboard
+  └── pki-rest-authz (service_started)
+        └── portal-cloud-ml (service_healthy)   ← healthcheck retries: 15, start_period: 15s
+              └── kafka-authz (service_healthy)
+                    └── kafka (service_healthy)  ← healthcheck retries: 20, start_period: 30s
+```
+
+Until the entire chain resolves, the dashboard container is never started. If any service
+in the chain fails its healthcheck permanently (e.g. a PKI lifecycle error in
+`portal-cloud-ml`), the dashboard never becomes reachable — making it impossible to even
+open the dashboard to diagnose the problem.
+
+The same logic applied to `kafka-authz: service_started` and `policy-sync: service_started`.
+
+### Fix
+
+Remove all application-service entries from the dashboard's `depends_on`. The dashboard
+is a **static HTML + nginx** container — it does not need any backend service to be running
+in order to serve the HTML. Nginx returns `502 Bad Gateway` for proxy locations whose
+backends are not yet up; the dashboard JavaScript interprets those as "unhealthy" and shows
+the appropriate status. Only `cert-provisioner: service_completed_successfully` is kept,
+because the `cert-provisioner` one-shot container must have completed before the certs
+volume is in a consistent state (even though the dashboard nginx doesn't use the certs).
+
+```yaml
+# BEFORE (blocks dashboard until deep service chain resolves):
+dashboard:
+  depends_on:
+    cert-provisioner:
+      condition: service_completed_successfully
+    consumerauth:
+      condition: service_started
+    authzforce:
+      condition: service_started
+    policy-sync:
+      condition: service_started
+    kafka-authz:
+      condition: service_started
+    pki-rest-authz:
+      condition: service_started
+    portal-cloud-ml:
+      condition: service_started
+
+# AFTER (starts as soon as cert-provisioner finishes — seconds, not minutes):
+dashboard:
+  depends_on:
+    cert-provisioner:
+      condition: service_completed_successfully
+```
+
+### Guidance for Future Iterations
+
+**A static file / nginx dashboard must have minimal `depends_on` — it should start
+immediately and let the UI reflect service health, not be blocked waiting for service health.**
+
+The general rule:
+
+| Service type | Correct `depends_on` |
+|---|---|
+| Static HTML/nginx dashboard | Only init containers (`cert-provisioner`, etc.) |
+| Application service (needs auth) | Its direct runtime dependencies only |
+| Test/setup containers | All services they call |
+
+Specific checks:
+
+1. **Never list a service with a deep `depends_on` chain in a dashboard's `depends_on`.**
+   `condition: service_started` is NOT the same as "starts quickly". Docker won't start
+   container B until A is started, and won't start A until A's own conditions are met.
+   Trace the full transitive chain before adding any entry.
+
+2. **A dashboard that can't start makes it impossible to diagnose why other services
+   are down.** Monitoring UIs must be available even when the things they monitor are not.
+
+3. **Verify dashboard availability early in `test-system.sh`** (pre-flight section):
+   ```bash
+   smoke_http "dashboard reachable" "http://localhost:3009/"
+   ```
+   If this fails, all later assertions about service health are moot.
+
+4. **`docker compose ps`** will show the dashboard container as `Created` (not `Running`)
+   if its `depends_on` conditions are unsatisfied — the symptom looks identical to a
+   crashed container, so check the dependency chain first before investigating nginx or
+   the Dockerfile.
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -1532,3 +1859,6 @@ Use this before marking an experiment implementation complete:
 - [ ] `test-system.sh` mTLS curl tests use `--resolve <hostname>:<port>:127.0.0.1 https://<hostname>:<port>/...` — never `https://localhost:<port>` when the server cert has a service-name SAN (EXP-019)
 - [ ] `test-system.sh` does not combine `curl -w "%{http_code}"` with `|| echo "000"` — curl already outputs `000` on connection failure; the `||` branch doubles it to `000000` (EXP-019)
 - [ ] JSON fields from CA/service responses are extracted with `python3 -c 'import json,sys; print(json.load(sys.stdin)["field"])'` — not with `sed`/`grep` + line-number arithmetic across filtered streams (EXP-019)
+- [ ] In every `core.Dockerfile` (and any Dockerfile with an `ARG` used inside a build stage), `ARG <name>` is declared **after** `FROM` — `ARG` before `FROM` is out of scope inside the stage and expands to empty string, causing `no Go files in /src/cmd` (EXP-020)
+- [ ] Every `proxy_pass` in a dashboard `nginx.conf` uses the `set`+`rewrite`+`proxy_pass` variable pattern with `resolver 127.0.0.11 valid=5s ipv6=off;` — never a literal hostname (startup crash), never `$request_uri` (wrong path), and `set $upstream` must come BEFORE `rewrite ... break` (break stops subsequent set directives). Test standalone with `docker run` before deploying (EXP-021)
+- [ ] The dashboard's `depends_on` lists **only** init/one-shot containers (e.g. `cert-provisioner`) — never application services with deep dependency chains. `condition: service_started` still blocks the dashboard if Docker hasn't started the dependency yet due to its own unsatisfied chain. A static nginx dashboard must start immediately so users can observe service health rather than being blocked by it (EXP-021b)

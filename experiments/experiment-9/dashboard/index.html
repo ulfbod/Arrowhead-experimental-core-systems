@@ -235,7 +235,9 @@
       try {
         const lookup = await fetch('/api/consumerauth/authorization/lookup');
         const grants = await lookup.json();
-        const grant = (Array.isArray(grants) ? grants : []).find(g =>
+        // /authorization/lookup returns {rules:[...], count:N} — not a bare array.
+        const rules = Array.isArray(grants) ? grants : (grants.rules ?? []);
+        const grant = rules.find(g =>
           g.consumerSystemName === 'service-partner-1' && g.serviceDefinition === 'telemetry-rest'
         );
         if (!grant) {

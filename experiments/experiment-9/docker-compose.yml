@@ -589,23 +589,18 @@ services:
       dockerfile: experiments/experiment-9/dockerfiles/dashboard.Dockerfile
     ports:
       - "3009:80"
-    volumes:
-      - certs:/certs:ro
+    # The dashboard is static HTML served by nginx. It does not need application
+    # services to be healthy or even started — nginx returns 502 for proxy locations
+    # whose backends are not yet up, and the dashboard JS shows those as unhealthy.
+    # Listing slow-starting services here (e.g. pki-rest-authz, portal-cloud-ml)
+    # blocks the dashboard because Docker will not start the dashboard container
+    # until every dependency's start condition is met — including the deep chains
+    # those services themselves require (kafka healthy → kafka-authz healthy →
+    # portal-cloud-ml healthy). With the full chain, the dashboard can be blocked
+    # for several minutes or indefinitely if any service fails to start.
     depends_on:
       cert-provisioner:
         condition: service_completed_successfully
-      consumerauth:
-        condition: service_started
-      authzforce:
-        condition: service_started
-      policy-sync:
-        condition: service_started
-      kafka-authz:
-        condition: service_started
-      pki-rest-authz:
-        condition: service_started
-      portal-cloud-ml:
-        condition: service_started
 
 volumes:
   certs:
