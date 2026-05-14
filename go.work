@@ -57,6 +57,9 @@ use (
 	./experiments/experiment-11/services/pip
 	./experiments/experiment-11/services/pap
 
+	// Core-evol (AH5-evolved systems)
+	./core-evol
+
 	// Support modules
 	./support/authzforce
 	./support/authzforce-server
