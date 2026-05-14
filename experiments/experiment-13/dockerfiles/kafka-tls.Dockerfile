@@ -5,7 +5,7 @@
 FROM confluentinc/cp-kafka:7.6.1
 USER root
 RUN microdnf install -y openssl
-COPY experiments/experiment-12/dockerfiles/kafka-tls-entrypoint.sh /kafka-tls-entrypoint.sh
+COPY experiments/experiment-13/dockerfiles/kafka-tls-entrypoint.sh /kafka-tls-entrypoint.sh
 RUN chmod +x /kafka-tls-entrypoint.sh
 USER 1000
 ENTRYPOINT ["/kafka-tls-entrypoint.sh"]

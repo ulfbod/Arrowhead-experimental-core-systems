@@ -248,7 +248,8 @@
       "Bash(grep -v \"^$\")",
       "Bash(protoc --version)",
       "Bash(sed:*)",
-      "Bash(go list:*)"
+      "Bash(go list:*)",
+      "Bash(grep:*)"
     ]
   }
 }

@@ -1,10 +1,10 @@
 # Builds the service-partner service for experiment-13.
-# Reuses experiment-10 service-partner source unchanged.
+# Reuses experiment-9 service-partner source unchanged.
 # Build context: repo root (ArrowheadCore/)
 
 FROM golang:1.22-alpine AS builder
-WORKDIR /build/experiments/experiment-10/services/service-partner
-COPY experiments/experiment-10/services/service-partner/ .
+WORKDIR /build/experiments/experiment-9/services/service-partner
+COPY experiments/experiment-9/services/service-partner/ .
 RUN go mod download && CGO_ENABLED=0 go build -o /app .
 
 FROM alpine:3.19

@@ -1032,6 +1032,41 @@ Specific checks:
    - `go mod tidy` in each module directory, or
    - `docker compose build <service>` for at least one new service.
 
+### Variant — Incomplete go.sum for modules that depend on workspace modules with external deps (experiment-13, 2026-05-14)
+
+A subtler form of this failure occurred in experiment-13. The `pip` and `profile-ca`
+services had `go.sum` files (created by the background agent), but Docker builds failed
+with:
+
+```
+missing go.sum entry for module providing package google.golang.org/grpc
+  (imported by arrowhead/experiment13/pip)
+missing go.sum entry for module providing package google.golang.org/grpc/codes
+  (imported by arrowhead/core-evol/proto/certlifecycle)
+```
+
+**Root cause**: The services imported `arrowhead/core-evol` (a workspace module via
+`replace` directive), which itself imports `google.golang.org/grpc`. When the agent
+ran tests locally, the workspace's shared dependency resolution populated the grpc
+entries implicitly. But the service-level `go.sum` was written without the transitive
+external dependencies of the replaced module.
+
+In module-isolated Docker builds (no `go.work`), Go requires that *all* transitive
+external dependencies appear in the root module's own `go.sum` — including those
+pulled in by workspace-replaced modules. A `go.sum` that passes workspace-mode builds
+may still be incomplete for isolated builds.
+
+**Fix**: Running `go mod tidy` in the service directory adds the missing entries:
+```bash
+cd experiments/experiment-13/services/pip        && go mod tidy
+cd experiments/experiment-13/services/profile-ca && go mod tidy
+```
+
+**Additional checklist item**: After creating any module that uses a `replace` directive
+pointing to a workspace module, run `go mod tidy` and verify the resulting `go.sum`
+includes the external dependencies of the replaced module — not just the module's own
+direct imports.
+
 ---
 
 ## EXP-015 — Confluent Kafka `dub` requires `KAFKA_SSL_KEYSTORE_FILENAME`, not `KAFKA_SSL_KEYSTORE_LOCATION` (experiment-7, 2026-05-08)
@@ -1324,11 +1359,18 @@ Specific checks:
    ```
 
 2. **Environment variable names must match what the service binary reads**, not what
-   sounds intuitive. Always cross-check against the support module's `main.go`:
+   sounds intuitive. Always cross-check against the service's `main.go`:
    ```bash
-   grep 'envOr\|os.Getenv' support/policy-sync/main.go
+   grep 'envOr\|os.Getenv' experiments/experiment-N/services/<name>/main.go
    ```
-   A wrong env var name is silently ignored if the Go code has a matching default.
+   A wrong env var name has two failure modes:
+   - **Silent** — the Go code has a matching default, the service starts but uses the
+     wrong value (e.g. `CA_URL` instead of `CONSUMERAUTH_URL` where the default happens
+     to be the same address).
+   - **Fatal** — the variable is required (`os.Getenv` with no default and an explicit
+     `log.Fatal`), the service exits immediately with "X is required" (e.g. `TARGET_URL`
+     set in docker-compose instead of the required `UPSTREAM_URL` in pki-rest-authz,
+     experiment-13). Both cases have identical root cause; only the visibility differs.
 
 3. **Distinguish "service is syncing" from "test can reach /status"** — healthy
    container logs and a test pre-flight failure can coexist when the port is missing.
@@ -1823,6 +1865,216 @@ Specific checks:
 
 ---
 
+## EXP-024 — `/dev/tcp` healthcheck fails in Alpine containers (`/bin/sh` has no `/dev/tcp`) (experiment-13, 2026-05-14)
+
+### Symptom
+
+A gRPC service (or any TCP-only service) running in an Alpine container is marked
+**unhealthy** by Docker even though the service started and is accepting connections:
+
+```
+container experiment-13-authz-pdp-1 is unhealthy
+```
+
+The container logs show the service running correctly:
+
+```
+authz-pdp: gRPC server listening on :9550 (reflection enabled)
+```
+
+Running `docker inspect` reveals the health check is failing with:
+
+```
+/bin/sh: can't create /dev/tcp/localhost/9550: nonexistent directory
+```
+
+### Root Cause
+
+The healthcheck command used the bash TCP pseudo-device:
+
+```yaml
+test: ["CMD-SHELL", "printf '' > /dev/tcp/localhost/9550 2>/dev/null && echo ok || exit 1"]
+```
+
+`/dev/tcp` is a bash-specific feature — it is not a real filesystem path but a
+special construct that bash intercepts. Alpine Linux containers use busybox `ash`
+as `/bin/sh`, which does not support `/dev/tcp`. The shell literally tries to open
+`/dev/tcp/localhost/9550` as a file path, fails because the directory doesn't exist,
+and exits non-zero.
+
+The same healthcheck works in `confluentinc/cp-kafka` containers because those
+images use a full bash shell.
+
+### Fix
+
+Replace the `/dev/tcp` check with `nc -z` (netcat), which is included in Alpine's
+busybox and works under `sh`:
+
+```yaml
+# BEFORE (bash-only):
+test: ["CMD-SHELL", "printf '' > /dev/tcp/localhost/9550 2>/dev/null && echo ok || exit 1"]
+
+# AFTER (works in Alpine sh / busybox):
+test: ["CMD-SHELL", "nc -z localhost 9550 || exit 1"]
+```
+
+No Dockerfile change needed — `nc` is part of Alpine's base busybox install.
+
+### Guidance for Future Iterations
+
+`/dev/tcp` healthchecks only work in containers whose base image provides bash
+(e.g. Debian, Ubuntu, or Confluent's cp-kafka). Never use `/dev/tcp` in healthchecks
+for Alpine-based or scratch-based containers.
+
+| Base image | Shell | `/dev/tcp` works? | TCP health check to use |
+|---|---|---|---|
+| `confluentinc/cp-kafka` | bash | Yes | `/dev/tcp` or `nc -z` |
+| `alpine:*` | busybox sh | No | `nc -z localhost <port>` |
+| `golang:*-alpine` | busybox sh | No | `nc -z localhost <port>` |
+| `scratch` / distroless | none | No | `COPY` a probe binary |
+
+For HTTP services on Alpine, `wget -qO- http://localhost:<port>/health` is the
+correct approach (wget is typically installed explicitly in the Dockerfile).
+For TCP-only services (gRPC, raw TCP), use `nc -z localhost <port>`.
+
+---
+
+## EXP-023 — `dub` requires `KAFKA_SSL_TRUSTSTORE_FILENAME` when `ssl.client.auth=required` (experiment-13, 2026-05-14)
+
+### Symptom
+
+Kafka container exits with code 1 immediately after the entrypoint script completes
+cert setup successfully:
+
+```
+[kafka-tls] SSL configured — starting Kafka
+===> Configuring ...
+Running in KRaft mode...
+SSL is enabled.
+KAFKA_SSL_TRUSTSTORE_FILENAME is required.
+Command [/usr/local/bin/dub ensure KAFKA_SSL_TRUSTSTORE_FILENAME] FAILED !
+```
+
+All other containers that depend on Kafka are created but never start.
+
+### Root Cause
+
+The experiment-12 `kafka-tls-entrypoint.sh` explicitly unsets `KAFKA_SSL_TRUSTSTORE_FILENAME`
+and uses the absolute-path alternative `KAFKA_SSL_TRUSTSTORE_LOCATION` instead, based on the
+finding in EXP-015/EXP-016 that dub does not translate the truststore filename.
+
+This worked for experiments 7, 9, and 12 because all three set `KAFKA_SSL_CLIENT_AUTH: none`.
+When client auth is `none`, dub does not validate that a truststore is configured and the missing
+`KAFKA_SSL_TRUSTSTORE_FILENAME` variable is never checked.
+
+Experiment-13 sets `KAFKA_SSL_CLIENT_AUTH: required` so that Kafka enforces mTLS on all
+connections and the client certificate CN becomes the XACML subject-id. With client auth
+enabled, dub runs `dub ensure KAFKA_SSL_TRUSTSTORE_FILENAME` to confirm that the truststore
+is configured — and fails because the entrypoint unset it.
+
+### Fix
+
+Create an experiment-13-specific entrypoint that:
+1. Exports `KAFKA_SSL_TRUSTSTORE_FILENAME="kafka-truststore.jks"` (bare filename, resolved
+   relative to `/etc/kafka/secrets/` by dub)
+2. Exports `KAFKA_SSL_TRUSTSTORE_CREDENTIALS` pointing to the truststore password file
+3. Removes `unset KAFKA_SSL_TRUSTSTORE_FILENAME` and `KAFKA_SSL_TRUSTSTORE_LOCATION`
+
+```bash
+# experiment-13 entrypoint (after truststore is created in /etc/kafka/secrets/)
+printf '%s' "$KAFKA_KEYSTORE_PASS" > "$SECRETS_DIR/kafka_truststore_creds"
+
+export KAFKA_SSL_TRUSTSTORE_TYPE=JKS
+export KAFKA_SSL_TRUSTSTORE_FILENAME="kafka-truststore.jks"
+export KAFKA_SSL_TRUSTSTORE_CREDENTIALS="kafka_truststore_creds"
+# Do NOT unset KAFKA_SSL_TRUSTSTORE_FILENAME — dub requires it when client auth is enabled
+```
+
+Update `kafka-tls.Dockerfile` to COPY from the experiment-13 dockerfiles directory rather
+than reusing the experiment-12 entrypoint.
+
+### Guidance for Future Iterations
+
+`dub ensure <VAR>` validates that the named variable is set. The set of required variables
+depends on the SSL configuration mode:
+
+| `KAFKA_SSL_CLIENT_AUTH` | `KAFKA_SSL_TRUSTSTORE_FILENAME` required by dub? |
+|---|---|
+| `none` | No |
+| `requested` | Yes |
+| `required` | Yes |
+
+When enabling mTLS (`required`) for the first time in a new experiment, create a fresh
+entrypoint script rather than reusing one from an experiment that used `none`. Check the
+checklist item for EXP-015/EXP-016 and add:
+
+- `KAFKA_SSL_TRUSTSTORE_FILENAME` — bare filename relative to `/etc/kafka/secrets/`
+- `KAFKA_SSL_TRUSTSTORE_CREDENTIALS` — credential file for the truststore password
+
+Do not rely on `KAFKA_SSL_TRUSTSTORE_LOCATION` as a substitute — it may be ignored by
+dub's validation pass even if Kafka itself would accept it.
+
+---
+
+## EXP-022 — Dockerfile references wrong experiment for reused services (experiment-13, 2026-05-14)
+
+### Symptom
+
+`docker compose up --build` fails with:
+
+```
+failed to solve: failed to compute cache key: failed to calculate checksum of ref
+...: "/experiments/experiment-10/services/portal-cloud-ml": not found
+```
+
+The `portal-cloud-ml` and `service-partner` images cannot be built. The `dynamicorch-xacml`
+build (running in parallel) is also canceled as a side-effect of the parallel failure.
+
+### Root Cause
+
+The `portal-cloud-ml.Dockerfile` and `service-partner.Dockerfile` for experiment-13 were
+written to reuse source from `experiments/experiment-10/services/portal-cloud-ml/` and
+`experiments/experiment-10/services/service-partner/`. Those paths do not exist.
+
+Experiment-10 introduced only `pap` and `pip` services. The `portal-cloud-ml` and
+`service-partner` services were introduced in experiment-9 and were not carried forward into
+experiment-10's `services/` directory. The Dockerfiles referenced the most recent experiment
+number rather than the experiment that actually owns the source.
+
+### Fix
+
+Update both Dockerfiles to reference the correct experiment:
+
+```dockerfile
+# portal-cloud-ml.Dockerfile — BEFORE
+WORKDIR /build/experiments/experiment-10/services/portal-cloud-ml
+COPY experiments/experiment-10/services/portal-cloud-ml/ .
+
+# portal-cloud-ml.Dockerfile — AFTER
+WORKDIR /build/experiments/experiment-9/services/portal-cloud-ml
+COPY experiments/experiment-9/services/portal-cloud-ml/ .
+```
+
+Same change for `service-partner.Dockerfile`.
+
+### Guidance for Future Iterations
+
+When writing a Dockerfile that reuses a service from a previous experiment, check which
+experiment **actually contains** that service's `services/<name>/` directory — it is not
+always the immediately preceding experiment. A later experiment may have replaced a service
+with a different implementation and dropped the old one from its `services/` directory.
+
+Before writing `COPY experiments/experiment-N/services/<name>/`:
+
+```bash
+# Find which experiment owns the service source
+ls experiments/experiment-*/services/<name>/ 2>/dev/null
+```
+
+Use the experiment number returned by that command, not an assumed "latest".
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -1853,8 +2105,9 @@ Use this before marking an experiment implementation complete:
 - [ ] `KAFKA_INTER_BROKER_LISTENER_NAME` is set in docker-compose.yml when the SSL listener is the only advertised listener (EXP-016)
 - [ ] `KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""` is set when the CA does not issue SANs — Kafka 2.0+ defaults to HTTPS hostname verification which rejects CN-only certs at startup (EXP-016)
 - [ ] Every Go module under `experiments/` has a `go.sum` file committed alongside its `go.mod` — run `go mod tidy` in each module directory and commit both files before building Docker images (EXP-014)
+- [ ] For modules that use a `replace` directive pointing to a workspace module (e.g. `arrowhead/core-evol`), verify that `go.sum` includes the *transitive* external deps of the replaced module (e.g. `google.golang.org/grpc`) — run `go mod tidy` even when `go.sum` already exists, since workspace-mode tests may succeed with an incomplete `go.sum` that fails isolated Docker builds (EXP-014 variant, experiment-13)
 - [ ] Every service whose endpoints are called by `test-system.sh` has a `ports:` mapping in docker-compose.yml — `test-system.sh` runs on the host and reaches services via `localhost:<port>` (EXP-017)
-- [ ] Environment variable names in docker-compose.yml match what the service binary reads (check `grep 'envOr\|os.Getenv' support/<module>/main.go`) — wrong names are silently ignored when Go defaults match (EXP-017)
+- [ ] Environment variable names in docker-compose.yml match what the service binary reads (check `grep 'envOr\|os.Getenv' <service>/main.go`) — wrong names are silently ignored when Go defaults match, or cause immediate fatal exit when the var is required with no default (EXP-017)
 - [ ] Any service that proxies HTTPS requests to another service uses a custom `*http.Client` with `RootCAs` set to the ephemeral CA pool — never `http.DefaultClient` for mTLS upstreams (EXP-018)
 - [ ] `test-system.sh` mTLS curl tests use `--resolve <hostname>:<port>:127.0.0.1 https://<hostname>:<port>/...` — never `https://localhost:<port>` when the server cert has a service-name SAN (EXP-019)
 - [ ] `test-system.sh` does not combine `curl -w "%{http_code}"` with `|| echo "000"` — curl already outputs `000` on connection failure; the `||` branch doubles it to `000000` (EXP-019)
@@ -1862,3 +2115,6 @@ Use this before marking an experiment implementation complete:
 - [ ] In every `core.Dockerfile` (and any Dockerfile with an `ARG` used inside a build stage), `ARG <name>` is declared **after** `FROM` — `ARG` before `FROM` is out of scope inside the stage and expands to empty string, causing `no Go files in /src/cmd` (EXP-020)
 - [ ] Every `proxy_pass` in a dashboard `nginx.conf` uses the `set`+`rewrite`+`proxy_pass` variable pattern with `resolver 127.0.0.11 valid=5s ipv6=off;` — never a literal hostname (startup crash), never `$request_uri` (wrong path), and `set $upstream` must come BEFORE `rewrite ... break` (break stops subsequent set directives). Test standalone with `docker run` before deploying (EXP-021)
 - [ ] The dashboard's `depends_on` lists **only** init/one-shot containers (e.g. `cert-provisioner`) — never application services with deep dependency chains. `condition: service_started` still blocks the dashboard if Docker hasn't started the dependency yet due to its own unsatisfied chain. A static nginx dashboard must start immediately so users can observe service health rather than being blocked by it (EXP-021b)
+- [ ] Any Dockerfile that reuses a service from a previous experiment references the experiment that **actually contains** the `services/<name>/` directory — verify with `ls experiments/experiment-*/services/<name>/` before writing the COPY path; a later experiment may have replaced or dropped that service (EXP-022)
+- [ ] TCP-only service healthchecks (gRPC, raw TCP) on Alpine containers use `nc -z localhost <port>` — never `printf '' > /dev/tcp/localhost/<port>` which is bash-only and fails silently in Alpine's busybox sh with "can't create /dev/tcp/...: nonexistent directory" (EXP-024)
+- [ ] When `KAFKA_SSL_CLIENT_AUTH` is `requested` or `required`, the entrypoint script exports `KAFKA_SSL_TRUSTSTORE_FILENAME` (bare filename, relative to `/etc/kafka/secrets/`) and `KAFKA_SSL_TRUSTSTORE_CREDENTIALS` — do NOT unset `KAFKA_SSL_TRUSTSTORE_FILENAME`; dub validates its presence and fails with "KAFKA_SSL_TRUSTSTORE_FILENAME is required" when client auth is enabled. Create a new entrypoint rather than reusing one written for `none` (EXP-023)

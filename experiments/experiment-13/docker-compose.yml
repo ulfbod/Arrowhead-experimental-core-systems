@@ -261,7 +261,7 @@ services:
       setup:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "printf '' > /dev/tcp/localhost/9550 2>/dev/null && echo ok || exit 1"]
+      test: ["CMD-SHELL", "nc -z localhost 9550 || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -490,7 +490,7 @@ services:
     environment:
       AUTHZFORCE_URL: "http://authzforce:8080/authzforce-ce"
       AUTHZFORCE_DOMAIN: "arrowhead-exp13"
-      TARGET_URL: "http://portal-cloud-ml:9207"
+      UPSTREAM_URL: "http://portal-cloud-ml:9207"
       PORT: "9209"
       TLS_PORT: "9208"
       PIP_URL: "http://pip:9506"
