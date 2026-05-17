@@ -58,6 +58,13 @@ func (s *authServer) requirePOST(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// isPublisher returns true if username is a publisher identity.
+// Any username starting with the configured publisherUser prefix is a publisher
+// (e.g. PUBLISHER_USER="robot-fleet" matches "robot-fleet-site-1", "robot-fleet-tls", etc.)
+func (s *authServer) isPublisher(username string) bool {
+	return strings.HasPrefix(username, s.cfg.publisherUser)
+}
+
 // handleUser validates credentials. Admin and publisher are validated locally.
 // Consumer credentials are verified locally (shared password) and then their
 // grant existence is confirmed via an AuthzForce decision enriched with cert-level.
@@ -78,7 +85,7 @@ func (s *authServer) handleUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if username == s.cfg.publisherUser {
+	if s.isPublisher(username) {
 		if password == s.cfg.publisherPass {
 			fmt.Fprint(w, "allow")
 		} else {
@@ -91,7 +98,7 @@ func (s *authServer) handleUser(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "deny")
 		return
 	}
-	ok, err := s.decide(r.Context(), username, "telemetry", "subscribe")
+	ok, err := s.decide(r.Context(), username, "telemetry", "consume")
 	if err != nil {
 		log.Printf("[topic-auth-xacml] AuthzForce error for user=%q: %v", username, err)
 		fmt.Fprint(w, "deny")
@@ -112,12 +119,12 @@ func (s *authServer) handleVhost(w http.ResponseWriter, r *http.Request) {
 	}
 	username := r.FormValue("username")
 
-	if username == s.cfg.rmqAdminUser || username == s.cfg.publisherUser {
+	if username == s.cfg.rmqAdminUser || s.isPublisher(username) {
 		fmt.Fprint(w, "allow")
 		return
 	}
 
-	ok, err := s.decide(r.Context(), username, "telemetry", "subscribe")
+	ok, err := s.decide(r.Context(), username, "telemetry", "consume")
 	if err != nil {
 		log.Printf("[topic-auth-xacml] AuthzForce error for vhost user=%q: %v", username, err)
 		fmt.Fprint(w, "deny")
@@ -150,7 +157,7 @@ func (s *authServer) handleTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if username == s.cfg.publisherUser {
+	if s.isPublisher(username) {
 		if permission == "write" {
 			fmt.Fprint(w, "allow")
 		} else {
@@ -170,7 +177,7 @@ func (s *authServer) handleTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ok, err := s.decide(r.Context(), username, service, "subscribe")
+	ok, err := s.decide(r.Context(), username, service, "consume")
 	if err != nil {
 		log.Printf("[topic-auth-xacml] AuthzForce error topic user=%q key=%q: %v", username, routingKey, err)
 		fmt.Fprint(w, "deny")

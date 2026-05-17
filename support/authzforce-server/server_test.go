@@ -48,15 +48,31 @@ func TestParseGrants_multiple(t *testing.T) {
 // ── parseXACMLRequest ─────────────────────────────────────────────────────────
 
 func TestParseXACMLRequest_both(t *testing.T) {
-	body := `<AttributeValue DataType="xs:string">my-consumer</AttributeValue>` +
-		`<AttributeValue DataType="xs:string">my-service</AttributeValue>` +
-		`<AttributeValue DataType="xs:string">invoke</AttributeValue>`
+	body := `<Attribute AttributeId="urn:oasis:names:tc:xacml:1.0:subject:subject-id" IncludeInResult="false"><AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">my-consumer</AttributeValue></Attribute>` +
+		`<Attribute AttributeId="urn:oasis:names:tc:xacml:1.0:resource:resource-id" IncludeInResult="false"><AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">my-service</AttributeValue></Attribute>` +
+		`<Attribute AttributeId="urn:oasis:names:tc:xacml:1.0:action:action-id" IncludeInResult="false"><AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">invoke</AttributeValue></Attribute>`
 	subj, res := parseXACMLRequest(body)
 	if subj != "my-consumer" {
 		t.Errorf("subject: got %q, want %q", subj, "my-consumer")
 	}
 	if res != "my-service" {
 		t.Errorf("resource: got %q, want %q", res, "my-service")
+	}
+}
+
+func TestParseXACMLRequest_enriched(t *testing.T) {
+	// Enriched request with extra cert-level and cert-valid attributes interleaved
+	// before the resource. Parser must extract by AttributeId, not position.
+	body := `<Attribute AttributeId="urn:oasis:names:tc:xacml:1.0:subject:subject-id" IncludeInResult="false"><AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">portal-cloud-ml</AttributeValue></Attribute>` +
+		`<Attribute AttributeId="urn:arrowhead:attribute:cert-level" IncludeInResult="false"><AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">sy</AttributeValue></Attribute>` +
+		`<Attribute AttributeId="urn:arrowhead:attribute:cert-valid" IncludeInResult="false"><AttributeValue DataType="http://www.w3.org/2001/XMLSchema#boolean">true</AttributeValue></Attribute>` +
+		`<Attribute AttributeId="urn:oasis:names:tc:xacml:1.0:resource:resource-id" IncludeInResult="false"><AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">telemetry</AttributeValue></Attribute>`
+	subj, res := parseXACMLRequest(body)
+	if subj != "portal-cloud-ml" {
+		t.Errorf("subject: got %q, want %q", subj, "portal-cloud-ml")
+	}
+	if res != "telemetry" {
+		t.Errorf("resource: got %q, want %q", res, "telemetry")
 	}
 }
 

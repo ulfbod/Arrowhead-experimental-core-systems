@@ -98,7 +98,7 @@ func (s *authzServer) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	attrs, _ := s.pip.GetAttributes(req.Consumer)
-	permit, err := decideWithCertLevel(s.cfg.azURL, s.cfg.azDomainID, req.Consumer, req.Service, "subscribe", attrs.CertLevel, attrs.CertValid)
+	permit, err := decideWithCertLevel(s.cfg.azURL, s.cfg.azDomainID, req.Consumer, req.Service, "consume", attrs.CertLevel, attrs.CertValid)
 	if err != nil {
 		log.Printf("[kafka-authz] AuthzForce error check consumer=%q service=%q: %v", req.Consumer, req.Service, err)
 		http.Error(w, "PDP unavailable", http.StatusServiceUnavailable)
@@ -137,7 +137,7 @@ func (s *authzServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	attrs, _ := s.pip.GetAttributes(consumerName)
 
 	// AuthzForce decision with cert-level enrichment.
-	permit, err := decideWithCertLevel(s.cfg.azURL, s.cfg.azDomainID, consumerName, service, "subscribe", attrs.CertLevel, attrs.CertValid)
+	permit, err := decideWithCertLevel(s.cfg.azURL, s.cfg.azDomainID, consumerName, service, "consume", attrs.CertLevel, attrs.CertValid)
 	if err != nil {
 		log.Printf("[kafka-authz] AuthzForce error stream consumer=%q service=%q: %v", consumerName, service, err)
 		http.Error(w, "PDP unavailable", http.StatusServiceUnavailable)
@@ -233,7 +233,7 @@ func (s *authzServer) handleStream(w http.ResponseWriter, r *http.Request) {
 			msgN++
 			if msgN%100 == 0 {
 				reAttrs, _ := s.pip.GetAttributes(consumerName)
-				ok, err := decideWithCertLevel(s.cfg.azURL, s.cfg.azDomainID, consumerName, service, "subscribe", reAttrs.CertLevel, reAttrs.CertValid)
+				ok, err := decideWithCertLevel(s.cfg.azURL, s.cfg.azDomainID, consumerName, service, "consume", reAttrs.CertLevel, reAttrs.CertValid)
 				if err != nil {
 					log.Printf("[kafka-authz] AuthzForce re-check error: %v", err)
 				} else if !ok {
@@ -254,5 +254,5 @@ func (s *authzServer) handleStream(w http.ResponseWriter, r *http.Request) {
 // decideForTesting wraps decideWithCertLevel for use in tests.
 func (s *authzServer) decideForTesting(ctx context.Context, consumer, service string) (bool, error) {
 	attrs, _ := s.pip.GetAttributes(consumer)
-	return decideWithCertLevel(s.cfg.azURL, s.cfg.azDomainID, consumer, service, "subscribe", attrs.CertLevel, attrs.CertValid)
+	return decideWithCertLevel(s.cfg.azURL, s.cfg.azDomainID, consumer, service, "consume", attrs.CertLevel, attrs.CertValid)
 }

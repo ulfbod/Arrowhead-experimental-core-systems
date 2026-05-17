@@ -10,7 +10,7 @@ import (
 
 func newTestCA(t *testing.T) *ProfileCA {
 	t.Helper()
-	ca, err := NewProfileCA(24 * time.Hour)
+	ca, err := NewProfileCA(24 * time.Hour, "")
 	if err != nil {
 		t.Fatalf("NewProfileCA: %v", err)
 	}
@@ -251,6 +251,95 @@ func TestRevoke_AlreadyRevoked(t *testing.T) {
 	ca.Revoke("double-revoke")              //nolint:errcheck
 	if err := ca.Revoke("double-revoke"); err == nil {
 		t.Error("expected error revoking already-revoked cert")
+	}
+}
+
+// TestReissue_UnrevokesAndEmitsIssuedEvent verifies that Reissue clears the
+// revoked flag, emits an ISSUED event to subscribers, and makes the record
+// visible in GetAll again.
+func TestReissue_UnrevokesAndEmitsIssuedEvent(t *testing.T) {
+	ca := newTestCA(t)
+	ca.IssueInfraCert("sp-reissue") //nolint:errcheck
+	ca.Revoke("sp-reissue")         //nolint:errcheck
+
+	ch, unsubscribe := ca.Subscribe()
+	defer unsubscribe()
+
+	if err := ca.Reissue("sp-reissue"); err != nil {
+		t.Fatalf("Reissue: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		if event.Type != "issued" {
+			t.Errorf("expected type=issued after reissue, got %s", event.Type)
+		}
+		if event.CN != "sp-reissue" {
+			t.Errorf("expected CN=sp-reissue, got %s", event.CN)
+		}
+		if event.OU != "sy" {
+			t.Errorf("expected OU=sy, got %s", event.OU)
+		}
+		if event.IssuedAt == "" {
+			t.Error("IssuedAt should be set for reissued event")
+		}
+		if event.ExpiresAt == "" {
+			t.Error("ExpiresAt should be set for reissued event")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for ISSUED event after Reissue")
+	}
+
+	// Cert must appear in GetAll now.
+	records := ca.GetAll()
+	found := false
+	for _, r := range records {
+		if r.CN == "sp-reissue" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("reissued cert should appear in GetAll")
+	}
+}
+
+// TestReissue_UnknownCN verifies Reissue returns an error for an unknown CN.
+func TestReissue_UnknownCN(t *testing.T) {
+	ca := newTestCA(t)
+	if err := ca.Reissue("does-not-exist"); err == nil {
+		t.Error("expected error reissuing unknown CN")
+	}
+}
+
+// TestReissue_NotRevoked verifies Reissue returns an error when the cert is not revoked.
+func TestReissue_NotRevoked(t *testing.T) {
+	ca := newTestCA(t)
+	ca.IssueInfraCert("active-cert") //nolint:errcheck
+	if err := ca.Reissue("active-cert"); err == nil {
+		t.Error("expected error reissuing non-revoked cert")
+	}
+}
+
+// TestReissue_RevokeReissueRevoke verifies the full revoke→reissue→revoke cycle.
+func TestReissue_RevokeReissueRevoke(t *testing.T) {
+	ca := newTestCA(t)
+	ca.IssueInfraCert("cycle-test") //nolint:errcheck
+
+	if err := ca.Revoke("cycle-test"); err != nil {
+		t.Fatalf("first Revoke: %v", err)
+	}
+	if err := ca.Reissue("cycle-test"); err != nil {
+		t.Fatalf("Reissue: %v", err)
+	}
+	if err := ca.Revoke("cycle-test"); err != nil {
+		t.Fatalf("second Revoke: %v", err)
+	}
+
+	records := ca.GetAll()
+	for _, r := range records {
+		if r.CN == "cycle-test" {
+			t.Error("re-revoked cert should not appear in GetAll")
+		}
 	}
 }
 

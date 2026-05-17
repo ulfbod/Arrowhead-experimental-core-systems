@@ -68,6 +68,9 @@ use (
 	./experiments/experiment-13/services/profile-ca
 	./experiments/experiment-13/services/topic-auth-xacml
 
+	// Experiment 14
+	./experiments/experiment-14/services/topic-auth-xacml
+
 	// Support modules
 	./support/authzforce
 	./support/authzforce-server

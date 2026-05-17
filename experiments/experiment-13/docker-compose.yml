@@ -67,6 +67,9 @@ services:
       PORT: "8087"
       TLS_PORT: "8088"
       GRPC_PORT: "8089"
+      CA_KEY_FILE: "/data/ca.key"
+    volumes:
+      - profile-ca-data:/data
     ports:
       - "8587:8087"
       - "8588:8088"
@@ -396,7 +399,7 @@ services:
       RABBITMQ_ADMIN_USER: admin
       RABBITMQ_ADMIN_PASS: admin
       CONSUMER_PASSWORD: "consumer-secret"
-      PUBLISHER_USER: "robot-fleet-tls"
+      PUBLISHER_USER: "robot-fleet"
       PUBLISHER_PASSWORD: "fleet-secret"
       CACHE_TTL: "0s"
       PORT: "9090"
@@ -490,7 +493,7 @@ services:
     environment:
       AUTHZFORCE_URL: "http://authzforce:8080/authzforce-ce"
       AUTHZFORCE_DOMAIN: "arrowhead-exp13"
-      UPSTREAM_URL: "http://portal-cloud-ml:9207"
+      UPSTREAM_URL: "https://portal-cloud-ml:9294"
       PORT: "9209"
       TLS_PORT: "9208"
       PIP_URL: "http://pip:9506"
@@ -524,7 +527,7 @@ services:
     ports:
       - "9616:9003"
     environment:
-      AMQP_URL: "amqps://robot-fleet-tls:fleet-secret@rabbitmq:5671/"
+      AMQP_URL: "amqps://robot-fleet-site-1:fleet-secret@rabbitmq:5671/"
       KAFKA_BROKERS: "kafka:9092"
       KAFKA_TOPIC: "arrowhead.telemetry"
       INITIAL_ROBOT_COUNT: "2"
@@ -565,7 +568,7 @@ services:
     ports:
       - "9617:9003"
     environment:
-      AMQP_URL: "amqps://robot-fleet-tls:fleet-secret@rabbitmq:5671/"
+      AMQP_URL: "amqps://robot-fleet-site-2:fleet-secret@rabbitmq:5671/"
       KAFKA_BROKERS: "kafka:9092"
       KAFKA_TOPIC: "arrowhead.telemetry"
       INITIAL_ROBOT_COUNT: "2"
@@ -606,7 +609,7 @@ services:
     ports:
       - "9618:9003"
     environment:
-      AMQP_URL: "amqps://robot-fleet-tls:fleet-secret@rabbitmq:5671/"
+      AMQP_URL: "amqps://robot-fleet-site-3:fleet-secret@rabbitmq:5671/"
       KAFKA_BROKERS: "kafka:9092"
       KAFKA_TOPIC: "arrowhead.telemetry"
       INITIAL_ROBOT_COUNT: "2"
@@ -695,3 +698,4 @@ services:
 
 volumes:
   certs:
+  profile-ca-data:

@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -80,11 +81,49 @@ type ProfileCA struct {
 	subscribers []chan CertEvent
 }
 
-// NewProfileCA creates a new Local Cloud CA with the given cert lifetime.
-func NewProfileCA(certDuration time.Duration) (*ProfileCA, error) {
+// loadOrGenerateKey loads the ECDSA CA key from keyFile if it exists,
+// or generates a new key and saves it to keyFile (if keyFile is non-empty).
+// This ensures the CA key survives container restarts.
+func loadOrGenerateKey(keyFile string) (*ecdsa.PrivateKey, error) {
+	if keyFile != "" {
+		if data, err := os.ReadFile(keyFile); err == nil {
+			block, _ := pem.Decode(data)
+			if block != nil {
+				key, parseErr := x509.ParseECPrivateKey(block.Bytes)
+				if parseErr == nil {
+					log.Printf("[profile-ca] loaded CA key from %s", keyFile)
+					return key, nil
+				}
+			}
+		}
+	}
+
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generate CA key: %w", err)
+	}
+
+	if keyFile != "" {
+		der, err := x509.MarshalECPrivateKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("marshal new CA key: %w", err)
+		}
+		pemData := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+		if err := os.WriteFile(keyFile, pemData, 0o600); err != nil {
+			log.Printf("[profile-ca] WARNING: could not save CA key to %s: %v", keyFile, err)
+		} else {
+			log.Printf("[profile-ca] generated and saved new CA key to %s", keyFile)
+		}
+	}
+	return key, nil
+}
+
+// NewProfileCA creates a new Local Cloud CA with the given cert lifetime.
+// keyFile is the path to persist the CA key across restarts (empty = ephemeral).
+func NewProfileCA(certDuration time.Duration, keyFile string) (*ProfileCA, error) {
+	key, err := loadOrGenerateKey(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("CA key: %w", err)
 	}
 
 	template := &x509.Certificate{
@@ -234,6 +273,32 @@ func (ca *ProfileCA) IssueSystemCert(systemName string, requesterCert *x509.Cert
 // RabbitMQ, and core system certificate files.
 func (ca *ProfileCA) IssueInfraCert(systemName string) (certPEM, keyPEM string, err error) {
 	return ca.issueCert(systemName, ProfileSystem)
+}
+
+// Reissue un-revokes a previously revoked certificate and emits an ISSUED event
+// so that subscribers (e.g. PIP) update certValid=true. Returns an error if the
+// CN is not found or the certificate is not currently revoked.
+func (ca *ProfileCA) Reissue(cn string) error {
+	ca.mu.Lock()
+	defer ca.mu.Unlock()
+
+	rec, ok := ca.records[cn]
+	if !ok {
+		return fmt.Errorf("certificate not found: %s", cn)
+	}
+	if !rec.Revoked {
+		return fmt.Errorf("certificate not revoked: %s", cn)
+	}
+	rec.Revoked = false
+	event := CertEvent{
+		CN:        cn,
+		OU:        rec.OU,
+		Type:      "issued",
+		IssuedAt:  rec.IssuedAt.UTC().Format(time.RFC3339),
+		ExpiresAt: rec.ExpiresAt.UTC().Format(time.RFC3339),
+	}
+	ca.fanOut(event)
+	return nil
 }
 
 // Revoke marks the certificate with the given CN as revoked and emits a REVOKED event.

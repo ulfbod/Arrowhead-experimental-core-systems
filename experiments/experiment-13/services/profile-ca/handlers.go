@@ -148,6 +148,28 @@ func handleSystemCert(ca *ProfileCA) http.HandlerFunc {
 	}
 }
 
+// handleReissue handles POST /ca/certificates/{cn}/reissue.
+// Un-revokes a previously revoked certificate and emits an ISSUED event to PIP.
+// Returns 204 No Content on success, 400 if CN is missing, 404 if not found or not revoked.
+func handleReissue(ca *ProfileCA) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "POST required")
+			return
+		}
+		cn := r.PathValue("cn")
+		if cn == "" {
+			writeError(w, http.StatusBadRequest, "cn path parameter required")
+			return
+		}
+		if err := ca.Reissue(cn); err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // handleRevoke handles DELETE /ca/certificates/{cn}.
 // Returns 204 No Content on success, 400 if CN is missing, 404 if not found.
 func handleRevoke(ca *ProfileCA) http.HandlerFunc {

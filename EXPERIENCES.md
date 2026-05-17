@@ -2075,6 +2075,412 @@ Use the experiment number returned by that command, not an assumed "latest".
 
 ---
 
+## EXP-025 — New dashboard HTML file not served because Dockerfile has explicit COPY list (experiment-13, 2026-05-14)
+
+### Symptom
+
+A new HTML page (`demo.html`) is written to the `dashboard/` directory and the container
+is rebuilt with `docker compose up -d --build dashboard`, but the browser still serves the
+old content. `docker exec` confirms the file is missing from `/usr/share/nginx/html/`.
+
+### Root Cause
+
+The dashboard `Dockerfile` lists each HTML file individually with explicit `COPY` instructions:
+
+```dockerfile
+COPY experiments/experiment-13/dashboard/index.html /usr/share/nginx/html/index.html
+COPY experiments/experiment-13/dashboard/admin.html /usr/share/nginx/html/admin.html
+# demo.html was never added
+```
+
+Adding a file to the source directory does not automatically include it in the image.
+Only files with an explicit `COPY` line are present in the built container.
+
+### Fix
+
+Add a `COPY` line for every new HTML file:
+
+```dockerfile
+COPY experiments/experiment-13/dashboard/demo.html /usr/share/nginx/html/demo.html
+```
+
+Then rebuild: `docker compose up -d --build dashboard`.
+
+### Guidance for Future Iterations
+
+The dashboard Dockerfile uses an explicit per-file COPY pattern (not `COPY dashboard/ /usr/share/nginx/html/`) because the nginx.conf is sourced from a different path. This means **every new HTML file must be manually added** to the Dockerfile.
+
+Whenever a new `.html` file is added to a `dashboard/` directory, immediately check and update the corresponding `dashboard.Dockerfile` — do not wait until the rebuild fails silently.
+
+A fast way to verify before rebuilding:
+```bash
+grep "COPY.*\.html" experiments/experiment-N/dockerfiles/dashboard.Dockerfile
+# Compare against: ls experiments/experiment-N/dashboard/*.html
+```
+
+---
+
+## EXP-026 — authzforce-server positional XML parser broken by enriched XACML requests (experiment-13, 2026-05-14)
+
+### Symptom
+
+kafka-authz and topic-auth-xacml log `DENY` for every consumer even after policies
+are correctly loaded in the PAP and AuthzForce returns `Permit` when called directly
+with a minimal (non-enriched) request.  PIP contains the subject with `certLevel="sy"`.
+Direct enriched test:
+
+```bash
+# WITHOUT cert-level attributes → Permit ✓
+curl -s -X POST "http://localhost:8696/authzforce-ce/domains/$DOMAIN/pdp" ... → Permit
+
+# WITH cert-level="sy" + cert-valid=true → Deny ✗
+curl -s -X POST "http://localhost:8696/authzforce-ce/domains/$DOMAIN/pdp" ... → Deny
+```
+
+The difference is that the enriched request adds two extra `<Attribute>` elements
+(`cert-level`, `cert-valid`) in the subject category before `resource-id`.
+
+### Root Cause
+
+`support/authzforce-server/main.go` — `parseXACMLRequest` used a positional regex:
+
+```go
+var attrValueRe = regexp.MustCompile(`<AttributeValue[^>]*>([^<]+)</AttributeValue>`)
+
+func parseXACMLRequest(body string) (subject, resource string) {
+    matches := attrValueRe.FindAllStringSubmatch(body, -1)
+    if len(matches) >= 1 { subject = matches[0][1] }  // first value
+    if len(matches) >= 2 { resource = matches[1][1] }  // second value ← WRONG
+    return
+}
+```
+
+When the PEP sends a standard (non-enriched) XACML request, `AttributeValue` order is:
+1. `subject-id` → `portal-cloud-ml`
+2. `resource-id` → `telemetry`
+
+This happened to match, so policies without PIP enrichment worked.
+
+When the PEP adds cert-level attributes (experiment-13's PEP design), the order becomes:
+1. `subject-id` → `portal-cloud-ml`
+2. **`cert-level` → `sy`**   ← positional parser reads this as resource
+3. **`cert-valid` → `true`**
+4. `resource-id` → `telemetry`
+
+`resource` was set to `"sy"`, and the grant lookup `grants[{"portal-cloud-ml","sy"}]`
+returned false → Deny for every enriched request.
+
+The bug was latent in the parser since it was first written; it only became visible when
+experiment-13 introduced enriched XACML requests with extra subject attributes.
+
+### Fix
+
+Replace positional extraction with named-attribute extraction, matching on the
+`AttributeId` of each `<Attribute>` element:
+
+```go
+var namedAttrRe = regexp.MustCompile(
+    `<Attribute[^>]+AttributeId="([^"]+)"[^>]*>\s*<AttributeValue[^>]*>([^<]*)</AttributeValue>`)
+
+func parseXACMLRequest(body string) (subject, resource string) {
+    for _, m := range namedAttrRe.FindAllStringSubmatch(body, -1) {
+        attrID, value := m[1], m[2]
+        switch attrID {
+        case "urn:oasis:names:tc:xacml:1.0:subject:subject-id":
+            subject = value
+        case "urn:oasis:names:tc:xacml:1.0:resource:resource-id":
+            resource = value
+        }
+    }
+    return
+}
+```
+
+Added a new test `TestParseXACMLRequest_enriched` covering the interleaved-attribute case.
+
+### Guidance for Future Iterations
+
+**`authzforce-server`'s grant evaluation is based on (subject, resource) only.
+Any extra XACML attributes in the request must be ignored — never parsed by position.**
+
+When extending a PEP to include additional subject attributes (cert-level, cert-valid,
+role, etc.) in its XACML requests, immediately test the enriched request against
+`authzforce-server` directly:
+
+```bash
+# Minimal (no extra attributes) → must Permit
+curl -s -X POST "http://localhost:$PORT/authzforce-ce/domains/$DOMAIN/pdp" \
+  -d '<Request ...><Attributes Category="subject"><Attribute AttributeId="subject-id">...</Attribute></Attributes>...'
+
+# Enriched (extra attributes) → must also Permit
+curl -s -X POST "http://localhost:$PORT/authzforce-ce/domains/$DOMAIN/pdp" \
+  -d '<Request ...><Attributes Category="subject"><Attribute AttributeId="subject-id">...</Attribute>
+      <Attribute AttributeId="urn:arrowhead:attribute:cert-level">...</Attribute></Attributes>...'
+```
+
+If Permit → Deny after adding attributes, the parser is treating extra attributes
+as positional values.
+
+Checklist addition: see below.
+
+---
+
+## EXP-027 — pki-rest-authz UPSTREAM_URL pointed to HTTP health port, not HTTPS data port (experiment-13, 2026-05-14)
+
+### Symptom
+
+Service partners receive `404 page not found` on every poll after pki-rest-authz
+begins returning `PERMIT`. The pki-rest-authz logs show the correct forward target:
+
+```
+[pki-rest-authz] PERMIT consumer="service-partner-1" → http://portal-cloud-ml:9207/telemetry/latest
+```
+
+Yet calling `http://portal-cloud-ml:9207/telemetry/latest` returns 404.
+
+### Root Cause
+
+`portal-cloud-ml` exposes two ports:
+
+| Port | Handler | Routes |
+|------|---------|--------|
+| `9207` (`PORT`) | `makeHTTPHandler` | `/health`, `/stats` only |
+| `9294` (`TLS_PORT`) | `makeHTTPSHandler` | `/health`, `/stats`, `/telemetry/latest` |
+
+The docker-compose had:
+
+```yaml
+UPSTREAM_URL: "http://portal-cloud-ml:9207"
+```
+
+`/telemetry/latest` is registered only in `makeHTTPSHandler`, which listens on the
+mTLS port 9294.  The health port 9207 knows nothing about that route and returns 404.
+
+The mismatch was easy to miss because:
+1. The port numbering scheme (`PORT` = health, `TLS_PORT` = data) is not visible from
+   the docker-compose environment block.
+2. pki-rest-authz correctly logged the full URL it was forwarding to, but the 404
+   appeared in the service partner log — one hop removed — making the path less obvious.
+
+### Fix
+
+```yaml
+UPSTREAM_URL: "https://portal-cloud-ml:9294"
+```
+
+pki-rest-authz already builds an mTLS upstream client (`buildMTLSUpstreamClient` with
+`ownCert` + `caPool`), so switching the scheme to `https` and the port to 9294 is
+sufficient — no code changes required.
+
+### Guidance for Future Iterations
+
+**When a service exposes both a plain HTTP health port and an mTLS data port, the
+`UPSTREAM_URL` for any reverse proxy must point to the data port and use `https://`.**
+
+Before writing the `UPSTREAM_URL` value in docker-compose, verify which port exposes
+the target endpoint:
+
+```bash
+grep -n "HandleFunc\|ListenAndServe\|TLS_PORT\|PORT" \
+  experiments/experiment-N/services/<target-service>/*.go
+```
+
+Look for `makeHTTPHandler` vs `makeHTTPSHandler` (or equivalent) to identify which
+mux registers the endpoint being proxied.  If the target endpoint is in the HTTPS
+handler, `UPSTREAM_URL` must use the TLS port.
+
+---
+
+## EXP-028 — `KafkaPrincipalBuilder.configure()` does not override — must also implement `Configurable` (experiment-14, 2026-05-17)
+
+### Symptom
+
+Docker build of the `kafka-principal-builder` Maven project fails during `mvn package`:
+
+```
+[ERROR] COMPILATION ERROR :
+[ERROR] /build/src/main/java/arrowhead/kafka/ArrowheadPrincipalBuilder.java:[80,5]
+        method does not override or implement a method from a supertype
+[ERROR] Failed to execute goal ... maven-compiler-plugin:3.12.1:compile ...
+```
+
+Line 80 is the `@Override` annotation on the `configure(Map<String, ?> configs)` method.
+
+### Root Cause
+
+`KafkaPrincipalBuilder` is a single-method interface with only `build(AuthenticationContext)`.
+It does **not** declare `configure()`. The `configure` lifecycle hook is defined in the
+separate `org.apache.kafka.common.Configurable` interface:
+
+```java
+// kafka-clients — two separate interfaces
+public interface KafkaPrincipalBuilder {
+    KafkaPrincipal build(AuthenticationContext context);
+}
+
+public interface Configurable {
+    void configure(Map<String, ?> configs);
+}
+```
+
+`ArrowheadPrincipalBuilder` was declared as:
+
+```java
+public class ArrowheadPrincipalBuilder implements KafkaPrincipalBuilder {
+```
+
+The `@Override` on `configure` then fails compilation because `KafkaPrincipalBuilder`
+has no `configure` method to override. The Kafka broker will call `configure()` if and
+only if the plugin also implements `Configurable`; without it the method is dead code.
+
+### Fix
+
+Add `Configurable` to the `implements` clause and add the corresponding import:
+
+```java
+import org.apache.kafka.common.Configurable;
+
+public class ArrowheadPrincipalBuilder implements KafkaPrincipalBuilder, Configurable {
+```
+
+No other changes required. The `configure(Map<String, ?> configs)` method body is
+correct; the interface was simply missing.
+
+Also remove the unused import of `BrokerSecurityConfigs` (internal API, not referenced
+in the method body):
+
+```java
+// remove:
+import org.apache.kafka.common.config.internals.BrokerSecurityConfigs;
+```
+
+### Guidance for Future Iterations
+
+**Every Kafka broker plugin that needs lifecycle configuration must implement both
+`KafkaPrincipalBuilder` (or `Authorizer`, etc.) _and_ `Configurable` if it defines
+a `configure()` method.**
+
+The pattern for any configurable Kafka plugin:
+
+```java
+import org.apache.kafka.common.Configurable;
+import org.apache.kafka.common.security.auth.KafkaPrincipalBuilder;
+
+public class MyPrincipalBuilder implements KafkaPrincipalBuilder, Configurable {
+    @Override public void configure(Map<String, ?> configs) { ... }
+    @Override public KafkaPrincipal build(AuthenticationContext ctx) { ... }
+}
+```
+
+When adding `@Override` to any method, ensure the interface that declares that method
+appears in the `implements` list — the compiler error "method does not override or
+implement a method from a supertype" always means one of these two things:
+1. The interface/superclass is missing from the `implements`/`extends` clause, or
+2. The method signature does not exactly match the interface declaration.
+
+---
+
+## EXP-029 — `KafkaPrincipalBuilder` in KRaft mode must also implement `KafkaPrincipalSerde` (experiment-14, 2026-05-17)
+
+### Symptom
+
+Kafka container exits at startup (exit code 1) with:
+
+```
+Exception in thread "main" java.lang.IllegalArgumentException:
+  requirement failed: principal.builder.class must implement KafkaPrincipalSerde
+    at scala.Predef$.require(Predef.scala:337)
+    at kafka.server.KafkaConfig.validateValues(KafkaConfig.scala:2458)
+    ...
+```
+
+The error appears during `StorageTool` execution (the KRaft metadata log formatting
+step that runs before the broker starts), so the container exits before any listener
+is opened.
+
+### Root Cause
+
+In KRaft (ZooKeeper-free) mode, Kafka needs to forward authenticated principal
+information across the cluster via the internal metadata replication protocol.
+To do this it must be able to **serialize and deserialize** `KafkaPrincipal` objects.
+
+Kafka validates at startup that any class configured as `principal.builder.class`
+implements **three** interfaces when running in KRaft mode:
+
+| Interface | Purpose |
+|---|---|
+| `KafkaPrincipalBuilder` | Build principal from `AuthenticationContext` |
+| `Configurable` | Receive broker config before first `build()` call |
+| `KafkaPrincipalSerde` | Serialize/deserialize principal for inter-broker transport |
+
+`KafkaPrincipalSerde` was added in Kafka 3.x specifically for KRaft support. The
+`ArrowheadPrincipalBuilder` class declared only `KafkaPrincipalBuilder, Configurable`,
+omitting `KafkaPrincipalSerde`, which caused the startup assertion failure.
+
+### Fix
+
+Add `KafkaPrincipalSerde` to the `implements` clause and implement its two methods:
+
+```java
+import org.apache.kafka.common.security.auth.KafkaPrincipalSerde;
+import java.nio.charset.StandardCharsets;
+
+public class ArrowheadPrincipalBuilder
+        implements KafkaPrincipalBuilder, KafkaPrincipalSerde, Configurable {
+
+    @Override
+    public byte[] serialize(KafkaPrincipal principal) throws KafkaException {
+        return (principal.getPrincipalType() + ":" + principal.getName())
+                .getBytes(StandardCharsets.UTF_8);
+    }
+
+    @Override
+    public KafkaPrincipal deserialize(byte[] bytes) throws KafkaException {
+        String encoded = new String(bytes, StandardCharsets.UTF_8);
+        int colon = encoded.indexOf(':');
+        if (colon < 0) throw new KafkaException("Invalid principal encoding: " + encoded);
+        return new KafkaPrincipal(encoded.substring(0, colon), encoded.substring(colon + 1));
+    }
+}
+```
+
+The `"type:name"` format matches what Kafka's own `DefaultKafkaPrincipalBuilder` uses.
+
+### Guidance for Future Iterations
+
+**A custom `KafkaPrincipalBuilder` deployed against a KRaft broker must implement
+`KafkaPrincipalBuilder`, `Configurable`, and `KafkaPrincipalSerde` — all three.**
+
+ZooKeeper-mode brokers do not require `KafkaPrincipalSerde`, so this error only
+surfaces in KRaft stacks. Since `cp-kafka` 7.x (Kafka 3.x) uses KRaft by default,
+always include the serde implementation.
+
+Template for any new principal builder plugin:
+
+```java
+public class MyPrincipalBuilder
+        implements KafkaPrincipalBuilder, KafkaPrincipalSerde, Configurable {
+
+    @Override public void configure(Map<String, ?> configs) { ... }
+    @Override public KafkaPrincipal build(AuthenticationContext ctx) { ... }
+
+    @Override
+    public byte[] serialize(KafkaPrincipal p) throws KafkaException {
+        return (p.getPrincipalType() + ":" + p.getName()).getBytes(StandardCharsets.UTF_8);
+    }
+
+    @Override
+    public KafkaPrincipal deserialize(byte[] bytes) throws KafkaException {
+        String s = new String(bytes, StandardCharsets.UTF_8);
+        int i = s.indexOf(':');
+        if (i < 0) throw new KafkaException("Bad principal bytes");
+        return new KafkaPrincipal(s.substring(0, i), s.substring(i + 1));
+    }
+}
+```
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -2116,5 +2522,10 @@ Use this before marking an experiment implementation complete:
 - [ ] Every `proxy_pass` in a dashboard `nginx.conf` uses the `set`+`rewrite`+`proxy_pass` variable pattern with `resolver 127.0.0.11 valid=5s ipv6=off;` — never a literal hostname (startup crash), never `$request_uri` (wrong path), and `set $upstream` must come BEFORE `rewrite ... break` (break stops subsequent set directives). Test standalone with `docker run` before deploying (EXP-021)
 - [ ] The dashboard's `depends_on` lists **only** init/one-shot containers (e.g. `cert-provisioner`) — never application services with deep dependency chains. `condition: service_started` still blocks the dashboard if Docker hasn't started the dependency yet due to its own unsatisfied chain. A static nginx dashboard must start immediately so users can observe service health rather than being blocked by it (EXP-021b)
 - [ ] Any Dockerfile that reuses a service from a previous experiment references the experiment that **actually contains** the `services/<name>/` directory — verify with `ls experiments/experiment-*/services/<name>/` before writing the COPY path; a later experiment may have replaced or dropped that service (EXP-022)
+- [ ] Every `.html` file in `dashboard/` has a corresponding `COPY` line in `dashboard.Dockerfile` — the Dockerfile uses explicit per-file COPY, not a directory glob; new pages are silently absent from the container until added. Verify with `grep "COPY.*\.html" dashboard.Dockerfile` vs `ls dashboard/*.html` (EXP-025)
 - [ ] TCP-only service healthchecks (gRPC, raw TCP) on Alpine containers use `nc -z localhost <port>` — never `printf '' > /dev/tcp/localhost/<port>` which is bash-only and fails silently in Alpine's busybox sh with "can't create /dev/tcp/...: nonexistent directory" (EXP-024)
 - [ ] When `KAFKA_SSL_CLIENT_AUTH` is `requested` or `required`, the entrypoint script exports `KAFKA_SSL_TRUSTSTORE_FILENAME` (bare filename, relative to `/etc/kafka/secrets/`) and `KAFKA_SSL_TRUSTSTORE_CREDENTIALS` — do NOT unset `KAFKA_SSL_TRUSTSTORE_FILENAME`; dub validates its presence and fails with "KAFKA_SSL_TRUSTSTORE_FILENAME is required" when client auth is enabled. Create a new entrypoint rather than reusing one written for `none` (EXP-023)
+- [ ] After adding extra subject attributes (cert-level, cert-valid, etc.) to XACML requests in a PEP, verify `authzforce-server` returns `Permit` for an enriched request — not just a minimal one. The parser must extract subject/resource by `AttributeId`, not by position; extra attributes before `resource-id` will shift positional indices and silently flip the decision to Deny (EXP-026)
+- [ ] When an upstream service exposes both a plain HTTP health port and an mTLS data port, `UPSTREAM_URL` in docker-compose must use `https://` and the TLS port — verify by checking which handler (`makeHTTPHandler` vs `makeHTTPSHandler`) registers the target endpoint (EXP-027)
+- [ ] Any Kafka broker plugin that defines a `configure(Map<String, ?> configs)` method must implement **both** `KafkaPrincipalBuilder` (or `Authorizer`, etc.) **and** `org.apache.kafka.common.Configurable` — `KafkaPrincipalBuilder` does not declare `configure`; `@Override` on it causes a compilation error without `Configurable` in the `implements` clause (EXP-028)
+- [ ] A custom `KafkaPrincipalBuilder` used in KRaft mode must also implement `KafkaPrincipalSerde` — Kafka validates this at startup and exits with `requirement failed: principal.builder.class must implement KafkaPrincipalSerde` if missing. Serialize as `"type:name"` UTF-8 bytes (EXP-029)

@@ -58,7 +58,7 @@ func (rc *revocationChecker) checkOnce() error {
 		return fmt.Errorf("listConnections: %w", err)
 	}
 	for _, conn := range conns {
-		if conn.User == rc.srv.cfg.rmqAdminUser || conn.User == rc.srv.cfg.publisherUser {
+		if conn.User == rc.srv.cfg.rmqAdminUser || rc.srv.isPublisher(conn.User) {
 			continue
 		}
 		permit, err := rc.srv.decide(context.Background(), conn.User, "telemetry", "subscribe")

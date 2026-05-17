@@ -47,8 +47,9 @@ func main() {
 	port     := envOr("PORT", "8087")
 	tlsPort  := envOr("TLS_PORT", "8088")
 	grpcPort := envOr("GRPC_PORT", "8089")
+	keyFile  := envOr("CA_KEY_FILE", "/data/ca.key")
 
-	ca, err := NewProfileCA(365 * 24 * time.Hour)
+	ca, err := NewProfileCA(365*24*time.Hour, keyFile)
 	if err != nil {
 		log.Fatalf("[profile-ca] create CA: %v", err)
 	}
@@ -62,6 +63,7 @@ func main() {
 	httpMux.HandleFunc("/ca/info", handleInfo(ca))
 	httpMux.HandleFunc("/bootstrap/onboarding-cert", handleBootstrapOnboarding(ca))
 	httpMux.HandleFunc("/ca/certificate/issue", handleIssueInfra(ca))
+	httpMux.HandleFunc("/ca/certificates/{cn}/reissue", handleReissue(ca))
 	httpMux.HandleFunc("/ca/certificates/{cn}", handleRevoke(ca))
 
 	// mTLS HTTPS mux: profile-enforced endpoints.

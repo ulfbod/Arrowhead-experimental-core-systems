@@ -13,7 +13,7 @@ import (
 
 func setupCA(t *testing.T) *ProfileCA {
 	t.Helper()
-	ca, err := NewProfileCA(24 * time.Hour)
+	ca, err := NewProfileCA(24 * time.Hour, "")
 	if err != nil {
 		t.Fatalf("NewProfileCA: %v", err)
 	}
@@ -299,6 +299,89 @@ func TestEnvOrDefault(t *testing.T) {
 	val := envOr("__NONEXISTENT_ENV_VAR_PROFILE_CA__", "mydefault")
 	if val != "mydefault" {
 		t.Errorf("expected mydefault, got %s", val)
+	}
+}
+
+// --- Experiment-13 addition: POST /ca/certificates/{cn}/reissue ---
+
+// TestHandleReissue_Success verifies POST reissue returns 204 and the cert reappears in GetAll.
+func TestHandleReissue_Success(t *testing.T) {
+	ca := setupCA(t)
+	ca.IssueInfraCert("reissue-target") //nolint:errcheck
+	ca.Revoke("reissue-target")         //nolint:errcheck
+
+	req := httptest.NewRequest(http.MethodPost, "/ca/certificates/reissue-target/reissue", nil)
+	req.SetPathValue("cn", "reissue-target")
+	w := httptest.NewRecorder()
+	handleReissue(ca)(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	records := ca.GetAll()
+	found := false
+	for _, r := range records {
+		if r.CN == "reissue-target" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("reissued cert should reappear in GetAll")
+	}
+}
+
+// TestHandleReissue_NotRevoked verifies POST reissue returns 404 when cert is not revoked.
+func TestHandleReissue_NotRevoked(t *testing.T) {
+	ca := setupCA(t)
+	ca.IssueInfraCert("active") //nolint:errcheck
+
+	req := httptest.NewRequest(http.MethodPost, "/ca/certificates/active/reissue", nil)
+	req.SetPathValue("cn", "active")
+	w := httptest.NewRecorder()
+	handleReissue(ca)(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+// TestHandleReissue_NotFound verifies POST reissue returns 404 for unknown CN.
+func TestHandleReissue_NotFound(t *testing.T) {
+	ca := setupCA(t)
+	req := httptest.NewRequest(http.MethodPost, "/ca/certificates/nobody/reissue", nil)
+	req.SetPathValue("cn", "nobody")
+	w := httptest.NewRecorder()
+	handleReissue(ca)(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+// TestHandleReissue_MethodNotAllowed verifies non-POST methods are rejected.
+func TestHandleReissue_MethodNotAllowed(t *testing.T) {
+	ca := setupCA(t)
+	req := httptest.NewRequest(http.MethodGet, "/ca/certificates/foo/reissue", nil)
+	req.SetPathValue("cn", "foo")
+	w := httptest.NewRecorder()
+	handleReissue(ca)(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// TestHandleReissue_MissingCN verifies a missing CN path value returns 400.
+func TestHandleReissue_MissingCN(t *testing.T) {
+	ca := setupCA(t)
+	req := httptest.NewRequest(http.MethodPost, "/ca/certificates//reissue", nil)
+	// No SetPathValue — cn will be empty string
+	w := httptest.NewRecorder()
+	handleReissue(ca)(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
 	}
 }
 

@@ -79,18 +79,21 @@ func parseGrants(policyXML string) map[[2]string]bool {
 
 // ── XACML Request parsing ──────────────────────────────────────────────────────
 
-// attrValueRe extracts AttributeValue text content.
-// The request format is produced by arrowhead/authzforce.buildXACMLRequest:
-// values appear in order: subject, resource, action.
-var attrValueRe = regexp.MustCompile(`<AttributeValue[^>]*>([^<]+)</AttributeValue>`)
+// namedAttrRe extracts the value for a named AttributeId from a XACML Request body.
+// Matches: <Attribute AttributeId="...id..."><AttributeValue ...>VALUE</AttributeValue></Attribute>
+// Tolerates extra attributes on the Attribute element (e.g. IncludeInResult) and
+// extra attributes in the same Attributes block (e.g. cert-level, cert-valid).
+var namedAttrRe = regexp.MustCompile(`<Attribute[^>]+AttributeId="([^"]+)"[^>]*>\s*<AttributeValue[^>]*>([^<]*)</AttributeValue>`)
 
 func parseXACMLRequest(body string) (subject, resource string) {
-	matches := attrValueRe.FindAllStringSubmatch(body, -1)
-	if len(matches) >= 1 {
-		subject = matches[0][1]
-	}
-	if len(matches) >= 2 {
-		resource = matches[1][1]
+	for _, m := range namedAttrRe.FindAllStringSubmatch(body, -1) {
+		attrID, value := m[1], m[2]
+		switch attrID {
+		case "urn:oasis:names:tc:xacml:1.0:subject:subject-id":
+			subject = value
+		case "urn:oasis:names:tc:xacml:1.0:resource:resource-id":
+			resource = value
+		}
 	}
 	return
 }

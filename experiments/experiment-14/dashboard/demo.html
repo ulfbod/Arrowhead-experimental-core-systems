@@ -1,0 +1,1499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arrowhead 5 Evolution · Experiment 14 · Exhibition Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0e18;
+    color: #c8d8f0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  header {
+    height: 52px;
+    background: #0d1220;
+    border-bottom: 1px solid #1e2d4a;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    flex-shrink: 0;
+    z-index: 100;
+    gap: 0;
+  }
+  .hd-logo {
+    font-size: 15px;
+    font-weight: 700;
+    color: #6366f1;
+    white-space: nowrap;
+    letter-spacing: 0.3px;
+  }
+  .hd-sub {
+    flex: 1;
+    text-align: center;
+    font-size: 12px;
+    color: #5a7090;
+    letter-spacing: 0.5px;
+  }
+  .hd-nav {
+    display: flex;
+    gap: 4px;
+  }
+  .hd-nav a {
+    padding: 5px 12px;
+    font-size: 12px;
+    color: #5a7090;
+    text-decoration: none;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    transition: all 0.2s;
+  }
+  .hd-nav a:hover { color: #a0b8d0; border-color: #2a3a5a; }
+  .hd-nav a.active {
+    color: #a0c8ff;
+    background: #111a2e;
+    border-color: #2a3d6a;
+  }
+
+  /* ── Map container ── */
+  #map-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #map-svg {
+    width: 100%;
+    height: 100%;
+    max-height: calc(100vh - 52px);
+  }
+
+  /* ── Germany fill / sea ── */
+  .germany-fill { fill: #1a2235; }
+  .germany-stroke { fill: none; stroke: #3a5080; stroke-width: 2; }
+  .contour { fill: none; stroke: #1e2a40; stroke-width: 0.8; opacity: 0.35; }
+  .city-dot { fill: #4a6080; }
+  .city-label { fill: #7090b0; font-size: 11px; font-family: 'Segoe UI', sans-serif; pointer-events: none; }
+
+  /* ── Entity groups ── */
+  .entity-group { cursor: pointer; }
+
+  /* ── Data flow paths ── */
+  .flow-path { fill: none; stroke-width: 1.5; transition: opacity 0.5s; }
+  .flow-teal { stroke: rgba(13,148,136,0.35); }
+  .flow-indigo { stroke: rgba(99,102,241,0.35); }
+  .flow-path.inactive { opacity: 0.1; stroke-dasharray: 6 4; }
+
+  /* Entity labels */
+  .entity-label {
+    fill: #d0e8ff; font-size: 12px; font-weight: 600;
+    font-family: 'Segoe UI', sans-serif; pointer-events: none; text-anchor: middle;
+  }
+  .entity-sublabel {
+    fill: #7090b0; font-size: 10px;
+    font-family: 'Segoe UI', sans-serif; pointer-events: none; text-anchor: middle;
+  }
+
+  /* ── Overlay panel ── */
+  .panel {
+    position: absolute;
+    background: #0f1526;
+    border: 1px solid #2a3a5a;
+    border-radius: 12px;
+    padding: 16px;
+    min-width: 282px;
+    max-width: 316px;
+    z-index: 200;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.75);
+    animation: panel-in 0.18s ease-out;
+    pointer-events: all;
+  }
+  @keyframes panel-in {
+    from { opacity: 0; transform: scale(0.94) translateY(6px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .panel-header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    margin-bottom: 12px; gap: 8px;
+  }
+  .panel-title { font-size: 14px; font-weight: 700; color: #e0eeff; line-height: 1.3; }
+  .panel-sub { font-size: 11px; color: #5a7090; margin-top: 3px; }
+  .panel-close {
+    background: none; border: none; color: #5a7090; font-size: 16px;
+    cursor: pointer; line-height: 1; padding: 0 2px; flex-shrink: 0;
+  }
+  .panel-close:hover { color: #a0b8d0; }
+  .panel-section { border-top: 1px solid #1a2540; padding-top: 10px; margin-top: 10px; }
+  .section-title {
+    font-size: 10px; font-weight: 700; color: #4a6080;
+    letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 8px;
+  }
+
+  /* Mower rows */
+  .mower-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+  .mower-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .mower-dot.cutting  { background: #22c55e; }
+  .mower-dot.charging { background: #f59e0b; }
+  .mower-dot.idle     { background: #6366f1; }
+  .mower-dot.error    { background: #ef4444; }
+  .mower-name  { width: 55px; color: #a0b8d0; }
+  .mower-state { width: 60px; color: #7090b0; }
+  .mower-bar-wrap { flex: 1; background: #1a2540; border-radius: 2px; height: 5px; }
+  .mower-bar { height: 5px; border-radius: 2px; transition: width 1s ease; }
+  .mower-bar.cutting  { background: #22c55e; }
+  .mower-bar.charging { background: #f59e0b; }
+  .mower-bar.idle     { background: #6366f1; }
+  .mower-bar.error    { background: #ef4444; }
+  .mower-pct { width: 32px; text-align: right; color: #8090a8; font-size: 11px; }
+
+  /* Tickets */
+  .ticket-row { background: #111a2e; border-radius: 6px; padding: 7px 9px; margin-bottom: 5px; font-size: 11px; }
+  .ticket-id { color: #6366f1; font-weight: 700; }
+  .ticket-desc { color: #a0b8d0; margin-top: 1px; }
+  .ticket-status { color: #5a7090; margin-top: 1px; }
+  .ticket-empty { font-size: 11px; color: #3a4a60; font-style: italic; }
+
+  /* Access badge */
+  .access-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700;
+  }
+  .access-badge.permit { background: #0a2010; color: #22c55e; border: 1px solid #22c55e44; }
+  .access-badge.denied { background: #200a0a; color: #ef4444; border: 1px solid #ef444444; }
+  .access-badge-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .access-badge.permit .access-badge-dot { background: #22c55e; }
+  .access-badge.denied .access-badge-dot { background: #ef4444; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600;
+    cursor: pointer; border: 1px solid transparent; transition: all 0.18s;
+    font-family: 'Segoe UI', sans-serif;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-teal   { background: #0a1e1c; color: #2dd4bf; border-color: #0d948844; }
+  .btn-teal:hover:not(:disabled)   { background: #0d2a27; border-color: #0d9488; }
+  .btn-indigo { background: #0d0a25; color: #818cf8; border-color: #6366f144; }
+  .btn-indigo:hover:not(:disabled) { background: #12103a; border-color: #6366f1; }
+  .btn-red    { background: #1a0808; color: #f87171; border-color: #ef444444; }
+  .btn-red:hover:not(:disabled)    { background: #220a0a; border-color: #ef4444; }
+  .btn-green  { background: #0a180a; color: #4ade80; border-color: #22c55e44; }
+  .btn-green:hover:not(:disabled)  { background: #0d2010; border-color: #22c55e; }
+  .btn-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+
+  /* Stats */
+  .stat-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px; }
+  .stat-label { color: #5a7090; }
+  .stat-val { color: #a0c8ff; font-weight: 600; }
+
+  /* Portal telemetry */
+  .telem-row { font-size: 11px; color: #7090b0; font-family: monospace; margin-bottom: 3px; }
+  .telem-row span { color: #2dd4bf; }
+
+  /* Arrowhead expanded panel */
+  #ah-panel {
+    position: absolute; top: 16px; right: 16px; width: 272px;
+    background: #0f1526; border: 1px solid rgba(99,102,241,0.6); border-radius: 12px;
+    z-index: 300; box-shadow: 0 12px 40px rgba(0,0,0,0.8);
+    display: none; animation: panel-in 0.18s ease-out;
+  }
+  .ah-panel-head { padding: 13px 16px 10px; border-bottom: 1px solid #1a2540; }
+  .ah-panel-title { font-size: 13px; font-weight: 700; color: #818cf8; }
+  .ah-panel-sub { font-size: 10px; color: #4a6080; margin-top: 1px; }
+  .ah-panel-body { padding: 10px 16px 14px; }
+  .ah-service-row {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px; margin-bottom: 5px;
+  }
+  .ah-service-name { color: #8090a8; display: flex; align-items: center; gap: 6px; }
+  .ah-dot { width: 7px; height: 7px; border-radius: 50%; background: #2a3040; flex-shrink: 0; }
+  .ah-dot.ok   { background: #22c55e; box-shadow: 0 0 4px #22c55e88; }
+  .ah-dot.warn { background: #f59e0b; }
+  .ah-dot.err  { background: #ef4444; }
+  .ah-status-ok  { color: #22c55e; font-weight: 700; font-size: 10px; }
+  .ah-status-act { color: #f59e0b; font-weight: 700; font-size: 10px; }
+  .ah-status-err { color: #ef4444; font-weight: 700; font-size: 10px; }
+  .ah-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid #1a2540; }
+  .ah-section-title {
+    font-size: 9px; font-weight: 700; color: #3a4a60;
+    letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 7px;
+  }
+  .demo-btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 6px; }
+  .demo-btn { padding: 6px 8px; font-size: 10px; }
+  .demo-btn-full { grid-column: 1 / -1; width: 100%; }
+  .ah-ctrl-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #4a6080; margin: 7px 0 4px; }
+  .ah-ctrl-row { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+  .ah-ctrl-name { flex: 1; font-size: 11px; color: #8aa0c0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ah-ctrl-btn { padding: 4px 7px; font-size: 10px; flex-shrink: 0; }
+  .btn-neutral { background: #2a3550; color: #a0b8d0; border: 1px solid #3a4d70; }
+  .btn-neutral:hover { background: #344060; }
+  .btn-danger { background: #7f1d1d; color: #fca5a5; border: none; }
+
+  /* Toast */
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #1a2540; border: 1px solid #2a3a5a; border-radius: 8px;
+    padding: 9px 18px; font-size: 12px; color: #a0c8ff;
+    z-index: 9999; display: none; box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  }
+
+  /* Ticket form */
+  .ticket-form select, .ticket-form input {
+    width: 100%; background: #111a2e; border: 1px solid #2a3a5a; color: #c8d8f0;
+    border-radius: 5px; padding: 5px 8px; font-size: 11px; margin-bottom: 6px;
+    font-family: 'Segoe UI', sans-serif;
+  }
+  .ticket-form select:focus, .ticket-form input:focus { outline: none; border-color: #6366f1; }
+
+  /* Pulse animation */
+  @keyframes pulse-ring {
+    0%   { r: 34; opacity: 0.6; }
+    70%  { r: 46; opacity: 0; }
+    100% { r: 46; opacity: 0; }
+  }
+  .pulse-anim { animation: pulse-ring 2.4s ease-out infinite; }
+
+  /* Portal orbit */
+  @keyframes portal-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  .portal-orbit { transform-origin: 460px 365px; animation: portal-spin 9s linear infinite; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="hd-logo">&#x1F3F9; Arrowhead 5 Evolution &middot; ADAPI Exhibition</div>
+  <div class="hd-sub">UC3 &mdash; Autonomous Lawn Mowing as a Service</div>
+  <nav class="hd-nav">
+    <a href="/">Live Monitor</a>
+    <a href="demo.html" class="active">Exhibition Demo</a>
+    <a href="/admin.html">Policy Admin</a>
+  </nav>
+</header>
+
+<!-- Map area -->
+<div id="map-wrap">
+  <svg id="map-svg" viewBox="0 0 700 800" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <filter id="glow-green" x="-60%" y="-60%" width="220%" height="220%">
+        <feGaussianBlur stdDeviation="5" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <filter id="glow-indigo" x="-60%" y="-60%" width="220%" height="220%">
+        <feGaussianBlur stdDeviation="4" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <filter id="glow-teal" x="-60%" y="-60%" width="220%" height="220%">
+        <feGaussianBlur stdDeviation="6" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <filter id="glow-particle" x="-200%" y="-200%" width="500%" height="500%">
+        <feGaussianBlur stdDeviation="2.5" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <radialGradient id="sea-grad" cx="50%" cy="40%" r="70%">
+        <stop offset="0%" stop-color="#0d1520"/>
+        <stop offset="100%" stop-color="#070d18"/>
+      </radialGradient>
+      <radialGradient id="de-vignette" cx="50%" cy="50%" r="60%">
+        <stop offset="0%" stop-color="#1e2840" stop-opacity="0"/>
+        <stop offset="100%" stop-color="#0a0e18" stop-opacity="0.5"/>
+      </radialGradient>
+    </defs>
+
+    <!-- Sea / outer background -->
+    <rect width="700" height="800" fill="url(#sea-grad)"/>
+    <!-- North Sea tint -->
+    <ellipse cx="100" cy="55" rx="130" ry="80" fill="#0f1b2e" opacity="0.55"/>
+    <!-- Baltic Sea tint -->
+    <ellipse cx="590" cy="75" rx="110" ry="65" fill="#0f1b2e" opacity="0.45"/>
+    <!-- Surrounding countries slightly lighter -->
+    <rect width="700" height="800" fill="#101825" opacity="0.18"/>
+
+    <!-- Germany fill -->
+    <path class="germany-fill" d="M 243,28 C 260,15 290,10 310,18 C 340,28 380,35 420,45 C 460,52 510,58 548,78 C 580,95 605,115 612,145 C 618,170 610,200 605,225 C 598,255 590,280 585,310 C 580,340 575,370 565,395 C 552,425 535,450 512,468 C 495,483 478,492 465,510 C 450,528 442,548 435,570 C 428,592 425,615 418,635 C 410,655 398,672 382,684 C 365,696 345,702 325,700 C 302,698 280,692 258,682 C 235,672 215,658 200,642 C 182,624 170,602 158,580 C 145,556 130,532 115,512 C 98,490 80,472 65,455 C 48,436 35,415 25,392 C 14,368 10,342 12,315 C 14,288 22,262 28,238 C 34,212 40,188 42,162 C 44,136 40,110 45,88 C 50,65 62,48 80,38 C 100,27 125,22 150,20 C 175,18 200,22 220,26 Z"/>
+
+    <!-- Topographic contour lines -->
+    <g opacity="0.3">
+      <ellipse cx="300" cy="360" rx="185" ry="245" class="contour"/>
+      <ellipse cx="308" cy="368" rx="135" ry="180" class="contour"/>
+      <ellipse cx="315" cy="375" rx="88" ry="120" class="contour"/>
+      <ellipse cx="330" cy="545" rx="72" ry="82" class="contour"/>
+      <ellipse cx="448" cy="195" rx="82" ry="105" class="contour"/>
+      <ellipse cx="180" cy="450" rx="55" ry="65" class="contour"/>
+    </g>
+
+    <!-- Vignette over Germany -->
+    <path d="M 243,28 C 260,15 290,10 310,18 C 340,28 380,35 420,45 C 460,52 510,58 548,78 C 580,95 605,115 612,145 C 618,170 610,200 605,225 C 598,255 590,280 585,310 C 580,340 575,370 565,395 C 552,425 535,450 512,468 C 495,483 478,492 465,510 C 450,528 442,548 435,570 C 428,592 425,615 418,635 C 410,655 398,672 382,684 C 365,696 345,702 325,700 C 302,698 280,692 258,682 C 235,672 215,658 200,642 C 182,624 170,602 158,580 C 145,556 130,532 115,512 C 98,490 80,472 65,455 C 48,436 35,415 25,392 C 14,368 10,342 12,315 C 14,288 22,262 28,238 C 34,212 40,188 42,162 C 44,136 40,110 45,88 C 50,65 62,48 80,38 C 100,27 125,22 150,20 C 175,18 200,22 220,26 Z"
+          fill="url(#de-vignette)" pointer-events="none"/>
+
+    <!-- Germany border stroke -->
+    <path class="germany-stroke" d="M 243,28 C 260,15 290,10 310,18 C 340,28 380,35 420,45 C 460,52 510,58 548,78 C 580,95 605,115 612,145 C 618,170 610,200 605,225 C 598,255 590,280 585,310 C 580,340 575,370 565,395 C 552,425 535,450 512,468 C 495,483 478,492 465,510 C 450,528 442,548 435,570 C 428,592 425,615 418,635 C 410,655 398,672 382,684 C 365,696 345,702 325,700 C 302,698 280,692 258,682 C 235,672 215,658 200,642 C 182,624 170,602 158,580 C 145,556 130,532 115,512 C 98,490 80,472 65,455 C 48,436 35,415 25,392 C 14,368 10,342 12,315 C 14,288 22,262 28,238 C 34,212 40,188 42,162 C 44,136 40,110 45,88 C 50,65 62,48 80,38 C 100,27 125,22 150,20 C 175,18 200,22 220,26 Z"/>
+
+    <!-- City reference dots -->
+    <circle cx="78" cy="390" r="3" class="city-dot"/>
+    <text x="90" y="387" class="city-label">Cologne</text>
+    <circle cx="228" cy="590" r="3" class="city-dot"/>
+    <text x="242" y="587" class="city-label">Stuttgart</text>
+    <circle cx="530" cy="310" r="3" class="city-dot"/>
+    <text x="538" y="307" class="city-label">Dresden</text>
+    <circle cx="390" cy="540" r="3" class="city-dot"/>
+    <text x="402" y="537" class="city-label">Nuremberg</text>
+    <circle cx="215" cy="170" r="3" class="city-dot"/>
+    <text x="227" y="167" class="city-label">Bremen</text>
+
+    <!-- ── Data flow paths ── -->
+    <path id="fp-s1" class="flow-path flow-teal inactive" d="M 392,480 Q 430,420 460,365"/>
+    <path id="fp-s2" class="flow-path flow-teal inactive" d="M 287,144 Q 360,250 460,365"/>
+    <path id="fp-s3" class="flow-path flow-teal inactive" d="M 520,250 Q 500,300 460,365"/>
+    <path id="fp-sp1" class="flow-path flow-indigo inactive" d="M 460,365 Q 330,420 196,480"/>
+    <path id="fp-sp2" class="flow-path flow-indigo inactive" d="M 460,365 Q 280,370 63,375"/>
+
+    <!-- Particle layer -->
+    <g id="particles"></g>
+
+    <!-- ══════════════════════════════════════
+         Portal & Cloud ML  (460, 365)
+    ══════════════════════════════════════ -->
+    <g class="portal-orbit">
+      <circle cx="460" cy="322" r="4" fill="rgba(13,148,136,0.65)" filter="url(#glow-teal)"/>
+    </g>
+    <circle cx="460" cy="365" r="46" fill="none" stroke="rgba(13,148,136,0.12)" stroke-dasharray="3 5"/>
+    <g id="entity-portal" class="entity-group" onclick="openPanel('portal',460,365)">
+      <circle cx="460" cy="365" r="38" fill="#091a18" stroke="#0d9488" stroke-width="2.5" filter="url(#glow-teal)"/>
+      <!-- Cloud icon -->
+      <circle cx="451" cy="363" r="9" fill="#0d9488"/>
+      <circle cx="466" cy="363" r="9" fill="#0d9488"/>
+      <circle cx="458" cy="356" r="9" fill="#0d9488"/>
+      <rect x="442" y="360" width="33" height="11" fill="#0d9488"/>
+      <text x="460" y="384" class="entity-label" style="font-size:10px;fill:#2dd4bf;">Portal &amp; Cloud ML</text>
+      <text x="460" y="396" class="entity-sublabel">Leipzig</text>
+    </g>
+
+    <!-- ══════════════════════════════════════
+         Fleet Site 1 — Nuremberg (392, 480)
+    ══════════════════════════════════════ -->
+    <g id="entity-site1" class="entity-group" onclick="openPanel('site1',392,480)">
+      <circle id="pulse-site1" cx="392" cy="480" r="34" fill="none" stroke="#22c55e" stroke-width="1.5"
+              opacity="0" class="pulse-anim"/>
+      <circle cx="392" cy="480" r="32" id="ring-site1"
+              fill="#0a2010" stroke="#22c55e" stroke-width="2" filter="url(#glow-green)"/>
+      <!-- Mower body -->
+      <rect x="377" y="473" width="30" height="12" rx="3" fill="#22c55e" id="icon-site1"/>
+      <!-- Blade hint -->
+      <rect x="382" y="470" width="20" height="3" rx="1" fill="#16a34a" id="icon-site1-blade"/>
+      <!-- Wheels -->
+      <circle cx="381" cy="488" r="5" fill="#0a2010" stroke="#22c55e" stroke-width="1.5"/>
+      <circle cx="403" cy="488" r="5" fill="#0a2010" stroke="#22c55e" stroke-width="1.5"/>
+      <circle cx="381" cy="488" r="2" fill="#22c55e"/>
+      <circle cx="403" cy="488" r="2" fill="#22c55e"/>
+      <text x="392" y="516" class="entity-label">Fleet Site 1</text>
+      <text x="392" y="528" class="entity-sublabel">Nuremberg area</text>
+    </g>
+
+    <!-- ══════════════════════════════════════
+         Fleet Site 2 — Hamburg (287, 144)
+    ══════════════════════════════════════ -->
+    <g id="entity-site2" class="entity-group" onclick="openPanel('site2',287,144)">
+      <circle id="pulse-site2" cx="287" cy="144" r="34" fill="none" stroke="#22c55e" stroke-width="1.5"
+              opacity="0" class="pulse-anim" style="animation-delay:0.8s"/>
+      <circle cx="287" cy="144" r="32" id="ring-site2"
+              fill="#0a2010" stroke="#22c55e" stroke-width="2" filter="url(#glow-green)"/>
+      <rect x="272" y="137" width="30" height="12" rx="3" fill="#22c55e" id="icon-site2"/>
+      <rect x="277" y="134" width="20" height="3" rx="1" fill="#16a34a"/>
+      <circle cx="276" cy="152" r="5" fill="#0a2010" stroke="#22c55e" stroke-width="1.5"/>
+      <circle cx="298" cy="152" r="5" fill="#0a2010" stroke="#22c55e" stroke-width="1.5"/>
+      <circle cx="276" cy="152" r="2" fill="#22c55e"/>
+      <circle cx="298" cy="152" r="2" fill="#22c55e"/>
+      <text x="287" y="180" class="entity-label">Fleet Site 2</text>
+      <text x="287" y="192" class="entity-sublabel">Hamburg area</text>
+    </g>
+
+    <!-- ══════════════════════════════════════
+         Fleet Site 3 — Berlin (520, 250)  [starts inactive]
+    ══════════════════════════════════════ -->
+    <g id="entity-site3" class="entity-group" onclick="openPanel('site3',520,250)">
+      <circle id="pulse-site3" cx="520" cy="250" r="34" fill="none" stroke="#22c55e" stroke-width="1.5" opacity="0"/>
+      <circle cx="520" cy="250" r="32" id="ring-site3"
+              fill="#0a2010" stroke="#2a4030" stroke-width="2"/>
+      <rect x="505" y="243" width="30" height="12" rx="3" fill="#2a4030" id="icon-site3"/>
+      <rect x="510" y="240" width="20" height="3" rx="1" fill="#1a3020"/>
+      <circle cx="509" cy="258" r="5" fill="#0a2010" stroke="#2a4030" stroke-width="1.5"/>
+      <circle cx="531" cy="258" r="5" fill="#0a2010" stroke="#2a4030" stroke-width="1.5"/>
+      <circle cx="509" cy="258" r="2" fill="#2a4030"/>
+      <circle cx="531" cy="258" r="2" fill="#2a4030"/>
+      <text x="520" y="286" id="label-site3" class="entity-label" style="fill:#3a5040;">Fleet Site 3</text>
+      <text x="520" y="298" id="sublabel-site3" class="entity-sublabel" style="fill:#2a3a30;">Berlin area</text>
+    </g>
+
+    <!-- ══════════════════════════════════════
+         Service Partner SP1 — Frankfurt (196, 480)
+    ══════════════════════════════════════ -->
+    <g id="entity-sp1" class="entity-group" onclick="openPanel('sp1',196,480)">
+      <circle id="pulse-sp1" cx="196" cy="480" r="30" fill="none" stroke="#22c55e" stroke-width="1.5"
+              opacity="0" class="pulse-anim" style="animation-delay:0.4s"/>
+      <circle cx="196" cy="480" r="28" id="ring-sp1"
+              fill="#0d0a25" stroke="#22c55e" stroke-width="2" filter="url(#glow-indigo)"/>
+      <!-- Building icon -->
+      <rect x="185" y="471" width="22" height="17" rx="1" fill="#6366f1" id="icon-sp1"/>
+      <polygon points="184,471 196,461 208,471" fill="#6366f1" id="icon-sp1-roof"/>
+      <!-- Windows -->
+      <rect x="189" y="475" width="4" height="4" fill="#0d0a25"/>
+      <rect x="197" y="475" width="4" height="4" fill="#0d0a25"/>
+      <rect x="193" y="481" width="4" height="7" fill="#0d0a25"/>
+      <text x="196" y="516" class="entity-label">Service Partner 1</text>
+      <text x="196" y="528" class="entity-sublabel">Frankfurt</text>
+    </g>
+
+    <!-- ══════════════════════════════════════
+         Service Partner SP2 — Düsseldorf (63, 375)  [starts inactive]
+    ══════════════════════════════════════ -->
+    <g id="entity-sp2" class="entity-group" onclick="openPanel('sp2',63,375)">
+      <circle id="pulse-sp2" cx="63" cy="375" r="30" fill="none" stroke="#6366f1" stroke-width="1.5" opacity="0"/>
+      <circle cx="63" cy="375" r="28" id="ring-sp2"
+              fill="#0d0a25" stroke="#2a2840" stroke-width="2"/>
+      <rect x="52" y="366" width="22" height="17" rx="1" fill="#2a2840" id="icon-sp2"/>
+      <polygon points="51,366 63,356 75,366" fill="#2a2840" id="icon-sp2-roof"/>
+      <rect x="56" y="370" width="4" height="4" fill="#0d0a25"/>
+      <rect x="64" y="370" width="4" height="4" fill="#0d0a25"/>
+      <rect x="60" y="376" width="4" height="7" fill="#0d0a25"/>
+      <text x="63" y="411" id="label-sp2" class="entity-label" style="fill:#3a3860;">Service Partner 2</text>
+      <text x="63" y="423" id="sublabel-sp2" class="entity-sublabel" style="fill:#2a2840;">D&#xFC;sseldorf</text>
+    </g>
+
+    <!-- ══════════════════════════════════════
+         Fleet Health & SLA badge (near Portal)
+    ══════════════════════════════════════ -->
+    <g id="sla-badge" style="cursor:pointer;" onclick="openPanel('portal',460,365)">
+      <rect x="492" y="338" width="112" height="52" rx="7"
+            fill="#071614" stroke="rgba(13,148,136,0.5)" stroke-width="1"/>
+      <text x="548" y="352" style="fill:#2dd4bf;font-size:8.5px;font-weight:700;font-family:'Segoe UI',sans-serif;text-anchor:middle;letter-spacing:0.5px;">FLEET HEALTH</text>
+      <text id="sla-score-text" x="526" y="370" style="fill:#22c55e;font-size:16px;font-weight:700;font-family:'Segoe UI',sans-serif;text-anchor:middle;">—</text>
+      <text x="548" y="370" style="fill:#3a5040;font-size:9px;font-family:'Segoe UI',sans-serif;text-anchor:start;">%</text>
+      <text id="sla-compliance-text" x="548" y="382" style="fill:#5a7090;font-size:8px;font-family:'Segoe UI',sans-serif;text-anchor:middle;">SLA —%</text>
+    </g>
+
+    <!-- ══════════════════════════════════════
+         System overview legend (bottom-left)
+    ══════════════════════════════════════ -->
+    <g id="overview-legend" pointer-events="none">
+      <rect x="15" y="688" width="168" height="104" rx="7"
+            fill="#0a0e18" fill-opacity="0.88" stroke="#1e2d4a" stroke-width="1"/>
+      <text x="26" y="704" style="fill:#4a6080;font-size:8.5px;font-weight:700;font-family:'Segoe UI',sans-serif;letter-spacing:0.7px;text-transform:uppercase;">Experiment 14 — Conn-Time Enforcement</text>
+      <!-- Fleet site -->
+      <circle cx="26" cy="719" r="5" fill="#0a2010" stroke="#22c55e" stroke-width="1.5"/>
+      <text x="36" y="723" style="fill:#8090a8;font-size:9px;font-family:'Segoe UI',sans-serif;">Fleet Site — autonomous mowers</text>
+      <!-- Portal -->
+      <circle cx="26" cy="737" r="5" fill="#091a18" stroke="#0d9488" stroke-width="1.5"/>
+      <text x="36" y="741" style="fill:#8090a8;font-size:9px;font-family:'Segoe UI',sans-serif;">Portal &amp; Cloud ML — analytics hub</text>
+      <!-- Service partner -->
+      <circle cx="26" cy="755" r="5" fill="#0d0a25" stroke="#6366f1" stroke-width="1.5"/>
+      <text x="36" y="759" style="fill:#8090a8;font-size:9px;font-family:'Segoe UI',sans-serif;">Service Partner — maintenance</text>
+      <!-- AH cloud -->
+      <rect x="21" y="768" width="10" height="8" rx="2" fill="none" stroke="rgba(99,102,241,0.6)" stroke-width="1.2"/>
+      <text x="36" y="777" style="fill:#8090a8;font-size:9px;font-family:'Segoe UI',sans-serif;">Arrowhead Cloud — authorization</text>
+    </g>
+
+    <!-- ══════════════════════════════════════
+         Arrowhead Cloud badge (SVG widget, top-right)
+    ══════════════════════════════════════ -->
+    <g id="ah-badge-svg" class="entity-group" onclick="openAHPanel()" style="cursor:pointer;">
+      <rect x="546" y="28" width="142" height="86" rx="9"
+            fill="#12172a" stroke="rgba(99,102,241,0.55)" stroke-width="1.3"/>
+      <text x="558" y="48" style="fill:#818cf8;font-size:11px;font-weight:700;font-family:'Segoe UI',sans-serif;">
+        &#x1F3DB; AH5 EVOL
+      </text>
+      <!-- 4 status dots with labels -->
+      <circle id="bdot-sr"   cx="560" cy="62" r="4" fill="#2a3040"/>
+      <text x="568" y="66"  class="city-label" style="font-size:9.5px;">ServiceReg</text>
+      <circle id="bdot-auth" cx="560" cy="76" r="4" fill="#2a3040"/>
+      <text x="568" y="80"  class="city-label" style="font-size:9.5px;">Auth</text>
+      <circle id="bdot-orch" cx="632" cy="62" r="4" fill="#2a3040"/>
+      <text x="640" y="66"  class="city-label" style="font-size:9.5px;">Orch</text>
+      <circle id="bdot-pap"  cx="632" cy="76" r="4" fill="#2a3040"/>
+      <text x="640" y="80"  class="city-label" style="font-size:9.5px;">PAP</text>
+      <text x="617" y="106"
+            style="fill:#3a4a60;font-size:9px;font-family:'Segoe UI',sans-serif;text-anchor:middle;">
+        click to expand
+      </text>
+    </g>
+
+  </svg>
+
+  <!-- Floating panel container -->
+  <div id="panel-container"></div>
+
+  <!-- Arrowhead Cloud expanded panel -->
+  <div id="ah-panel">
+    <div class="ah-panel-head">
+      <div class="ah-panel-title">&#x1F3DB;&#xFE0F; Arrowhead 5 Evolution</div>
+      <div class="ah-panel-sub">Local Cloud Infrastructure</div>
+    </div>
+    <div class="ah-panel-body">
+      <div class="ah-section-title">AH5 Core Systems</div>
+      <div class="ah-service-row">
+        <span class="ah-service-name"><span id="ah-dot-sr" class="ah-dot"></span>ServiceRegistry</span>
+        <span id="ah-st-sr" class="ah-status-ok">—</span>
+      </div>
+      <div class="ah-service-row">
+        <span class="ah-service-name"><span id="ah-dot-auth" class="ah-dot"></span>Authentication</span>
+        <span id="ah-st-auth" class="ah-status-ok">—</span>
+      </div>
+      <div class="ah-service-row">
+        <span class="ah-service-name"><span id="ah-dot-cauth" class="ah-dot"></span>ConsumerAuth</span>
+        <span id="ah-st-cauth" class="ah-status-ok">—</span>
+      </div>
+      <div class="ah-service-row">
+        <span class="ah-service-name"><span id="ah-dot-orch" class="ah-dot"></span>DynOrch-XACML</span>
+        <span id="ah-st-orch" class="ah-status-ok">—</span>
+      </div>
+
+      <div class="ah-section">
+        <div class="ah-section-title">ADAPI Extension</div>
+        <div class="ah-service-row">
+          <span class="ah-service-name"><span id="ah-dot-pdp" class="ah-dot"></span>AuthzForce PDP</span>
+          <span id="ah-st-pdp" class="ah-status-ok">—</span>
+        </div>
+        <div class="ah-service-row">
+          <span class="ah-service-name"><span id="ah-dot-pap" class="ah-dot"></span>PAP</span>
+          <span id="ah-st-pap" class="ah-status-ok">—</span>
+        </div>
+        <div class="ah-service-row">
+          <span class="ah-service-name"><span id="ah-dot-pip" class="ah-dot"></span>PIP</span>
+          <span id="ah-st-pip" class="ah-status-ok">—</span>
+        </div>
+      </div>
+
+      <div class="ah-section">
+        <div class="ah-section-title">PKI</div>
+        <div class="ah-service-row">
+          <span class="ah-service-name"><span id="ah-dot-ca" class="ah-dot"></span>Profile CA</span>
+          <span id="ah-st-ca" class="ah-status-ok">—</span>
+        </div>
+        <div class="ah-service-row">
+          <span class="ah-service-name"><span id="ah-dot-pkl" class="ah-dot"></span>CertLifecycle gRPC</span>
+          <span id="ah-st-pkl" class="ah-status-act">ACTIVE</span>
+        </div>
+      </div>
+
+      <div class="ah-section">
+        <div class="ah-section-title">Exp-14: Connection-Time Enforcement (D2&#x2019;)</div>
+        <div class="ah-service-row">
+          <span class="ah-service-name" title="PIP queried before AuthzForce at AMQP connect">RabbitMQ pre-gate</span>
+          <span class="ah-status-act">PIP first</span>
+        </div>
+        <div class="ah-service-row">
+          <span class="ah-service-name" title="ArrowheadPrincipalBuilder queries PIP after TLS handshake">Kafka plugin</span>
+          <span class="ah-status-act">PIP first</span>
+        </div>
+        <div class="ah-service-row">
+          <span class="ah-service-name" title="Revoked cert denied without calling AuthzForce">Revoked cert</span>
+          <span style="color:#ef4444;font-weight:700;font-size:10px;">DENIED@CONN</span>
+        </div>
+      </div>
+
+      <div class="ah-section">
+        <div class="ah-section-title">Demo Controls</div>
+        <button class="btn btn-neutral demo-btn demo-btn-full" onclick="demoReset()">⟳ Reset Demo</button>
+
+        <div class="ah-ctrl-label">Robot Fleet Sites</div>
+        <div class="ah-ctrl-row">
+          <span class="ah-ctrl-name">Site 1 — Nuremberg</span>
+          <button class="btn btn-green  ah-ctrl-btn" onclick="demoAddSite('robot-fleet-site-1',1)">Add</button>
+          <button class="btn btn-red    ah-ctrl-btn" onclick="demoRemoveSite('robot-fleet-site-1',1)">Remove</button>
+        </div>
+        <div class="ah-ctrl-row">
+          <span class="ah-ctrl-name">Site 2 — Hamburg</span>
+          <button class="btn btn-green  ah-ctrl-btn" onclick="demoAddSite('robot-fleet-site-2',2)">Add</button>
+          <button class="btn btn-red    ah-ctrl-btn" onclick="demoRemoveSite('robot-fleet-site-2',2)">Remove</button>
+        </div>
+        <div class="ah-ctrl-row">
+          <span class="ah-ctrl-name">Site 3 — Berlin</span>
+          <button class="btn btn-green  ah-ctrl-btn" onclick="demoAddSite('robot-fleet-site-3',3)">Add</button>
+          <button class="btn btn-red    ah-ctrl-btn" onclick="demoRemoveSite('robot-fleet-site-3',3)">Remove</button>
+        </div>
+
+        <div class="ah-ctrl-label" style="margin-top:8px">Service Partners</div>
+        <div class="ah-ctrl-row">
+          <span class="ah-ctrl-name">SP1 — Frankfurt</span>
+          <button class="btn btn-green  ah-ctrl-btn" onclick="demoGrantSP(1)">Grant</button>
+          <button class="btn btn-red    ah-ctrl-btn" onclick="demoRevokeSP(1)">Revoke</button>
+          <button id="btn-cert-revoke-sp1" class="btn btn-danger  ah-ctrl-btn" onclick="demoRevokeCert('service-partner-1','SP1')">Cert ✕</button>
+          <button id="btn-cert-reissue-sp1" class="btn btn-neutral ah-ctrl-btn" onclick="demoReissueCert('service-partner-1','SP1')" disabled>Cert ↺</button>
+        </div>
+        <div class="ah-ctrl-row">
+          <span class="ah-ctrl-name">SP2 — Düsseldorf</span>
+          <button class="btn btn-green  ah-ctrl-btn" onclick="demoGrantSP(2)">Grant</button>
+          <button class="btn btn-red    ah-ctrl-btn" onclick="demoRevokeSP(2)">Revoke</button>
+          <button id="btn-cert-revoke-sp2" class="btn btn-danger  ah-ctrl-btn" onclick="demoRevokeCert('service-partner-2','SP2')">Cert ✕</button>
+          <button id="btn-cert-reissue-sp2" class="btn btn-neutral ah-ctrl-btn" onclick="demoReissueCert('service-partner-2','SP2')" disabled>Cert ↺</button>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <button class="btn btn-indigo" style="width:100%;justify-content:center;font-size:11px;"
+                onclick="closeAHPanel()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════
+const state = {
+  site1Active: true,
+  site2Active: true,
+  site3Active: false,
+  sp1Permit: true,
+  sp2Permit: false,
+  sp1CertRevoked: false,
+  sp2CertRevoked: false,
+
+  tickets: [],
+  ticketSeq: 1,
+
+  portalMsgCount: 0,
+  site1Msgs: 0,
+  site2Msgs: 0,
+  site3Msgs: 0,
+  sp1Msgs: 0,
+  sp2Msgs: 0,
+};
+
+let policyMap = {};
+let openPanelId = null;
+let panelRefreshTimer = null;
+
+// ═══════════════════════════════════════════════════════════
+//  SIMULATED MOWER DATA
+// ═══════════════════════════════════════════════════════════
+const MOWER_STATES = ['Cutting', 'Charging', 'Idle', 'Error'];
+
+function mowerData(siteIdx, mowerIdx, t) {
+  const phase = (siteIdx * 17.3 + mowerIdx * 7.9 + t * 0.00008) % (Math.PI * 2);
+  const val = (Math.sin(phase) + 1) / 2;
+  const stIdx = Math.min(Math.floor(val * 3.85), 3);
+  const status = MOWER_STATES[stIdx];
+  const battPhase = siteIdx * 13.1 + mowerIdx * 11.7 + t * 0.00006;
+  const batt = Math.max(5, Math.min(99, Math.round(50 + 45 * Math.sin(battPhase))));
+  return { status, batt };
+}
+
+function imuData(siteIdx, t) {
+  const ax = (Math.sin(t * 0.0001  + siteIdx * 1.1) * 0.4).toFixed(2);
+  const ay = (Math.cos(t * 0.00012 + siteIdx * 1.3) * 0.4).toFixed(2);
+  return { ax, ay };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  API
+// ═══════════════════════════════════════════════════════════
+async function apiFetch(url, opts = {}) {
+  try {
+    const r = await fetch(url, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    });
+    if (!r.ok) return null;
+    return r.json().catch(() => null);
+  } catch {
+    return null;
+  }
+}
+
+async function refreshPolicies() {
+  const data = await apiFetch('/api/pap/policies');
+  if (!data || !Array.isArray(data.policies)) return;
+  policyMap = {};
+  for (const p of data.policies) {
+    // Key includes provider so multiple site policies don't clobber each other.
+    const k = `${p.subject}|${p.resource}|${p.action}|${p.provider || ''}`;
+    policyMap[k] = { id: p.id, subject: p.subject, resource: p.resource, action: p.action, provider: p.provider || null, effect: p.effect || 'Permit' };
+  }
+  state.site1Active = Object.values(policyMap).some(p =>
+    p.subject === 'portal-cloud-ml' && p.action === 'orchestrate' && p.provider === 'robot-fleet-site-1');
+  state.site2Active = Object.values(policyMap).some(p =>
+    p.subject === 'portal-cloud-ml' && p.action === 'orchestrate' && p.provider === 'robot-fleet-site-2');
+  state.site3Active = Object.values(policyMap).some(p =>
+    p.subject === 'portal-cloud-ml' && p.action === 'orchestrate' && p.provider === 'robot-fleet-site-3');
+  state.sp1Permit = Object.values(policyMap).some(p =>
+    p.subject === 'service-partner-1' && p.resource === 'telemetry-rest' && p.action === 'consume');
+  state.sp2Permit = Object.values(policyMap).some(p =>
+    p.subject === 'service-partner-2' && p.resource === 'telemetry-rest' && p.action === 'consume');
+  updateMapVisuals();
+}
+
+async function createPolicy(subject, resource, action, provider) {
+  const body = { subject, resource, action, effect: 'Permit' };
+  if (provider) body.provider = provider;
+  return apiFetch('/api/pap/policies', { method: 'POST', body: JSON.stringify(body) });
+}
+
+async function deletePolicy(subject, resource, action) {
+  // Key uses empty string for provider-less policies (matches refreshPolicies key format).
+  const k = `${subject}|${resource}|${action}|`;
+  const p = policyMap[k];
+  if (!p) return null;
+  return apiFetch(`/api/pap/policies/${p.id}`, { method: 'DELETE' });
+}
+
+// Delete the policy that matches subject+resource+action AND provider field.
+// Needed when multiple policies share the same key (e.g. orchestrate with different providers).
+async function deletePolicyByProvider(subject, resource, action, provider) {
+  const all = Object.values(policyMap).filter(p =>
+    p.subject === subject && p.resource === resource &&
+    p.action === action && p.provider === provider
+  );
+  for (const p of all) {
+    await apiFetch(`/api/pap/policies/${p.id}`, { method: 'DELETE' });
+  }
+}
+
+// Delete a policy by subject+resource+action regardless of provider.
+async function deletePolicyBySubjectAction(subject, resource, action) {
+  const all = Object.values(policyMap).filter(p =>
+    p.subject === subject && p.resource === resource && p.action === action
+  );
+  for (const p of all) {
+    await apiFetch(`/api/pap/policies/${p.id}`, { method: 'DELETE' });
+  }
+}
+
+// Returns true when a Permit orchestrate policy with provider === siteId exists.
+function hasSitePolicy(siteId) {
+  return Object.values(policyMap).some(p =>
+    p.subject === 'portal-cloud-ml' && p.resource === 'telemetry' &&
+    p.action === 'orchestrate' && p.provider === siteId && p.effect === 'Permit'
+  );
+}
+
+async function healthCheck(url) {
+  const d = await apiFetch(url);
+  return !!(d && (d.status === 'ok' || d.status === 'UP' || d.running === true));
+}
+
+async function pollStats() {
+  const fns = [
+    ['portal-cloud-ml', 'portalMsgCount'],
+    ['robot-fleet-site-1', 'site1Msgs'],
+    ['robot-fleet-site-2', 'site2Msgs'],
+    ['robot-fleet-site-3', 'site3Msgs'],
+    ['service-partner-1', 'sp1Msgs'],
+    ['service-partner-2', 'sp2Msgs'],
+  ];
+  let gotReal = false;
+  for (const [svc, key] of fns) {
+    const d = await apiFetch(`/api/${svc}/stats`);
+    if (d && d.msgCount != null) { state[key] = d.msgCount; gotReal = true; }
+  }
+  if (!gotReal) {
+    // Simulate growth
+    if (state.site1Active) state.site1Msgs += Math.floor(Math.random() * 3);
+    if (state.site2Active) state.site2Msgs += Math.floor(Math.random() * 3);
+    if (state.site3Active) state.site3Msgs += Math.floor(Math.random() * 2);
+    if (state.sp1Permit)   state.sp1Msgs   += Math.floor(Math.random() * 2);
+    if (state.sp2Permit)   state.sp2Msgs   += Math.floor(Math.random() * 2);
+    state.portalMsgCount = state.site1Msgs + state.site2Msgs + state.site3Msgs;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MAP VISUALS
+// ═══════════════════════════════════════════════════════════
+function updateMapVisuals() {
+  // Site 3
+  applyFleetState('site3', state.site3Active);
+  // SP2
+  applySPState('sp2', state.sp2Permit, state.sp2Permit, state.sp2CertRevoked);
+  // SP1
+  applySPState('sp1', true, state.sp1Permit, state.sp1CertRevoked);
+  // Flow paths — cert revocation suppresses the data flow regardless of policy
+  setFlowActive('fp-s1',  state.site1Active);
+  setFlowActive('fp-s2',  state.site2Active);
+  setFlowActive('fp-s3',  state.site3Active);
+  setFlowActive('fp-sp1', state.sp1Permit && !state.sp1CertRevoked);
+  setFlowActive('fp-sp2', state.sp2Permit && !state.sp2CertRevoked);
+  // Cert revoke/reissue button states in AH panel
+  const rBtn1 = document.getElementById('btn-cert-revoke-sp1');
+  const xBtn1 = document.getElementById('btn-cert-reissue-sp1');
+  if (rBtn1) rBtn1.disabled = state.sp1CertRevoked;
+  if (xBtn1) xBtn1.disabled = !state.sp1CertRevoked;
+  const rBtn2 = document.getElementById('btn-cert-revoke-sp2');
+  const xBtn2 = document.getElementById('btn-cert-reissue-sp2');
+  if (rBtn2) rBtn2.disabled = state.sp2CertRevoked;
+  if (xBtn2) xBtn2.disabled = !state.sp2CertRevoked;
+  // Badge dots
+  setBadgeDot('bdot-sr',   state.site1Active || state.site2Active);
+  setBadgeDot('bdot-auth', state.sp1Permit   || state.sp2Permit);
+  setBadgeDot('bdot-orch', state.site1Active);
+  setBadgeDot('bdot-pap',  Object.keys(policyMap).length > 0);
+}
+
+function applyFleetState(id, active) {
+  const ring  = document.getElementById(`ring-${id}`);
+  const icon  = document.getElementById(`icon-${id}`);
+  const label = document.getElementById(`label-${id}`);
+  const sub   = document.getElementById(`sublabel-${id}`);
+  const pulse = document.getElementById(`pulse-${id}`);
+  if (ring)  ring.setAttribute('stroke', active ? '#22c55e' : '#2a4030');
+  if (icon)  icon.setAttribute('fill',   active ? '#22c55e' : '#2a4030');
+  if (label) label.style.fill = active ? '#d0e8ff' : '#3a5040';
+  if (sub)   sub.style.fill   = active ? '#7090b0' : '#2a3a30';
+  if (pulse) {
+    pulse.setAttribute('stroke', active ? '#22c55e' : '#2a4030');
+    pulse.style.animation = active ? '' : 'none';
+    pulse.style.opacity   = active ? '0' : '0';
+  }
+}
+
+function applySPState(id, visible, permit, certRevoked) {
+  const ring = document.getElementById(`ring-${id}`);
+  const icon = document.getElementById(`icon-${id}`);
+  const roof = document.getElementById(`icon-${id}-roof`);
+  const label = document.getElementById(`label-${id}`);
+  const sub   = document.getElementById(`sublabel-${id}`);
+  const pulse = document.getElementById(`pulse-${id}`);
+  const strokeCol = certRevoked ? '#ef4444' : (permit ? '#22c55e' : (visible ? '#6366f1' : '#2a2840'));
+  const iconCol   = visible ? '#6366f1' : '#2a2840';
+  if (ring)  ring.setAttribute('stroke', strokeCol);
+  if (icon)  icon.setAttribute('fill',   iconCol);
+  if (roof)  roof.setAttribute('fill',   iconCol);
+  if (label) label.style.fill = visible ? '#d0e8ff' : '#3a3860';
+  if (sub)   sub.style.fill   = visible ? '#7090b0' : '#2a2840';
+  if (pulse && permit) {
+    pulse.setAttribute('stroke', '#22c55e');
+    pulse.className = 'pulse-anim';
+  }
+}
+
+function setFlowActive(id, active) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (active) {
+    el.classList.remove('inactive');
+    el.style.opacity = '1';
+    el.style.strokeDasharray = '';
+  } else {
+    el.classList.add('inactive');
+  }
+}
+
+function setBadgeDot(id, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.setAttribute('fill', ok ? '#22c55e' : '#2a3040');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PARTICLE ANIMATION
+// ═══════════════════════════════════════════════════════════
+const FLOW_DEFS = [
+  { pathId:'fp-s1',  pts:[[392,480],[430,420],[460,365]], color:'#0d9488', active:()=>state.site1Active, n:3 },
+  { pathId:'fp-s2',  pts:[[287,144],[360,250],[460,365]], color:'#0d9488', active:()=>state.site2Active, n:3 },
+  { pathId:'fp-s3',  pts:[[520,250],[500,300],[460,365]], color:'#0d9488', active:()=>state.site3Active, n:2 },
+  { pathId:'fp-sp1', pts:[[460,365],[330,420],[196,480]], color:'#6366f1', active:()=>state.sp1Permit,   n:2 },
+  { pathId:'fp-sp2', pts:[[460,365],[280,370],[ 63,375]], color:'#6366f1', active:()=>state.sp2Permit,   n:2 },
+];
+
+function bezier2(p0, p1, p2, t) {
+  const u = 1 - t;
+  return [u*u*p0[0]+2*u*t*p1[0]+t*t*p2[0], u*u*p0[1]+2*u*t*p1[1]+t*t*p2[1]];
+}
+
+const particleLayer = document.getElementById('particles');
+const particles = [];
+
+function initParticles() {
+  for (let fi = 0; fi < FLOW_DEFS.length; fi++) {
+    const fd = FLOW_DEFS[fi];
+    for (let i = 0; i < fd.n; i++) {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('r', '3.5');
+      c.setAttribute('fill', fd.color);
+      c.setAttribute('filter', 'url(#glow-particle)');
+      c.style.display = 'none';
+      particleLayer.appendChild(c);
+      particles.push({
+        fi,
+        t: i / fd.n,
+        speed: 0.0012 + Math.random() * 0.0008,
+        el: c,
+      });
+    }
+  }
+}
+
+let lastTs = null;
+function rafLoop(ts) {
+  if (!lastTs) lastTs = ts;
+  const dt = Math.min(ts - lastTs, 60);
+  lastTs = ts;
+
+  for (const p of particles) {
+    const fd = FLOW_DEFS[p.fi];
+    if (!fd.active()) { p.el.style.display = 'none'; continue; }
+    p.t += p.speed * dt;
+    if (p.t > 1) p.t -= 1;
+    const [x, y] = bezier2(fd.pts[0], fd.pts[1], fd.pts[2], p.t);
+    p.el.setAttribute('cx', x.toFixed(1));
+    p.el.setAttribute('cy', y.toFixed(1));
+    p.el.style.display = 'block';
+    const a = p.t < 0.08 ? p.t/0.08 : p.t > 0.92 ? (1-p.t)/0.08 : 1;
+    p.el.style.opacity = (a * 0.9).toFixed(2);
+  }
+  requestAnimationFrame(rafLoop);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PANEL SYSTEM
+// ═══════════════════════════════════════════════════════════
+function openPanel(id, svgX, svgY) {
+  closePanel(false);
+  openPanelId = id;
+
+  const svg  = document.getElementById('map-svg');
+  const wrap = document.getElementById('map-wrap');
+  const svgR = svg.getBoundingClientRect();
+  const wrapR = wrap.getBoundingClientRect();
+  const vb = svg.viewBox.baseVal;
+  const sx = svgX * (svgR.width  / vb.width)  + svgR.left - wrapR.left;
+  const sy = svgY * (svgR.height / vb.height) + svgR.top  - wrapR.top;
+
+  const div = document.createElement('div');
+  div.className = 'panel';
+  div.id = 'active-panel';
+  div.innerHTML = buildPanelHTML(id);
+  document.getElementById('panel-container').appendChild(div);
+
+  // Smart positioning
+  const pw = 300, ph = 360;
+  const ww = wrap.clientWidth, wh = wrap.clientHeight;
+  let px = sx + 22, py = sy - 24;
+  if (px + pw > ww - 10) px = sx - pw - 22;
+  if (py + ph > wh - 10) py = wh - ph - 12;
+  if (px < 10) px = 10;
+  if (py < 10) py = 10;
+  div.style.left = px + 'px';
+  div.style.top  = py + 'px';
+
+  setTimeout(() => document.addEventListener('click', outsideClick), 30);
+
+  clearInterval(panelRefreshTimer);
+  panelRefreshTimer = setInterval(() => refreshPanel(id), 3000);
+}
+
+function outsideClick(e) {
+  const p = document.getElementById('active-panel');
+  if (p && !p.contains(e.target) &&
+      !e.target.closest('.entity-group') &&
+      !e.target.closest('#ah-badge-svg') &&
+      !e.target.closest('#ah-panel')) {
+    closePanel(true);
+  }
+}
+
+function closePanel(removeListener = true) {
+  document.getElementById('active-panel')?.remove();
+  openPanelId = null;
+  clearInterval(panelRefreshTimer);
+  if (removeListener) document.removeEventListener('click', outsideClick);
+}
+
+function buildPanelHTML(id) {
+  const t = Date.now();
+  if (id === 'site1') return fleetPanel(1, 'Nuremberg area', state.site1Active, state.site1Msgs, t);
+  if (id === 'site2') return fleetPanel(2, 'Hamburg area',   state.site2Active, state.site2Msgs, t);
+  if (id === 'site3') return fleetPanel(3, 'Berlin area',    state.site3Active, state.site3Msgs, t);
+  if (id === 'sp1')   return spPanel(1, 'Frankfurt',   state.sp1Permit);
+  if (id === 'sp2')   return spPanel(2, 'D\u00fcsseldorf', state.sp2Permit);
+  if (id === 'portal') return portalPanel();
+  return '';
+}
+
+function refreshPanel(id) {
+  const p = document.getElementById('active-panel');
+  if (!p) return;
+  const t = Date.now();
+  if (id.startsWith('site')) {
+    const si = parseInt(id.slice(4));
+    for (let m = 0; m < 4; m++) {
+      const md = mowerData(si, m, t);
+      p.querySelector(`#m-dot-${m}`)?.setAttribute('class', `mower-dot ${md.status.toLowerCase()}`);
+      const stEl = p.querySelector(`#m-st-${m}`);  if (stEl) stEl.textContent = md.status;
+      const bar  = p.querySelector(`#m-bar-${m}`);
+      if (bar) { bar.className = `mower-bar ${md.status.toLowerCase()}`; bar.style.width = md.batt + '%'; }
+      const pct  = p.querySelector(`#m-pct-${m}`); if (pct) pct.textContent = md.batt + '%';
+    }
+    const mc = p.querySelector('#panel-msgcount');
+    if (mc) mc.textContent = [state.site1Msgs, state.site2Msgs, state.site3Msgs][si-1];
+  }
+  if (id === 'portal') {
+    for (let i = 0; i < 3; i++) {
+      const el = p.querySelector(`#telem-s${i+1}`);
+      const act = [state.site1Active, state.site2Active, state.site3Active][i];
+      if (el && act) {
+        const imu = imuData(i+1, t);
+        el.innerHTML = `Site ${i+1}: <span>imu={ax:${imu.ax}, ay:${imu.ay}}</span>`;
+      }
+    }
+    const mc = p.querySelector('#portal-total'); if (mc) mc.textContent = state.portalMsgCount;
+  }
+}
+
+// ── Fleet panel ──────────────────────────────────────────
+function fleetPanel(si, city, active, msgs, t) {
+  const mowers = [0,1,2,3].map(m => mowerData(si, m, t));
+  const mowerRows = mowers.map((md, m) => `
+    <div class="mower-row">
+      <div class="mower-dot ${md.status.toLowerCase()}" id="m-dot-${m}"></div>
+      <div class="mower-name">Mower ${m+1}</div>
+      <div class="mower-state" id="m-st-${m}">${md.status}</div>
+      <div class="mower-bar-wrap">
+        <div class="mower-bar ${md.status.toLowerCase()}" id="m-bar-${m}" style="width:${md.batt}%"></div>
+      </div>
+      <div class="mower-pct" id="m-pct-${m}">${md.batt}%</div>
+    </div>`).join('');
+
+  const statusHTML = active
+    ? `<span style="color:#22c55e;font-weight:700;">&#x25CF; ACTIVE</span> &nbsp;&bull;&nbsp; 5 Hz telemetry`
+    : `<span style="color:#ef4444;">&#x25CB; INACTIVE</span> &mdash; No PAP policy`;
+
+  const bodyStyle = active ? '' : 'opacity:0.45;pointer-events:none;';
+
+  return `
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">&#x1F33F; Fleet Site ${si} &mdash; ${city}</div>
+        <div class="panel-sub" style="margin-top:4px;">${statusHTML}</div>
+      </div>
+      <button class="panel-close" onclick="closePanel()">&#x2715;</button>
+    </div>
+    <div style="${bodyStyle}">
+      <div class="panel-section">
+        <div class="section-title">Mower Status</div>
+        ${mowerRows}
+      </div>
+      <div class="panel-section">
+        <div class="stat-row">
+          <span class="stat-label">Messages received</span>
+          <span class="stat-val" id="panel-msgcount">${msgs}</span>
+        </div>
+      </div>
+      <div class="panel-section">
+        <div class="section-title">Schedule Service</div>
+        <div class="ticket-form">
+          <select id="tf-mower">
+            <option value="0">Mower 1</option><option value="1">Mower 2</option>
+            <option value="2">Mower 3</option><option value="3">Mower 4</option>
+          </select>
+          <input type="text" id="tf-issue" placeholder="Issue description (blade, reset, battery…)"/>
+          <select id="tf-sp">
+            <option value="1">Assign to SP1 (Frankfurt)</option>
+            <option value="2">Assign to SP2 (D\u00fcsseldorf)</option>
+          </select>
+          <div class="btn-row">
+            <button class="btn btn-teal" onclick="createTicket(${si})">&#x1F4CB; Schedule Service Ticket</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── Service Partner panel ─────────────────────────────────
+function spPanel(spIdx, city, permit) {
+  const myTickets = state.tickets.filter(tk => tk.assignedTo === spIdx);
+  const ticketsHTML = myTickets.length === 0
+    ? '<div class="ticket-empty">No tickets yet</div>'
+    : myTickets.map(tk => `
+        <div class="ticket-row">
+          <div class="ticket-id">#T${String(tk.id).padStart(3,'0')}</div>
+          <div class="ticket-desc">Site ${tk.siteId}, Mower ${tk.mowerIdx+1} &mdash; ${tk.issue}</div>
+          <div class="ticket-status">Status: ${tk.status}</div>
+        </div>`).join('');
+
+  const certNote = spIdx === 2 && state.sp2CertRevoked
+    ? '<div style="color:#ef4444;font-size:10px;margin-top:3px;">&#x26A0; Certificate revoked</div>'
+    : '';
+
+  const stats = spIdx === 1 ? state.sp1Msgs : state.sp2Msgs;
+
+  return `
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">&#x1F3E2; Service Partner ${spIdx} &mdash; ${city}</div>
+        <div class="panel-sub" style="margin-top:5px;">
+          <span class="access-badge ${permit ? 'permit' : 'denied'}">
+            <span class="access-badge-dot"></span>${permit ? 'PERMIT' : 'DENIED'}
+          </span>${certNote}
+        </div>
+      </div>
+      <button class="panel-close" onclick="closePanel()">&#x2715;</button>
+    </div>
+    <div class="panel-section">
+      <div class="section-title">Assigned Service Tickets</div>
+      ${ticketsHTML}
+    </div>
+    <div class="panel-section">
+      <div class="stat-row">
+        <span class="stat-label">Telemetry messages</span>
+        <span class="stat-val">${stats}</span>
+      </div>
+    </div>
+    <div class="panel-section">
+      <div class="btn-row">
+        ${permit
+          ? `<button class="btn btn-red"   onclick="revokeAccess(${spIdx})">&#x2715; Revoke Access</button>`
+          : `<button class="btn btn-green" onclick="grantAccess(${spIdx})">&#x2B; Grant Access</button>`}
+      </div>
+    </div>`;
+}
+
+// ── Fleet health / SLA computation (simulated) ───────────
+function computeFleetHealth(t) {
+  const activeSites = [state.site1Active, state.site2Active, state.site3Active].filter(Boolean).length;
+  if (activeSites === 0) return { score: 0, sla: 0, alerts: [] };
+
+  // Simulated per-site health scores cycling slowly over time
+  const siteScores = [1, 2, 3].map((si, i) => {
+    const active = [state.site1Active, state.site2Active, state.site3Active][i];
+    if (!active) return null;
+    const base = 78 + 15 * Math.sin(t * 0.00002 + si * 2.1);
+    return Math.round(Math.max(55, Math.min(99, base)));
+  }).filter(s => s !== null);
+
+  const score = siteScores.length ? Math.round(siteScores.reduce((a, b) => a + b, 0) / siteScores.length) : 0;
+
+  // SLA compliance: ~95% when healthy, drops when score < 75
+  const sla = Math.round(Math.max(72, Math.min(99.5, 60 + score * 0.41)));
+
+  // Predictive alerts (fictive)
+  const alerts = [];
+  if (state.site1Active && Math.sin(t * 0.000015 + 0.5) > 0.7)
+    alerts.push({ site: 1, msg: 'Blade wear predicted — Mower 2 (72h)' });
+  if (state.site2Active && Math.sin(t * 0.000018 + 1.3) > 0.8)
+    alerts.push({ site: 2, msg: 'Battery degradation — Mower 4 (48h)' });
+  if (state.site3Active && Math.sin(t * 0.000013 + 2.1) > 0.75)
+    alerts.push({ site: 3, msg: 'Sensor calibration due — Mower 1 (24h)' });
+
+  return { score, sla, alerts };
+}
+
+function updateSLABadge() {
+  const h = computeFleetHealth(Date.now());
+  const scoreEl = document.getElementById('sla-score-text');
+  const slaEl   = document.getElementById('sla-compliance-text');
+  if (scoreEl) {
+    scoreEl.textContent = h.score || '—';
+    scoreEl.setAttribute('fill', h.score >= 85 ? '#22c55e' : h.score >= 70 ? '#f59e0b' : '#ef4444');
+  }
+  if (slaEl) slaEl.textContent = h.score ? `SLA ${h.sla}%` : 'SLA —%';
+}
+
+// ── Portal panel ──────────────────────────────────────────
+function portalPanel() {
+  const t = Date.now();
+  const actives = [state.site1Active, state.site2Active, state.site3Active];
+  const activeSites   = actives.filter(Boolean).length;
+  const activePartners = (state.sp1Permit?1:0) + (state.sp2Permit?1:0);
+  const health = computeFleetHealth(t);
+
+  const telemHTML = actives.map((a, i) => {
+    if (!a) return `<div class="telem-row" id="telem-s${i+1}">Site ${i+1}: <span style="color:#2a3a50;">(inactive)</span></div>`;
+    const imu = imuData(i+1, t);
+    return `<div class="telem-row" id="telem-s${i+1}">Site ${i+1}: <span>imu={ax:${imu.ax}, ay:${imu.ay}}</span></div>`;
+  }).join('');
+
+  const scoreColor = health.score >= 85 ? '#22c55e' : health.score >= 70 ? '#f59e0b' : '#ef4444';
+  const slaColor   = health.sla   >= 95 ? '#22c55e' : health.sla   >= 85 ? '#f59e0b' : '#ef4444';
+
+  const alertsHTML = health.alerts.length === 0
+    ? '<div style="font-size:10px;color:#3a4a60;font-style:italic;">No alerts — all systems nominal</div>'
+    : health.alerts.map(a =>
+        `<div style="font-size:10px;color:#f59e0b;margin-bottom:3px;">&#x26A0; Site ${a.site}: ${a.msg}</div>`
+      ).join('');
+
+  return `
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">&#x2601;&#xFE0F; Portal &amp; Cloud ML &mdash; Leipzig</div>
+        <div class="panel-sub" style="color:#0d9488;font-weight:700;margin-top:3px;">&#x25CF; HEALTHY</div>
+      </div>
+      <button class="panel-close" onclick="closePanel()">&#x2715;</button>
+    </div>
+    <div class="panel-section">
+      <div class="stat-row"><span class="stat-label">Active sites</span><span class="stat-val">${activeSites} / 3</span></div>
+      <div class="stat-row"><span class="stat-label">Active partners</span><span class="stat-val">${activePartners} / 2</span></div>
+      <div class="stat-row"><span class="stat-label">Total messages</span><span class="stat-val" id="portal-total">${state.portalMsgCount}</span></div>
+    </div>
+    <div class="panel-section">
+      <div class="section-title">Fleet Health &amp; SLA Analytics</div>
+      <div class="stat-row">
+        <span class="stat-label">Fleet health score</span>
+        <span class="stat-val" style="color:${scoreColor};">${activeSites ? health.score + '%' : '—'}</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">SLA compliance</span>
+        <span class="stat-val" style="color:${slaColor};">${activeSites ? health.sla + '%' : '—'}</span>
+      </div>
+      <div style="margin-top:6px;">
+        <div class="section-title" style="margin-bottom:4px;">Predictive Maintenance</div>
+        ${alertsHTML}
+      </div>
+    </div>
+    <div class="panel-section">
+      <div class="section-title">Recent Telemetry (live)</div>
+      ${telemHTML}
+    </div>
+    <div class="panel-section">
+      <div class="btn-row">
+        <button class="btn btn-indigo" onclick="window.open('/admin.html','_blank')">
+          Open Policy Admin &#x2192;
+        </button>
+      </div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TICKET ACTIONS
+// ═══════════════════════════════════════════════════════════
+function createTicket(si) {
+  const mowerEl = document.getElementById('tf-mower');
+  const issueEl = document.getElementById('tf-issue');
+  const spEl    = document.getElementById('tf-sp');
+  if (!mowerEl || !issueEl || !spEl) return;
+  const mowerIdx  = parseInt(mowerEl.value);
+  const issue     = issueEl.value.trim() || 'Scheduled maintenance';
+  const assignedTo = parseInt(spEl.value);
+  const id = state.ticketSeq++;
+  state.tickets.push({
+    id, siteId: si, mowerIdx, issue, assignedTo,
+    status: 'Scheduled ' + new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'}),
+  });
+  issueEl.value = '';
+  toast(`Ticket #T${String(id).padStart(3,'0')} assigned to SP${assignedTo}`);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SP ACCESS ACTIONS
+// ═══════════════════════════════════════════════════════════
+async function grantAccess(spIdx) {
+  toast(`Granting SP${spIdx} access…`);
+  await createPolicy(`service-partner-${spIdx}`, 'telemetry-rest', 'consume', null);
+  await refreshPolicies();
+  toast(`SP${spIdx} access GRANTED`);
+  closePanel(false);
+  openPanel(`sp${spIdx}`, spIdx===1?196:63, spIdx===1?480:375);
+}
+
+async function revokeAccess(spIdx) {
+  toast(`Revoking SP${spIdx} access…`);
+  await deletePolicy(`service-partner-${spIdx}`, 'telemetry-rest', 'consume');
+  await refreshPolicies();
+  toast(`SP${spIdx} access REVOKED`);
+  closePanel(false);
+  openPanel(`sp${spIdx}`, spIdx===1?196:63, spIdx===1?480:375);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  ARROWHEAD CLOUD PANEL
+// ═══════════════════════════════════════════════════════════
+function openAHPanel() {
+  document.getElementById('ah-panel').style.display = 'block';
+  refreshAHPanel();
+}
+function closeAHPanel() {
+  document.getElementById('ah-panel').style.display = 'none';
+}
+
+async function refreshAHPanel() {
+  const checks = [
+    { url:'/api/serviceregistry/health', dot:'ah-dot-sr',   st:'ah-st-sr'   },
+    { url:'/api/authentication/health',  dot:'ah-dot-auth', st:'ah-st-auth' },
+    { url:'/api/consumerauth/health',    dot:'ah-dot-cauth',st:'ah-st-cauth'},
+    { url:'/api/portal-cloud-ml/health', dot:'ah-dot-orch', st:'ah-st-orch' },
+    { url:'/api/profile-ca/health',      dot:'ah-dot-ca',   st:'ah-st-ca'   },
+  ];
+  for (const c of checks) {
+    const ok = await healthCheck(c.url);
+    const dot = document.getElementById(c.dot);
+    const st  = document.getElementById(c.st);
+    if (dot) dot.className = 'ah-dot ' + (ok ? 'ok' : 'err');
+    if (st)  { st.textContent = ok ? 'OK' : 'ERR'; st.className = ok ? 'ah-status-ok' : 'ah-status-err'; }
+  }
+  // PAP
+  const pap = await apiFetch('/api/pap/status');
+  const papDot = document.getElementById('ah-dot-pap');
+  const papSt  = document.getElementById('ah-st-pap');
+  if (pap)  { if (papDot) papDot.className = 'ah-dot ok'; if (papSt) papSt.textContent = `${pap.policies} policies`; }
+  // PIP
+  const pip = await apiFetch('/api/pip/status');
+  const pipDot = document.getElementById('ah-dot-pip');
+  const pipSt  = document.getElementById('ah-st-pip');
+  if (pip)  { if (pipDot) pipDot.className = 'ah-dot ok'; if (pipSt) pipSt.textContent = `${pip.subjects} subjects`; }
+  // AuthzForce — infer from PAP
+  const pdpDot = document.getElementById('ah-dot-pdp');
+  const pdpSt  = document.getElementById('ah-st-pdp');
+  if (pap && pdpDot) { pdpDot.className = 'ah-dot ok'; if (pdpSt) pdpSt.textContent = 'OK'; }
+}
+
+// ── Demo controls ──────────────────────────────────────────
+async function demoReset() {
+  toast('Resetting demo state…');
+  // Remove Site 3 policy (if present)
+  await deletePolicyByProvider('portal-cloud-ml', 'telemetry', 'orchestrate', 'robot-fleet-site-3');
+  // Remove SP2 policy (if present)
+  await deletePolicyBySubjectAction('service-partner-2', 'telemetry-rest', 'consume');
+  // Ensure Site 1 + Site 2 policies exist
+  if (!hasSitePolicy('robot-fleet-site-1'))
+    await createPolicy('portal-cloud-ml', 'telemetry', 'orchestrate', 'robot-fleet-site-1');
+  if (!hasSitePolicy('robot-fleet-site-2'))
+    await createPolicy('portal-cloud-ml', 'telemetry', 'orchestrate', 'robot-fleet-site-2');
+  // Ensure SP1 consume policy exists
+  if (!policyMap['service-partner-1|telemetry-rest|consume|'])
+    await createPolicy('service-partner-1', 'telemetry-rest', 'consume', null);
+  state.sp1CertRevoked = false;
+  state.sp2CertRevoked = false;
+  await refreshPolicies();
+  updateMapVisuals();
+  toast('Demo reset — Sites 1+2 active, SP1 only');
+}
+
+async function demoAddSite(siteId, siteNum) {
+  if (hasSitePolicy(siteId)) { toast(`Site ${siteNum} already active`); return; }
+  toast(`Adding Site ${siteNum}…`);
+  await createPolicy('portal-cloud-ml', 'telemetry', 'orchestrate', siteId);
+  await refreshPolicies();
+  updateMapVisuals();
+  toast(`Fleet Site ${siteNum} ACTIVATED`);
+}
+
+async function demoRemoveSite(siteId, siteNum) {
+  if (!hasSitePolicy(siteId)) { toast(`Site ${siteNum} not active`); return; }
+  toast(`Removing Site ${siteNum}…`);
+  await deletePolicyByProvider('portal-cloud-ml', 'telemetry', 'orchestrate', siteId);
+  await refreshPolicies();
+  updateMapVisuals();
+  toast(`Fleet Site ${siteNum} DEACTIVATED`);
+}
+
+async function demoGrantSP(spNum) {
+  const subject = `service-partner-${spNum}`;
+  if (policyMap[`${subject}|telemetry-rest|consume|`]) { toast(`SP${spNum} already has access`); return; }
+  toast(`Granting SP${spNum} access…`);
+  await createPolicy(subject, 'telemetry-rest', 'consume', null);
+  await refreshPolicies();
+  if (spNum === 1) { state.sp1Permit = true; } else { state.sp2Permit = true; state.sp2CertRevoked = false; }
+  updateMapVisuals();
+  toast(`Service Partner ${spNum} GRANTED`);
+}
+
+async function demoRevokeSP(spNum) {
+  const subject = `service-partner-${spNum}`;
+  if (!policyMap[`${subject}|telemetry-rest|consume|`]) { toast(`SP${spNum} already has no access`); return; }
+  toast(`Revoking SP${spNum} access…`);
+  await deletePolicyBySubjectAction(subject, 'telemetry-rest', 'consume');
+  await refreshPolicies();
+  if (spNum === 1) state.sp1Permit = false; else state.sp2Permit = false;
+  updateMapVisuals();
+  toast(`Service Partner ${spNum} REVOKED`);
+}
+
+async function demoRevokeCert(cn, label) {
+  toast(`Revoking ${label} certificate…`);
+  await apiFetch(`/api/profile-ca/ca/certificates/${cn}`, { method: 'DELETE' });
+  await new Promise(r => setTimeout(r, 1200));
+  const pipData = await apiFetch(`/api/pip/pip/attributes/${cn}`);
+  if (cn.includes('2')) state.sp2CertRevoked = true;
+  else state.sp1CertRevoked = true;
+  toast(pipData
+    ? `${label} cert revoked. PIP: certValid=${pipData.certValid}`
+    : `${label} certificate revoked`);
+  updateMapVisuals();
+}
+
+async function demoReissueCert(cn, label) {
+  toast(`Re-issuing ${label} certificate…`);
+  await apiFetch(`/api/profile-ca/ca/certificates/${cn}/reissue`, { method: 'POST' });
+  await new Promise(r => setTimeout(r, 800)); // let PIP process the ISSUED event
+  const pipData = await apiFetch(`/api/pip/pip/attributes/${cn}`);
+  if (cn.includes('2')) state.sp2CertRevoked = false;
+  else state.sp1CertRevoked = false;
+  toast(pipData
+    ? `${label} cert re-issued. PIP: certValid=${pipData.certValid}`
+    : `${label} certificate re-issued`);
+  updateMapVisuals();
+}
+
+// Keep old names for backward compat with any SP panel buttons
+async function demoAddSite3()      { await demoAddSite('robot-fleet-site-3', 3); }
+async function demoGrantSP2()      { await demoGrantSP(2); }
+async function demoRevokeSP1()     { await demoRevokeSP(1); }
+async function demoRevokeSP2Cert() { await demoRevokeCert('service-partner-2', 'SP2'); }
+
+// ═══════════════════════════════════════════════════════════
+//  TOAST
+// ═══════════════════════════════════════════════════════════
+let toastTimer = null;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3500);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  AH PANEL OUTSIDE CLICK
+// ═══════════════════════════════════════════════════════════
+document.addEventListener('click', e => {
+  const panel = document.getElementById('ah-panel');
+  if (panel.style.display === 'block' &&
+      !panel.contains(e.target) &&
+      !e.target.closest('#ah-badge-svg')) {
+    closeAHPanel();
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════
+async function init() {
+  initParticles();
+  requestAnimationFrame(rafLoop);
+
+  await refreshPolicies();   // sets state from live API (or leaves defaults)
+  updateMapVisuals();
+
+  await pollStats();
+  updateSLABadge();
+  setInterval(pollStats,       5000);
+  setInterval(updateSLABadge,  3000);
+  setInterval(refreshPolicies, 15000);
+  setInterval(() => {
+    if (document.getElementById('ah-panel').style.display === 'block') refreshAHPanel();
+  }, 10000);
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

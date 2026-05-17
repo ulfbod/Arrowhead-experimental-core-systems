@@ -249,7 +249,17 @@
       "Bash(protoc --version)",
       "Bash(sed:*)",
       "Bash(go list:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(docker exec experiment-13-dashboard-1:*)",
+      "Bash(docker volume:*)",
+      "Bash(xargs -I{} test -f /home/uffe/projects/ArrowheadCore/experiments/experiment-8/services/profile-ca/{})",
+      "Bash(docker exec:*)",
+      "Bash(java -version)",
+      "Bash(mvn -version)",
+      "Read(//usr/local/bin/**)",
+      "Read(//opt/**)",
+      "Bash(GOWORK=off go test ./...)",
+      "Bash(GOWORK=off go test ./... -v)"
     ]
   }
 }
