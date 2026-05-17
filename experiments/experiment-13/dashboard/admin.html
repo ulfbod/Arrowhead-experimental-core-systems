@@ -19,11 +19,13 @@
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-    header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
-    header h1 { font-size: 18px; font-weight: 600; }
-    header span { color: var(--muted); font-size: 13px; }
-    header a { color: var(--accent); font-size: 13px; text-decoration: none; margin-left: auto; padding: 6px 14px; border: 1px solid var(--accent); border-radius: 4px; }
-    header a:hover { background: var(--accent); color: white; }
+    header { height: 52px; background: #0d1220; border-bottom: 1px solid #1e2d4a; display: flex; align-items: center; padding: 0 20px; gap: 0; }
+    .hd-logo { font-size: 15px; font-weight: 700; color: #6366f1; white-space: nowrap; letter-spacing: 0.3px; }
+    .hd-sub { flex: 1; text-align: center; font-size: 12px; color: #5a7090; letter-spacing: 0.5px; }
+    .hd-nav { display: flex; gap: 4px; }
+    .hd-nav a { padding: 5px 12px; font-size: 12px; color: #5a7090; text-decoration: none; border-radius: 4px; border: 1px solid transparent; transition: all 0.2s; }
+    .hd-nav a:hover { color: #a0b8d0; border-color: #2a3a5a; }
+    .hd-nav a.active { color: #a0c8ff; background: #111a2e; border-color: #2a3d6a; }
     main { display: grid; grid-template-columns: 1fr 1fr 360px; gap: 16px; padding: 16px; }
     .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
     .card.highlight { border-color: var(--teal); }
@@ -66,10 +68,13 @@
 </head>
 <body>
   <header>
-    <h1>Experiment 13 — Policy Admin</h1>
-    <span>PAP · PIP (gRPC-populated) · cert revocation via profile-ca</span>
-    <a href="/demo.html">Exhibition Demo</a>
-    <a href="/">Monitoring Dashboard</a>
+    <div class="hd-logo">&#x1F3F9; Arrowhead 5 Evolution &middot; ADAPI Exhibition</div>
+    <div class="hd-sub">UC3 &mdash; Autonomous Lawn Mowing as a Service</div>
+    <nav class="hd-nav">
+      <a href="/">Live Monitor</a>
+      <a href="/demo.html">Exhibition Demo</a>
+      <a href="/admin.html" class="active">Policy Admin</a>
+    </nav>
   </header>
   <main>
 
@@ -78,9 +83,10 @@
       <div class="card">
         <h2>PAP — Policy Administration Point</h2>
         <div class="info-box-blue">
-          PAP is the single authority for both orchestration (DynamicOrch-XACML)
-          and enforcement (Kafka PEP, AMQP PEP, REST mTLS PEP). No ConsumerAuth
-          grants are needed. Policies can condition on <code>cert-level</code>.
+          Policies define which consumer systems may access which services. Each policy
+          names a subject (consumer), a resource (service), an action, and an effect —
+          Permit or Deny. A matching Permit policy is required for any access to succeed.
+          Changes take effect on the next authorization request.
         </div>
         <div class="status-bar">
           <div class="stat"><strong id="pap-count">—</strong>policies</div>
@@ -132,11 +138,10 @@
       <div class="card highlight">
         <h2>PIP — Policy Information Point</h2>
         <div class="info-box">
-          <strong>New in exp-13:</strong> PIP is auto-populated by the
-          <code>CertificateLifecycle</code> gRPC stream from profile-ca.
-          Subjects appear when a system cert is issued; <code>certValid</code>
-          becomes <code>false</code> when <code>DELETE /ca/certificates/{cn}</code> is called.
-          No manual registration is required or needed.
+          Registered subjects and their identity attributes. Certificate validity is tracked
+          automatically — a revoked certificate causes the next authorization request to be
+          denied regardless of the policy outcome. Use the lookup below to inspect attributes
+          for a specific system.
         </div>
         <div class="status-bar">
           <div class="stat"><strong id="pip-count">—</strong>subjects</div>
@@ -145,7 +150,7 @@
 
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-          <h2 style="margin:0">Subjects (auto-populated)</h2>
+          <h2 style="margin:0">Registered Subjects</h2>
           <button class="btn btn-primary" style="padding:5px 12px;font-size:12px" onclick="loadSubjects()">Refresh</button>
         </div>
         <div id="subject-table"><div class="empty">Loading…</div></div>
@@ -169,9 +174,9 @@
       <div class="card highlight">
         <h2>Profile-CA — Certificate Revocation</h2>
         <div class="info-box">
-          <code>DELETE /ca/certificates/{cn}</code> → gRPC stream event →
-          PIP sets <code>certValid=false</code> → next PEP request →
-          AuthzForce DENY. Propagation: one stream event + one HTTP round-trip.
+          Revoking a certificate immediately blocks all access for that system. Enter the
+          system name and click Revoke — the policy engine is notified automatically and
+          the next authorization request for that system will be denied.
         </div>
 
         <div class="section-title">Revoke Certificate</div>
@@ -188,8 +193,9 @@
       <div class="card">
         <h2>DynamicOrch-XACML</h2>
         <div class="info-box-blue">
-          One XACML call per orchestration request — same AuthzForce domain as all PEPs.
-          ConsumerAuth is <em>not</em> queried.
+          Test service discovery: enter a consumer system name and a service definition
+          to see which providers are available and whether the consumer is permitted to
+          access the service.
         </div>
 
         <div class="section-title">Test Orchestration</div>
@@ -307,7 +313,7 @@
         const subjects = list.subjects ?? [];
         const el = document.getElementById('subject-table');
         if (subjects.length === 0) {
-          el.innerHTML = '<div class="empty">No subjects (waiting for gRPC stream events)</div>';
+          el.innerHTML = '<div class="empty">No registered subjects</div>';
           return;
         }
         el.innerHTML = `
@@ -336,7 +342,7 @@
       el.style.display = 'block';
       el.textContent = 'Looking up…';
       try {
-        const r = await fetch('/api/pip/pip/attributes/' + encodeURIComponent(name));
+        const r = await fetch('/api/pip/attributes/' + encodeURIComponent(name));
         const d = await r.json();
         el.textContent = JSON.stringify(d, null, 2);
       } catch(e) { el.textContent = 'Error: ' + e.message; }

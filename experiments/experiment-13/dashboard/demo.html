@@ -71,6 +71,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    background-image: url('map-bg.png');
+    background-size: cover;
+    background-position: center;
   }
 
   #map-svg {
@@ -316,49 +319,11 @@
       </radialGradient>
     </defs>
 
-    <!-- Sea / outer background -->
-    <rect width="700" height="800" fill="url(#sea-grad)"/>
-    <!-- North Sea tint -->
-    <ellipse cx="100" cy="55" rx="130" ry="80" fill="#0f1b2e" opacity="0.55"/>
-    <!-- Baltic Sea tint -->
-    <ellipse cx="590" cy="75" rx="110" ry="65" fill="#0f1b2e" opacity="0.45"/>
-    <!-- Surrounding countries slightly lighter -->
-    <rect width="700" height="800" fill="#101825" opacity="0.18"/>
-
-    <!-- Germany fill -->
-    <path class="germany-fill" d="M 243,28 C 260,15 290,10 310,18 C 340,28 380,35 420,45 C 460,52 510,58 548,78 C 580,95 605,115 612,145 C 618,170 610,200 605,225 C 598,255 590,280 585,310 C 580,340 575,370 565,395 C 552,425 535,450 512,468 C 495,483 478,492 465,510 C 450,528 442,548 435,570 C 428,592 425,615 418,635 C 410,655 398,672 382,684 C 365,696 345,702 325,700 C 302,698 280,692 258,682 C 235,672 215,658 200,642 C 182,624 170,602 158,580 C 145,556 130,532 115,512 C 98,490 80,472 65,455 C 48,436 35,415 25,392 C 14,368 10,342 12,315 C 14,288 22,262 28,238 C 34,212 40,188 42,162 C 44,136 40,110 45,88 C 50,65 62,48 80,38 C 100,27 125,22 150,20 C 175,18 200,22 220,26 Z"/>
-
-    <!-- Topographic contour lines -->
-    <g opacity="0.3">
-      <ellipse cx="300" cy="360" rx="185" ry="245" class="contour"/>
-      <ellipse cx="308" cy="368" rx="135" ry="180" class="contour"/>
-      <ellipse cx="315" cy="375" rx="88" ry="120" class="contour"/>
-      <ellipse cx="330" cy="545" rx="72" ry="82" class="contour"/>
-      <ellipse cx="448" cy="195" rx="82" ry="105" class="contour"/>
-      <ellipse cx="180" cy="450" rx="55" ry="65" class="contour"/>
-    </g>
-
-    <!-- Vignette over Germany -->
-    <path d="M 243,28 C 260,15 290,10 310,18 C 340,28 380,35 420,45 C 460,52 510,58 548,78 C 580,95 605,115 612,145 C 618,170 610,200 605,225 C 598,255 590,280 585,310 C 580,340 575,370 565,395 C 552,425 535,450 512,468 C 495,483 478,492 465,510 C 450,528 442,548 435,570 C 428,592 425,615 418,635 C 410,655 398,672 382,684 C 365,696 345,702 325,700 C 302,698 280,692 258,682 C 235,672 215,658 200,642 C 182,624 170,602 158,580 C 145,556 130,532 115,512 C 98,490 80,472 65,455 C 48,436 35,415 25,392 C 14,368 10,342 12,315 C 14,288 22,262 28,238 C 34,212 40,188 42,162 C 44,136 40,110 45,88 C 50,65 62,48 80,38 C 100,27 125,22 150,20 C 175,18 200,22 220,26 Z"
-          fill="url(#de-vignette)" pointer-events="none"/>
-
-    <!-- Germany border stroke -->
-    <path class="germany-stroke" d="M 243,28 C 260,15 290,10 310,18 C 340,28 380,35 420,45 C 460,52 510,58 548,78 C 580,95 605,115 612,145 C 618,170 610,200 605,225 C 598,255 590,280 585,310 C 580,340 575,370 565,395 C 552,425 535,450 512,468 C 495,483 478,492 465,510 C 450,528 442,548 435,570 C 428,592 425,615 418,635 C 410,655 398,672 382,684 C 365,696 345,702 325,700 C 302,698 280,692 258,682 C 235,672 215,658 200,642 C 182,624 170,602 158,580 C 145,556 130,532 115,512 C 98,490 80,472 65,455 C 48,436 35,415 25,392 C 14,368 10,342 12,315 C 14,288 22,262 28,238 C 34,212 40,188 42,162 C 44,136 40,110 45,88 C 50,65 62,48 80,38 C 100,27 125,22 150,20 C 175,18 200,22 220,26 Z"/>
 
     <!-- City reference dots -->
-    <circle cx="78" cy="390" r="3" class="city-dot"/>
-    <text x="90" y="387" class="city-label">Cologne</text>
-    <circle cx="228" cy="590" r="3" class="city-dot"/>
-    <text x="242" y="587" class="city-label">Stuttgart</text>
-    <circle cx="530" cy="310" r="3" class="city-dot"/>
-    <text x="538" y="307" class="city-label">Dresden</text>
-    <circle cx="390" cy="540" r="3" class="city-dot"/>
-    <text x="402" y="537" class="city-label">Nuremberg</text>
-    <circle cx="215" cy="170" r="3" class="city-dot"/>
-    <text x="227" y="167" class="city-label">Bremen</text>
 
     <!-- ── Data flow paths ── -->
-    <path id="fp-s1" class="flow-path flow-teal inactive" d="M 392,480 Q 430,420 460,365"/>
+    <path id="fp-s1" class="flow-path flow-teal inactive" d="M 425,515 Q 445,430 460,365"/>
     <path id="fp-s2" class="flow-path flow-teal inactive" d="M 287,144 Q 360,250 460,365"/>
     <path id="fp-s3" class="flow-path flow-teal inactive" d="M 520,250 Q 500,300 460,365"/>
     <path id="fp-sp1" class="flow-path flow-indigo inactive" d="M 460,365 Q 330,420 196,480"/>
@@ -382,28 +347,26 @@
       <circle cx="458" cy="356" r="9" fill="#0d9488"/>
       <rect x="442" y="360" width="33" height="11" fill="#0d9488"/>
       <text x="460" y="384" class="entity-label" style="font-size:10px;fill:#2dd4bf;">Portal &amp; Cloud ML</text>
-      <text x="460" y="396" class="entity-sublabel">Leipzig</text>
     </g>
 
     <!-- ══════════════════════════════════════
-         Fleet Site 1 — Nuremberg (392, 480)
+         Fleet Site 1 — Nuremberg (425, 515)
     ══════════════════════════════════════ -->
-    <g id="entity-site1" class="entity-group" onclick="openPanel('site1',392,480)">
-      <circle id="pulse-site1" cx="392" cy="480" r="34" fill="none" stroke="#22c55e" stroke-width="1.5"
+    <g id="entity-site1" class="entity-group" onclick="openPanel('site1',425,515)">
+      <circle id="pulse-site1" cx="425" cy="515" r="34" fill="none" stroke="#22c55e" stroke-width="1.5"
               opacity="0" class="pulse-anim"/>
-      <circle cx="392" cy="480" r="32" id="ring-site1"
+      <circle cx="425" cy="515" r="32" id="ring-site1"
               fill="#0a2010" stroke="#22c55e" stroke-width="2" filter="url(#glow-green)"/>
       <!-- Mower body -->
-      <rect x="377" y="473" width="30" height="12" rx="3" fill="#22c55e" id="icon-site1"/>
+      <rect x="410" y="508" width="30" height="12" rx="3" fill="#22c55e" id="icon-site1"/>
       <!-- Blade hint -->
-      <rect x="382" y="470" width="20" height="3" rx="1" fill="#16a34a" id="icon-site1-blade"/>
+      <rect x="415" y="505" width="20" height="3" rx="1" fill="#16a34a" id="icon-site1-blade"/>
       <!-- Wheels -->
-      <circle cx="381" cy="488" r="5" fill="#0a2010" stroke="#22c55e" stroke-width="1.5"/>
-      <circle cx="403" cy="488" r="5" fill="#0a2010" stroke="#22c55e" stroke-width="1.5"/>
-      <circle cx="381" cy="488" r="2" fill="#22c55e"/>
-      <circle cx="403" cy="488" r="2" fill="#22c55e"/>
-      <text x="392" y="516" class="entity-label">Fleet Site 1</text>
-      <text x="392" y="528" class="entity-sublabel">Nuremberg area</text>
+      <circle cx="414" cy="523" r="5" fill="#0a2010" stroke="#22c55e" stroke-width="1.5"/>
+      <circle cx="436" cy="523" r="5" fill="#0a2010" stroke="#22c55e" stroke-width="1.5"/>
+      <circle cx="414" cy="523" r="2" fill="#22c55e"/>
+      <circle cx="436" cy="523" r="2" fill="#22c55e"/>
+      <text x="425" y="551" class="entity-label">Fleet Site 1</text>
     </g>
 
     <!-- ══════════════════════════════════════
@@ -421,24 +384,22 @@
       <circle cx="276" cy="152" r="2" fill="#22c55e"/>
       <circle cx="298" cy="152" r="2" fill="#22c55e"/>
       <text x="287" y="180" class="entity-label">Fleet Site 2</text>
-      <text x="287" y="192" class="entity-sublabel">Hamburg area</text>
     </g>
 
     <!-- ══════════════════════════════════════
          Fleet Site 3 — Berlin (520, 250)  [starts inactive]
     ══════════════════════════════════════ -->
     <g id="entity-site3" class="entity-group" onclick="openPanel('site3',520,250)">
-      <circle id="pulse-site3" cx="520" cy="250" r="34" fill="none" stroke="#22c55e" stroke-width="1.5" opacity="0"/>
+      <circle id="pulse-site3" cx="520" cy="250" r="34" fill="none" stroke="#22c55e" stroke-width="1.5" opacity="0" class="pulse-anim" style="animation-delay:1.6s"/>
       <circle cx="520" cy="250" r="32" id="ring-site3"
               fill="#0a2010" stroke="#2a4030" stroke-width="2"/>
       <rect x="505" y="243" width="30" height="12" rx="3" fill="#2a4030" id="icon-site3"/>
-      <rect x="510" y="240" width="20" height="3" rx="1" fill="#1a3020"/>
+      <rect x="510" y="240" width="20" height="3" rx="1" fill="#16a34a" id="icon-site3-blade"/>
       <circle cx="509" cy="258" r="5" fill="#0a2010" stroke="#2a4030" stroke-width="1.5"/>
       <circle cx="531" cy="258" r="5" fill="#0a2010" stroke="#2a4030" stroke-width="1.5"/>
       <circle cx="509" cy="258" r="2" fill="#2a4030"/>
       <circle cx="531" cy="258" r="2" fill="#2a4030"/>
       <text x="520" y="286" id="label-site3" class="entity-label" style="fill:#3a5040;">Fleet Site 3</text>
-      <text x="520" y="298" id="sublabel-site3" class="entity-sublabel" style="fill:#2a3a30;">Berlin area</text>
     </g>
 
     <!-- ══════════════════════════════════════
@@ -457,23 +418,21 @@
       <rect x="197" y="475" width="4" height="4" fill="#0d0a25"/>
       <rect x="193" y="481" width="4" height="7" fill="#0d0a25"/>
       <text x="196" y="516" class="entity-label">Service Partner 1</text>
-      <text x="196" y="528" class="entity-sublabel">Frankfurt</text>
     </g>
 
     <!-- ══════════════════════════════════════
          Service Partner SP2 — Düsseldorf (63, 375)  [starts inactive]
     ══════════════════════════════════════ -->
     <g id="entity-sp2" class="entity-group" onclick="openPanel('sp2',63,375)">
-      <circle id="pulse-sp2" cx="63" cy="375" r="30" fill="none" stroke="#6366f1" stroke-width="1.5" opacity="0"/>
+      <circle id="pulse-sp2" cx="63" cy="375" r="30" fill="none" stroke="#6366f1" stroke-width="1.5" opacity="0" class="pulse-anim" style="animation-delay:1.2s"/>
       <circle cx="63" cy="375" r="28" id="ring-sp2"
-              fill="#0d0a25" stroke="#2a2840" stroke-width="2"/>
-      <rect x="52" y="366" width="22" height="17" rx="1" fill="#2a2840" id="icon-sp2"/>
-      <polygon points="51,366 63,356 75,366" fill="#2a2840" id="icon-sp2-roof"/>
+              fill="#0d0a25" stroke="#6366f1" stroke-width="2" filter="url(#glow-indigo)"/>
+      <rect x="52" y="366" width="22" height="17" rx="1" fill="#6366f1" id="icon-sp2"/>
+      <polygon points="51,366 63,356 75,366" fill="#6366f1" id="icon-sp2-roof"/>
       <rect x="56" y="370" width="4" height="4" fill="#0d0a25"/>
       <rect x="64" y="370" width="4" height="4" fill="#0d0a25"/>
       <rect x="60" y="376" width="4" height="7" fill="#0d0a25"/>
-      <text x="63" y="411" id="label-sp2" class="entity-label" style="fill:#3a3860;">Service Partner 2</text>
-      <text x="63" y="423" id="sublabel-sp2" class="entity-sublabel" style="fill:#2a2840;">D&#xFC;sseldorf</text>
+      <text x="63" y="411" id="label-sp2" class="entity-label">Service Partner 2</text>
     </g>
 
     <!-- ══════════════════════════════════════
@@ -597,31 +556,31 @@
 
         <div class="ah-ctrl-label">Robot Fleet Sites</div>
         <div class="ah-ctrl-row">
-          <span class="ah-ctrl-name">Site 1 — Nuremberg</span>
+          <span class="ah-ctrl-name">Site 1</span>
           <button class="btn btn-green  ah-ctrl-btn" onclick="demoAddSite('robot-fleet-site-1',1)">Add</button>
           <button class="btn btn-red    ah-ctrl-btn" onclick="demoRemoveSite('robot-fleet-site-1',1)">Remove</button>
         </div>
         <div class="ah-ctrl-row">
-          <span class="ah-ctrl-name">Site 2 — Hamburg</span>
+          <span class="ah-ctrl-name">Site 2</span>
           <button class="btn btn-green  ah-ctrl-btn" onclick="demoAddSite('robot-fleet-site-2',2)">Add</button>
           <button class="btn btn-red    ah-ctrl-btn" onclick="demoRemoveSite('robot-fleet-site-2',2)">Remove</button>
         </div>
         <div class="ah-ctrl-row">
-          <span class="ah-ctrl-name">Site 3 — Berlin</span>
+          <span class="ah-ctrl-name">Site 3</span>
           <button class="btn btn-green  ah-ctrl-btn" onclick="demoAddSite('robot-fleet-site-3',3)">Add</button>
           <button class="btn btn-red    ah-ctrl-btn" onclick="demoRemoveSite('robot-fleet-site-3',3)">Remove</button>
         </div>
 
         <div class="ah-ctrl-label" style="margin-top:8px">Service Partners</div>
         <div class="ah-ctrl-row">
-          <span class="ah-ctrl-name">SP1 — Frankfurt</span>
+          <span class="ah-ctrl-name">SP1</span>
           <button class="btn btn-green  ah-ctrl-btn" onclick="demoGrantSP(1)">Grant</button>
           <button class="btn btn-red    ah-ctrl-btn" onclick="demoRevokeSP(1)">Revoke</button>
           <button id="btn-cert-revoke-sp1" class="btn btn-danger  ah-ctrl-btn" onclick="demoRevokeCert('service-partner-1','SP1')">Cert ✕</button>
           <button id="btn-cert-reissue-sp1" class="btn btn-neutral ah-ctrl-btn" onclick="demoReissueCert('service-partner-1','SP1')" disabled>Cert ↺</button>
         </div>
         <div class="ah-ctrl-row">
-          <span class="ah-ctrl-name">SP2 — Düsseldorf</span>
+          <span class="ah-ctrl-name">SP2</span>
           <button class="btn btn-green  ah-ctrl-btn" onclick="demoGrantSP(2)">Grant</button>
           <button class="btn btn-red    ah-ctrl-btn" onclick="demoRevokeSP(2)">Revoke</button>
           <button id="btn-cert-revoke-sp2" class="btn btn-danger  ah-ctrl-btn" onclick="demoRevokeCert('service-partner-2','SP2')">Cert ✕</button>
@@ -804,12 +763,13 @@ async function pollStats() {
 //  MAP VISUALS
 // ═══════════════════════════════════════════════════════════
 function updateMapVisuals() {
-  // Site 3
+  // All sites
+  applyFleetState('site1', state.site1Active);
+  applyFleetState('site2', state.site2Active);
   applyFleetState('site3', state.site3Active);
-  // SP2
-  applySPState('sp2', state.sp2Permit, state.sp2Permit, state.sp2CertRevoked);
-  // SP1
+  // SPs — always visible (node always shown; access state varies)
   applySPState('sp1', true, state.sp1Permit, state.sp1CertRevoked);
+  applySPState('sp2', true, state.sp2Permit, state.sp2CertRevoked);
   // Flow paths — cert revocation suppresses the data flow regardless of policy
   setFlowActive('fp-s1',  state.site1Active);
   setFlowActive('fp-s2',  state.site2Active);
@@ -838,34 +798,45 @@ function applyFleetState(id, active) {
   const label = document.getElementById(`label-${id}`);
   const sub   = document.getElementById(`sublabel-${id}`);
   const pulse = document.getElementById(`pulse-${id}`);
-  if (ring)  ring.setAttribute('stroke', active ? '#22c55e' : '#2a4030');
-  if (icon)  icon.setAttribute('fill',   active ? '#22c55e' : '#2a4030');
+  if (ring) {
+    ring.setAttribute('stroke', active ? '#22c55e' : '#2a4030');
+    if (active) ring.setAttribute('filter', 'url(#glow-green)');
+    else        ring.removeAttribute('filter');
+  }
+  if (icon)  icon.setAttribute('fill', active ? '#22c55e' : '#2a4030');
   if (label) label.style.fill = active ? '#d0e8ff' : '#3a5040';
   if (sub)   sub.style.fill   = active ? '#7090b0' : '#2a3a30';
   if (pulse) {
     pulse.setAttribute('stroke', active ? '#22c55e' : '#2a4030');
     pulse.style.animation = active ? '' : 'none';
-    pulse.style.opacity   = active ? '0' : '0';
+    pulse.style.opacity   = '0';
   }
 }
 
 function applySPState(id, visible, permit, certRevoked) {
-  const ring = document.getElementById(`ring-${id}`);
-  const icon = document.getElementById(`icon-${id}`);
-  const roof = document.getElementById(`icon-${id}-roof`);
+  const ring  = document.getElementById(`ring-${id}`);
+  const icon  = document.getElementById(`icon-${id}`);
+  const roof  = document.getElementById(`icon-${id}-roof`);
   const label = document.getElementById(`label-${id}`);
   const sub   = document.getElementById(`sublabel-${id}`);
   const pulse = document.getElementById(`pulse-${id}`);
-  const strokeCol = certRevoked ? '#ef4444' : (permit ? '#22c55e' : (visible ? '#6366f1' : '#2a2840'));
-  const iconCol   = visible ? '#6366f1' : '#2a2840';
-  if (ring)  ring.setAttribute('stroke', strokeCol);
-  if (icon)  icon.setAttribute('fill',   iconCol);
-  if (roof)  roof.setAttribute('fill',   iconCol);
-  if (label) label.style.fill = visible ? '#d0e8ff' : '#3a3860';
-  if (sub)   sub.style.fill   = visible ? '#7090b0' : '#2a2840';
-  if (pulse && permit) {
-    pulse.setAttribute('stroke', '#22c55e');
-    pulse.className = 'pulse-anim';
+  const strokeCol = certRevoked ? '#ef4444' : (permit ? '#22c55e' : '#6366f1');
+  if (ring) {
+    ring.setAttribute('stroke', strokeCol);
+    ring.setAttribute('filter', 'url(#glow-indigo)');
+  }
+  if (icon)  icon.setAttribute('fill', '#6366f1');
+  if (roof)  roof.setAttribute('fill', '#6366f1');
+  if (label) label.style.fill = '#d0e8ff';
+  if (sub)   sub.style.fill   = '#7090b0';
+  if (pulse) {
+    if (permit && !certRevoked) {
+      pulse.setAttribute('stroke', '#22c55e');
+      pulse.className = 'pulse-anim';
+    } else {
+      pulse.className = '';
+      pulse.style.opacity = '0';
+    }
   }
 }
 
@@ -878,6 +849,8 @@ function setFlowActive(id, active) {
     el.style.strokeDasharray = '';
   } else {
     el.classList.add('inactive');
+    el.style.opacity = '';
+    el.style.strokeDasharray = '';
   }
 }
 
@@ -891,7 +864,7 @@ function setBadgeDot(id, ok) {
 //  PARTICLE ANIMATION
 // ═══════════════════════════════════════════════════════════
 const FLOW_DEFS = [
-  { pathId:'fp-s1',  pts:[[392,480],[430,420],[460,365]], color:'#0d9488', active:()=>state.site1Active, n:3 },
+  { pathId:'fp-s1',  pts:[[425,515],[445,430],[460,365]], color:'#0d9488', active:()=>state.site1Active, n:3 },
   { pathId:'fp-s2',  pts:[[287,144],[360,250],[460,365]], color:'#0d9488', active:()=>state.site2Active, n:3 },
   { pathId:'fp-s3',  pts:[[520,250],[500,300],[460,365]], color:'#0d9488', active:()=>state.site3Active, n:2 },
   { pathId:'fp-sp1', pts:[[460,365],[330,420],[196,480]], color:'#6366f1', active:()=>state.sp1Permit,   n:2 },
@@ -1004,11 +977,11 @@ function closePanel(removeListener = true) {
 
 function buildPanelHTML(id) {
   const t = Date.now();
-  if (id === 'site1') return fleetPanel(1, 'Nuremberg area', state.site1Active, state.site1Msgs, t);
-  if (id === 'site2') return fleetPanel(2, 'Hamburg area',   state.site2Active, state.site2Msgs, t);
-  if (id === 'site3') return fleetPanel(3, 'Berlin area',    state.site3Active, state.site3Msgs, t);
-  if (id === 'sp1')   return spPanel(1, 'Frankfurt',   state.sp1Permit);
-  if (id === 'sp2')   return spPanel(2, 'D\u00fcsseldorf', state.sp2Permit);
+  if (id === 'site1') return fleetPanel(1, state.site1Active, state.site1Msgs, t);
+  if (id === 'site2') return fleetPanel(2, state.site2Active, state.site2Msgs, t);
+  if (id === 'site3') return fleetPanel(3, state.site3Active, state.site3Msgs, t);
+  if (id === 'sp1')   return spPanel(1, state.sp1Permit);
+  if (id === 'sp2')   return spPanel(2, state.sp2Permit);
   if (id === 'portal') return portalPanel();
   return '';
 }
@@ -1044,7 +1017,7 @@ function refreshPanel(id) {
 }
 
 // ── Fleet panel ──────────────────────────────────────────
-function fleetPanel(si, city, active, msgs, t) {
+function fleetPanel(si, active, msgs, t) {
   const mowers = [0,1,2,3].map(m => mowerData(si, m, t));
   const mowerRows = mowers.map((md, m) => `
     <div class="mower-row">
@@ -1066,7 +1039,7 @@ function fleetPanel(si, city, active, msgs, t) {
   return `
     <div class="panel-header">
       <div>
-        <div class="panel-title">&#x1F33F; Fleet Site ${si} &mdash; ${city}</div>
+        <div class="panel-title">&#x1F33F; Fleet Site ${si}</div>
         <div class="panel-sub" style="margin-top:4px;">${statusHTML}</div>
       </div>
       <button class="panel-close" onclick="closePanel()">&#x2715;</button>
@@ -1103,7 +1076,7 @@ function fleetPanel(si, city, active, msgs, t) {
 }
 
 // ── Service Partner panel ─────────────────────────────────
-function spPanel(spIdx, city, permit) {
+function spPanel(spIdx, permit) {
   const myTickets = state.tickets.filter(tk => tk.assignedTo === spIdx);
   const ticketsHTML = myTickets.length === 0
     ? '<div class="ticket-empty">No tickets yet</div>'
@@ -1123,7 +1096,7 @@ function spPanel(spIdx, city, permit) {
   return `
     <div class="panel-header">
       <div>
-        <div class="panel-title">&#x1F3E2; Service Partner ${spIdx} &mdash; ${city}</div>
+        <div class="panel-title">&#x1F3E2; Service Partner ${spIdx}</div>
         <div class="panel-sub" style="margin-top:5px;">
           <span class="access-badge ${permit ? 'permit' : 'denied'}">
             <span class="access-badge-dot"></span>${permit ? 'PERMIT' : 'DENIED'}
@@ -1142,13 +1115,7 @@ function spPanel(spIdx, city, permit) {
         <span class="stat-val">${stats}</span>
       </div>
     </div>
-    <div class="panel-section">
-      <div class="btn-row">
-        ${permit
-          ? `<button class="btn btn-red"   onclick="revokeAccess(${spIdx})">&#x2715; Revoke Access</button>`
-          : `<button class="btn btn-green" onclick="grantAccess(${spIdx})">&#x2B; Grant Access</button>`}
-      </div>
-    </div>`;
+    `;
 }
 
 // ── Fleet health / SLA computation (simulated) ───────────
@@ -1218,7 +1185,7 @@ function portalPanel() {
   return `
     <div class="panel-header">
       <div>
-        <div class="panel-title">&#x2601;&#xFE0F; Portal &amp; Cloud ML &mdash; Leipzig</div>
+        <div class="panel-title">&#x2601;&#xFE0F; Portal &amp; Cloud ML</div>
         <div class="panel-sub" style="color:#0d9488;font-weight:700;margin-top:3px;">&#x25CF; HEALTHY</div>
       </div>
       <button class="panel-close" onclick="closePanel()">&#x2715;</button>

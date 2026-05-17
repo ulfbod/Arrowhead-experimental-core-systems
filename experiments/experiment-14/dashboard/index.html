@@ -19,11 +19,13 @@
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-    header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
-    header h1 { font-size: 18px; font-weight: 600; }
-    header span { color: var(--muted); font-size: 13px; }
-    header a { color: var(--accent); font-size: 13px; text-decoration: none; margin-left: auto; padding: 6px 14px; border: 1px solid var(--accent); border-radius: 4px; }
-    header a:hover { background: var(--accent); color: white; }
+    header { height: 52px; background: #0d1220; border-bottom: 1px solid #1e2d4a; display: flex; align-items: center; padding: 0 20px; gap: 0; }
+    .hd-logo { font-size: 15px; font-weight: 700; color: #6366f1; white-space: nowrap; letter-spacing: 0.3px; }
+    .hd-sub { flex: 1; text-align: center; font-size: 12px; color: #5a7090; letter-spacing: 0.5px; }
+    .hd-nav { display: flex; gap: 4px; }
+    .hd-nav a { padding: 5px 12px; font-size: 12px; color: #5a7090; text-decoration: none; border-radius: 4px; border: 1px solid transparent; transition: all 0.2s; }
+    .hd-nav a:hover { color: #a0b8d0; border-color: #2a3a5a; }
+    .hd-nav a.active { color: #a0c8ff; background: #111a2e; border-color: #2a3d6a; }
     main { display: grid; grid-template-columns: 1fr 340px; gap: 16px; padding: 16px; height: calc(100vh - 57px); }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; align-content: start; overflow-y: auto; }
     .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
@@ -56,34 +58,33 @@
 </head>
 <body>
   <header>
-    <h1>Experiment 13 — PKI Identity Unification</h1>
-    <span>CertificateLifecycle gRPC · cert-level XACML enrichment · mTLS on all paths</span>
-    <span id="clock"></span>
-    <a href="/demo.html">Exhibition Demo</a>
-    <a href="/admin.html">Policy Admin</a>
+    <div class="hd-logo">&#x1F3F9; Arrowhead 5 Evolution &middot; ADAPI Exhibition</div>
+    <div class="hd-sub">UC3 &mdash; Autonomous Lawn Mowing as a Service</div>
+    <nav class="hd-nav">
+      <a href="/" class="active">Live Monitor</a>
+      <a href="/demo.html">Exhibition Demo</a>
+      <a href="/admin.html">Policy Admin</a>
+    </nav>
   </header>
   <main>
     <div class="grid" id="grid"></div>
     <div class="sidebar">
-      <!-- Scenario narrative -->
+      <!-- View description -->
       <div class="card">
-        <div class="section-title">Exp-13 — What changed</div>
+        <div class="section-title">Live Monitor</div>
         <div class="narrative">
-          Experiment-12 had a spoofable identity on Kafka and AMQP paths — the system
-          name was self-reported, not verified.<br><br>
-          <strong>Experiment-13 fixes this</strong> on all three paths:<br>
-          • Kafka: <code>ssl.client.auth=required</code> → cert CN = subject-id<br>
-          • AMQP: <code>rabbitmq_auth_mechanism_ssl</code> → cert CN = subject-id<br>
-          • REST: unchanged (already mTLS-verified)<br><br>
-          <strong>New:</strong> <em>CertificateLifecycle gRPC stream</em> from profile-ca
-          auto-populates PIP. Revocation propagates in one stream event — no polling.
-          PEPs add <code>cert-level</code> and <code>cert-valid</code> to every XACML request.
+          Shows real-time health and status for all running system components.
+          Each card updates every 5 seconds — <strong style="color:var(--ok)">OK</strong>
+          means the service is reachable and healthy;
+          <strong style="color:var(--err)">DOWN</strong> means it failed the last health check.<br><br>
+          Use the tools below to inspect identity attributes, test authorization decisions,
+          or trigger certificate revocation and observe the immediate effect on access.
         </div>
       </div>
 
       <!-- Cert attributes lookup -->
-      <div class="card highlight">
-        <div class="section-title">New: PIP cert-level lookup</div>
+      <div class="card">
+        <div class="section-title">Certificate Attributes</div>
         <div class="auth-form">
           <select id="pip-cn">
             <option value="service-partner-1">service-partner-1</option>
@@ -97,7 +98,7 @@
 
       <!-- Auth check tool -->
       <div class="card">
-        <div class="section-title">Auth Check (pki-rest-authz + cert-level)</div>
+        <div class="section-title">Authorization Check</div>
         <div class="auth-form">
           <select id="consumer">
             <option value="service-partner-1">service-partner-1</option>
@@ -115,8 +116,8 @@
       </div>
 
       <!-- Cert revocation demo -->
-      <div class="card highlight">
-        <div class="section-title">New: Cert revocation → instant DENY</div>
+      <div class="card">
+        <div class="section-title">Certificate Revocation</div>
         <div class="auth-form">
           <select id="revoke-cn">
             <option value="service-partner-2">service-partner-2</option>
@@ -153,13 +154,13 @@
     const grid = document.getElementById('grid');
     for (const c of components) {
       const card = document.createElement('div');
-      card.className = 'card' + (c.isNew ? ' highlight' : '');
+      card.className = 'card';
       card.id = 'card-' + c.id;
       card.innerHTML = `
         <div class="card-header">
           <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${c.group}</div>
-            <div class="card-title">${c.label}${c.isNew ? '<span class="new-badge">Exp-13</span>' : ''}</div>
+            <div class="card-title">${c.label}</div>
           </div>
           <span class="badge loading" id="badge-${c.id}">…</span>
         </div>
@@ -204,10 +205,10 @@
       el.style.display = 'block';
       el.textContent = 'Looking up ' + cn + '…';
       try {
-        const r = await fetch('/api/pip/pip/attributes/' + encodeURIComponent(cn));
+        const r = await fetch('/api/pip/attributes/' + encodeURIComponent(cn));
         const d = await r.json();
         el.textContent = JSON.stringify(d, null, 2);
-        el.className = 'result ' + (d.certValid === true || d.certValid === 'true' ? 'permit' : 'deny');
+        el.className = 'result ' + (d.valid === true || d.valid === 'true' ? 'permit' : 'deny');
       } catch(e) { el.textContent = 'Error: ' + e.message; }
     }
 
@@ -257,9 +258,9 @@
         await new Promise(r => setTimeout(r, 1200));
 
         // Check PIP cert-valid
-        const pipR = await fetch('/api/pip/pip/attributes/' + encodeURIComponent(cn));
+        const pipR = await fetch('/api/pip/attributes/' + encodeURIComponent(cn));
         const pip = await pipR.json();
-        el.textContent += `PIP certValid: ${pip.certValid}\n\n`;
+        el.textContent += `PIP valid: ${pip.valid}\n\n`;
 
         // Check after revocation
         const afterR = await fetch('/api/pki-rest-authz/auth/check', {

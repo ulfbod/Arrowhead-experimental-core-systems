@@ -2481,6 +2481,86 @@ public class MyPrincipalBuilder
 
 ---
 
+## EXP-030 — Dashboard fetch URL double-prefixes service name, causing opaque JSON parse error (experiment-13/14, 2026-05-17)
+
+### Symptom
+
+Clicking a button in the Live Monitor sidebar that calls `/api/pip/pip/attributes/{cn}`
+shows:
+
+```
+Error: Unexpected non-whitespace character after JSON at position 4 (line 1 column 5)
+```
+
+The error appears for every option in the dropdown. No network error or HTTP error code
+is visible in the UI.
+
+### Root Cause
+
+The dashboard fetch URL was constructed as:
+
+```javascript
+fetch('/api/pip/pip/attributes/' + encodeURIComponent(cn))
+```
+
+The nginx proxy for the PIP service is configured as:
+
+```nginx
+location /api/pip/ {
+    rewrite ^/api/pip/(.*) /$1 break;
+    proxy_pass $upstream;  # → pip:9506
+}
+```
+
+nginx strips `/api/pip/` and forwards the remainder. So `/api/pip/pip/attributes/service-partner-1`
+becomes `/pip/attributes/service-partner-1` at the PIP service. The PIP's `http.ServeMux`
+only registers `/attributes/` (not `/pip/attributes/`), so it returns Go's default 404 response:
+
+```
+404 page not found
+```
+
+This plain-text response happens to start with `404` — a syntactically valid JSON number.
+`JSON.parse` successfully parses `404`, then encounters a space (allowed as whitespace after
+a value), then `p` at position 4, which is an unexpected non-whitespace character. The browser
+throws "Unexpected non-whitespace character after JSON at position 4" instead of a clear
+"404 Not Found" error.
+
+### Fix
+
+Remove the extra service-name segment from the fetch URL. The pattern is:
+
+```
+/api/<svc>/<actual-path>   ← correct
+/api/<svc>/<svc>/<actual-path>  ← wrong
+```
+
+```javascript
+// Before (broken):
+fetch('/api/pip/pip/attributes/' + encodeURIComponent(cn))
+
+// After (correct):
+fetch('/api/pip/attributes/' + encodeURIComponent(cn))
+```
+
+After nginx strips `/api/pip/`, the PIP service receives `/attributes/{cn}` which matches
+its registered handler.
+
+### Guidance for Future Iterations
+
+**Dashboard fetch URLs for proxied services must not repeat the service prefix.**
+
+When nginx has `location /api/<svc>/` with `rewrite ^/api/<svc>/(.*) /$1`, the path
+forwarded to the upstream is everything *after* `/api/<svc>/`. A URL like
+`/api/pip/pip/attributes/x` sends `/pip/attributes/x` to the upstream, not `/attributes/x`.
+
+The misleading error message — "Unexpected non-whitespace character after JSON at position 4"
+— is caused by Go's `http.ServeMux` 404 body (`"404 page not found"`) parsing as a number
+before failing. This masks the real HTTP 404. Check the nginx rewrite rule and the upstream
+service's registered routes whenever a JSON parse error occurs on a fetch to `/api/`.
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -2529,3 +2609,4 @@ Use this before marking an experiment implementation complete:
 - [ ] When an upstream service exposes both a plain HTTP health port and an mTLS data port, `UPSTREAM_URL` in docker-compose must use `https://` and the TLS port — verify by checking which handler (`makeHTTPHandler` vs `makeHTTPSHandler`) registers the target endpoint (EXP-027)
 - [ ] Any Kafka broker plugin that defines a `configure(Map<String, ?> configs)` method must implement **both** `KafkaPrincipalBuilder` (or `Authorizer`, etc.) **and** `org.apache.kafka.common.Configurable` — `KafkaPrincipalBuilder` does not declare `configure`; `@Override` on it causes a compilation error without `Configurable` in the `implements` clause (EXP-028)
 - [ ] A custom `KafkaPrincipalBuilder` used in KRaft mode must also implement `KafkaPrincipalSerde` — Kafka validates this at startup and exits with `requirement failed: principal.builder.class must implement KafkaPrincipalSerde` if missing. Serialize as `"type:name"` UTF-8 bytes (EXP-029)
+- [ ] Dashboard fetch calls for a proxied service must not repeat the service prefix: `/api/<svc>/<actual-path>`, not `/api/<svc>/<svc>/<actual-path>` — nginx strips `/api/<svc>/` and forwards the remainder, so double-prefixing produces `404 page not found` from Go's `http.ServeMux`. The 404 text (`"404 page not found"`) starts with the number `404`, which parses as valid JSON, causing the browser to throw "Unexpected non-whitespace character after JSON at position 4" rather than a clear 404 error (EXP-030)
