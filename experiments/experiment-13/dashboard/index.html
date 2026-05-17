@@ -132,16 +132,16 @@
 
   <script>
     const components = [
-      { id: 'profile-ca',          label: 'Profile CA',           group: 'Core PKI',       url: '/api/profile-ca/health',          stats: null, isNew: true },
-      { id: 'serviceregistry',     label: 'Service Registry',     group: 'Core Systems',   url: '/api/serviceregistry/health',     stats: null },
-      { id: 'authentication',      label: 'Authentication',       group: 'Core Systems',   url: '/api/authentication/health',      stats: null },
-      { id: 'consumerauth',        label: 'Consumer Auth (AH5)',  group: 'Core Systems',   url: '/api/consumerauth/health',        stats: null },
-      { id: 'dynamicorch',         label: 'DynamicOrch-XACML',   group: 'Core Systems',   url: '/api/dynamicorch/status',         stats: '/api/dynamicorch/status' },
+      { id: 'profile-ca',          label: 'Profile CA',           group: 'Core PKI',       url: '/api/profile-ca/health',          stats: null,                          isAH5: true },
+      { id: 'serviceregistry',     label: 'Service Registry',     group: 'Core Systems',   url: '/api/serviceregistry/health',     stats: null,                          isAH5: true },
+      { id: 'authentication',      label: 'Authentication',       group: 'Core Systems',   url: '/api/authentication/health',      stats: null,                          isAH5: true },
+      { id: 'consumerauth',        label: 'Consumer Auth (AH5)',  group: 'Core Systems',   url: '/api/consumerauth/health',        stats: null,                          isAH5: true },
+      { id: 'dynamicorch',         label: 'DynamicOrch-XACML',   group: 'Core Systems',   url: '/api/dynamicorch/status',         stats: '/api/dynamicorch/status',     isAH5: true },
       { id: 'authzforce',          label: 'AuthzForce PDP',       group: 'Policy Engine',  url: '/api/authzforce/health',          stats: null },
       { id: 'pap',                 label: 'PAP',                  group: 'Policy Engine',  url: '/api/pap/health',                 stats: '/api/pap/status' },
-      { id: 'pip',                 label: 'PIP (gRPC-populated)', group: 'Policy Engine',  url: '/api/pip/health',                 stats: '/api/pip/status', isNew: true },
-      { id: 'topic-auth-xacml',    label: 'AMQP PEP (mTLS CN)',  group: 'Enforcement',    url: '/api/topic-auth-xacml/health',    stats: null, isNew: true },
-      { id: 'kafka-authz',         label: 'Kafka PEP (mTLS CN)', group: 'Enforcement',    url: '/api/kafka-authz/health',         stats: '/api/kafka-authz/status', isNew: true },
+      { id: 'pip',                 label: 'PIP (gRPC-populated)', group: 'Policy Engine',  url: '/api/pip/health',                 stats: '/api/pip/status' },
+      { id: 'topic-auth-xacml',    label: 'AMQP PEP (mTLS CN)',  group: 'Enforcement',    url: '/api/topic-auth-xacml/health',    stats: null },
+      { id: 'kafka-authz',         label: 'Kafka PEP (mTLS CN)', group: 'Enforcement',    url: '/api/kafka-authz/health',         stats: '/api/kafka-authz/status' },
       { id: 'pki-rest-authz',      label: 'REST mTLS PEP',        group: 'Enforcement',    url: '/api/pki-rest-authz/health',      stats: '/api/pki-rest-authz/status' },
       { id: 'portal-cloud-ml',     label: 'Portal & Cloud ML',    group: 'UC3 Services',   url: '/api/portal-cloud-ml/health',     stats: '/api/portal-cloud-ml/stats' },
       { id: 'service-partner-1',   label: 'Service Partner SP1',  group: 'UC3 Services',   url: '/api/service-partner-1/health',   stats: '/api/service-partner-1/stats' },
@@ -158,6 +158,7 @@
       card.id = 'card-' + c.id;
       card.innerHTML = `
         <div class="card-header">
+          ${c.isAH5 ? '<img src="ah-logo.png" width="22" height="22" style="flex-shrink:0;object-fit:contain;opacity:0.9;"/>' : ''}
           <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${c.group}</div>
             <div class="card-title">${c.label}</div>
