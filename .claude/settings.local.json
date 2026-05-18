@@ -259,7 +259,8 @@
       "Read(//usr/local/bin/**)",
       "Read(//opt/**)",
       "Bash(GOWORK=off go test ./...)",
-      "Bash(GOWORK=off go test ./... -v)"
+      "Bash(GOWORK=off go test ./... -v)",
+      "Bash(docker pull:*)"
     ]
   }
 }

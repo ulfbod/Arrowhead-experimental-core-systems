@@ -395,10 +395,10 @@
               fill="#0a2010" stroke="#2a4030" stroke-width="2"/>
       <rect x="505" y="243" width="30" height="12" rx="3" fill="#2a4030" id="icon-site3"/>
       <rect x="510" y="240" width="20" height="3" rx="1" fill="#16a34a" id="icon-site3-blade"/>
-      <circle cx="509" cy="258" r="5" fill="#0a2010" stroke="#2a4030" stroke-width="1.5"/>
-      <circle cx="531" cy="258" r="5" fill="#0a2010" stroke="#2a4030" stroke-width="1.5"/>
-      <circle cx="509" cy="258" r="2" fill="#2a4030"/>
-      <circle cx="531" cy="258" r="2" fill="#2a4030"/>
+      <circle cx="509" cy="258" r="5" fill="#0a2010" stroke="#22c55e" stroke-width="1.5" id="wheel-site3-l"/>
+      <circle cx="531" cy="258" r="5" fill="#0a2010" stroke="#22c55e" stroke-width="1.5" id="wheel-site3-r"/>
+      <circle cx="509" cy="258" r="2" fill="#22c55e" id="hub-site3-l"/>
+      <circle cx="531" cy="258" r="2" fill="#22c55e" id="hub-site3-r"/>
       <text x="520" y="286" id="label-site3" class="entity-label" style="fill:#3a5040;">Fleet Site 3</text>
     </g>
 
@@ -474,8 +474,8 @@
     <g id="ah-badge-svg" class="entity-group" onclick="openAHPanel()" style="cursor:pointer;">
       <rect x="546" y="28" width="142" height="86" rx="9"
             fill="#12172a" stroke="rgba(99,102,241,0.55)" stroke-width="1.3"/>
-      <image href="ah-logo.png" x="549" y="31" width="16" height="16" style="image-rendering:auto;"/>
-      <text x="569" y="44" style="fill:#818cf8;font-size:11px;font-weight:700;font-family:'Segoe UI',sans-serif;">AH5 EVOL</text>
+      <image href="ah-logo.png" x="549" y="30" width="24" height="24" style="image-rendering:auto;"/>
+      <text x="577" y="44" style="fill:#818cf8;font-size:11px;font-weight:700;font-family:'Segoe UI',sans-serif;">AH5 EVOL</text>
       <!-- 4 status dots with labels -->
       <circle id="bdot-sr"   cx="560" cy="62" r="4" fill="#2a3040"/>
       <text x="568" y="66"  class="city-label" style="font-size:9.5px;">ServiceReg</text>
@@ -499,7 +499,7 @@
   <!-- Arrowhead Cloud expanded panel -->
   <div id="ah-panel">
     <div class="ah-panel-head" style="display:flex;align-items:center;gap:10px;">
-      <img src="ah-logo.png" width="30" height="30" style="flex-shrink:0;object-fit:contain;"/>
+      <img src="ah-logo.png" width="42" height="42" style="flex-shrink:0;object-fit:contain;"/>
       <div>
         <div class="ah-panel-title">Arrowhead 5 Evolution</div>
         <div class="ah-panel-sub">Local Cloud Infrastructure</div>
@@ -795,11 +795,16 @@ function updateMapVisuals() {
 }
 
 function applyFleetState(id, active) {
-  const ring  = document.getElementById(`ring-${id}`);
-  const icon  = document.getElementById(`icon-${id}`);
-  const label = document.getElementById(`label-${id}`);
-  const sub   = document.getElementById(`sublabel-${id}`);
-  const pulse = document.getElementById(`pulse-${id}`);
+  const ring   = document.getElementById(`ring-${id}`);
+  const icon   = document.getElementById(`icon-${id}`);
+  const label  = document.getElementById(`label-${id}`);
+  const sub    = document.getElementById(`sublabel-${id}`);
+  const pulse  = document.getElementById(`pulse-${id}`);
+  const whlL   = document.getElementById(`wheel-${id}-l`);
+  const whlR   = document.getElementById(`wheel-${id}-r`);
+  const hubL   = document.getElementById(`hub-${id}-l`);
+  const hubR   = document.getElementById(`hub-${id}-r`);
+  const wCol   = active ? '#22c55e' : '#2a4030';
   if (ring) {
     ring.setAttribute('stroke', active ? '#22c55e' : '#2a4030');
     if (active) ring.setAttribute('filter', 'url(#glow-green)');
@@ -813,6 +818,10 @@ function applyFleetState(id, active) {
     pulse.style.animation = active ? '' : 'none';
     pulse.style.opacity   = '0';
   }
+  if (whlL) whlL.setAttribute('stroke', wCol);
+  if (whlR) whlR.setAttribute('stroke', wCol);
+  if (hubL) hubL.setAttribute('fill', wCol);
+  if (hubR) hubR.setAttribute('fill', wCol);
 }
 
 function applySPState(id, visible, permit, certRevoked) {

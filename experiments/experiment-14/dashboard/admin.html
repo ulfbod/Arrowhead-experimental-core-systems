@@ -64,6 +64,12 @@
     .permit { color: var(--ok); }
     .deny   { color: var(--err); }
     code { font-family: monospace; font-size: 11px; background: #0f1117; padding: 1px 4px; border-radius: 3px; }
+    .tools-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 0 16px 16px; }
+    .tool-link { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; background: #1e293b; border: 1px solid var(--border); border-radius: 5px; color: #93c5fd; font-size: 12px; font-weight: 600; text-decoration: none; transition: all 0.2s; margin-bottom: 10px; }
+    .tool-link:hover { background: #263552; border-color: #3b5080; color: #bfdbfe; }
+    .tool-cred { font-size: 12px; color: var(--muted); line-height: 1.6; }
+    .tool-cred code { background: #0f1117; color: var(--text); }
+    .tool-usage li { font-size: 12px; color: var(--muted); line-height: 1.8; margin-left: 16px; }
   </style>
 </head>
 <body>
@@ -221,6 +227,58 @@
     </div>
 
   </main>
+
+  <!-- ── Messaging UI Tools ──────────────────────────────────────────────────── -->
+  <div class="tools-row">
+
+    <div class="card" style="margin-bottom:0">
+      <h2>RabbitMQ Management UI</h2>
+      <div class="info-box" style="margin-bottom:10px">
+        The RabbitMQ management console lets you inspect queues, exchanges, bindings,
+        and active connections. Use it to verify that AMQP publishers and consumers are
+        connected, check message rates, and see which connections were rejected by the
+        HTTP auth backend (topic-auth-xacml).
+      </div>
+      <a id="rabbit-link" href="#" target="_blank" class="tool-link">&#x1F517; Open RabbitMQ Management UI</a>
+      <div class="tool-cred">
+        <strong style="color:var(--text);font-size:12px">Login credentials</strong><br>
+        Username: <code>admin</code> &nbsp; Password: <code>admin</code>
+      </div>
+      <div style="margin-top:10px">
+        <div class="section-title">What you can do</div>
+        <ul class="tool-usage">
+          <li><strong>Connections</strong> — see active AMQP connections and their TLS certificate CN</li>
+          <li><strong>Queues</strong> — inspect message counts and consumer subscriptions</li>
+          <li><strong>Exchanges</strong> — view routing topology (topic exchange used by fleet sites)</li>
+          <li><strong>Admin → Users</strong> — virtual usernames created by topic-auth-xacml on first connect</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:0">
+      <h2>Kafdrop — Kafka UI</h2>
+      <div class="info-box" style="margin-bottom:10px">
+        Kafdrop is a web UI for browsing Kafka topics, partitions, and messages.
+        Use it to verify that fleet sites are publishing telemetry, inspect message
+        payloads, and see consumer group offsets. Kafdrop connects to the Kafka broker
+        using mTLS with the Arrowhead-issued Kafka certificate.
+      </div>
+      <a id="kafdrop-link" href="#" target="_blank" class="tool-link">&#x1F517; Open Kafdrop</a>
+      <div class="tool-cred">
+        No login required — Kafdrop has no authentication.
+      </div>
+      <div style="margin-top:10px">
+        <div class="section-title">What you can do</div>
+        <ul class="tool-usage">
+          <li><strong>Topics</strong> — browse available Kafka topics (e.g. <code>telemetry</code>)</li>
+          <li><strong>Messages</strong> — view raw message payloads and timestamps per partition</li>
+          <li><strong>Consumer groups</strong> — inspect group offsets and lag for each consumer</li>
+          <li><strong>Brokers</strong> — verify broker connectivity and cluster metadata</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
 
   <script>
     // ── PAP ──────────────────────────────────────────────────────────────────────
@@ -409,6 +467,13 @@
       el.className = 'msg ' + (ok ? 'msg-ok' : 'msg-err');
       setTimeout(() => { el.style.display = 'none'; }, 4000);
     }
+
+    // ── Messaging UI links (port-based, dynamic hostname) ─────────────────────
+    (function() {
+      const h = window.location.hostname;
+      document.getElementById('rabbit-link').href  = `http://${h}:16179`;
+      document.getElementById('kafdrop-link').href = `http://${h}:9014`;
+    })();
 
     loadPolicies();
     loadSubjects();

@@ -51,6 +51,7 @@
 #   robot-fleet-site-2 control:   http://localhost:9617
 #   robot-fleet-site-3 control:   http://localhost:9618
 #   RabbitMQ management:          http://localhost:16079
+#   Kafdrop (Kafka UI):           http://localhost:9013
 #   Dashboard (monitoring):       http://localhost:3013
 
 services:
@@ -683,6 +684,30 @@ services:
         condition: service_healthy
       profile-ca:
         condition: service_healthy
+
+  # ── Kafdrop — Kafka web UI ────────────────────────────────────────────────────
+
+  kafdrop:
+    build:
+      context: ../../
+      dockerfile: experiments/experiment-13/dockerfiles/kafdrop.Dockerfile
+    ports:
+      - "9013:9000"
+    environment:
+      CERTS_DIR: /certs
+    volumes:
+      - certs:/certs:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+      cert-provisioner:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/actuator/health 2>/dev/null | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   # ── Dashboard ─────────────────────────────────────────────────────────────────
 

@@ -2561,6 +2561,148 @@ service's registered routes whenever a JSON parse error occurs on a fetch to `/a
 
 ---
 
+## EXP-031 — Kafdrop not reachable: three compounding root causes (experiment-13/14, 2026-05-18)
+
+### Symptom (stage 1)
+
+Kafdrop is added to docker-compose with a custom entrypoint that writes a `kafka.properties`
+file and then starts the service. The container appears to start (no `docker compose ps`
+exit code) but `http://localhost:<port>/` returns connection refused. Kafdrop never binds
+its HTTP port. `docker logs` shows:
+
+```
+Error: Unable to access jarfile /kafdrop.jar
+```
+
+### Root Cause 1 — Wrong jar path
+
+The custom entrypoint called:
+```sh
+exec java ... -jar /kafdrop.jar ...
+```
+
+The `obsidiandynamics/kafdrop` image does **not** place the jar at `/kafdrop.jar`. The
+actual path is `/kafdrop/kafdrop-<version>.jar` (e.g. `/kafdrop/kafdrop-4.2.0.jar`).
+Java exits immediately with "Unable to access jarfile" and the HTTP port is never bound.
+
+The native startup script `/kafdrop.sh` handles this correctly using a glob:
+```bash
+exec java $ARGS -Dloader.path=/extra-classes -jar /kafdrop*/kafdrop*jar ${CMD_ARGS}
+```
+
+**Fix:** delegate to `/kafdrop.sh` via `exec /kafdrop.sh` after setting `CMD_ARGS` in the env.
+
+---
+
+### Symptom (stage 2)
+
+After switching to `exec /kafdrop.sh`, the HTTP server starts but the page hangs for
+~30 seconds then shows a FreeMarker template error. Kafka connection attempts log:
+
+```
+Bootstrap broker kafka:9092 (id: -1 rack: null) disconnected
+```
+
+### Root Cause 2 — Spring ClassPathResource: `--kafka.properties.file` swallowed
+
+`/kafdrop.sh` reads `CMD_ARGS` and passes it as Spring Boot CLI args. The entrypoint used:
+
+```sh
+export CMD_ARGS="--kafka.brokerConnect=kafka:9092 --kafka.properties.file=/tmp/kafka.properties ..."
+```
+
+Spring Boot binds `--kafka.properties.file` to a `Resource propertiesFile` field via
+`@Value("${kafka.properties.file:#{null}}")`. `DefaultResourceLoader.getResource("/tmp/kafka.properties")`
+calls `ResourceUtils.toURL()` which throws `MalformedURLException` for bare absolute paths,
+falls back to `getResourceByPath()`, and returns a `ClassPathContextResource` — not a
+`FileSystemResource`. A classpath lookup for `/tmp/kafka.properties` finds nothing; the
+properties file is silently not loaded. Kafka connects as PLAINTEXT; the mTLS broker
+closes the connection → `disconnected`.
+
+**Fix:** do NOT use `--kafka.properties.file`. Pass each Kafka property as an individual
+`--kafka.properties.<key>=<value>` CLI arg instead. Spring binds these to the `Properties properties`
+map in `KafkaConfiguration` as plain strings, which Kafka's AdminClient reads directly.
+
+---
+
+### Symptom (stage 3)
+
+After switching to `--kafka.properties.ssl.truststore.location=...` etc. (JKS keystores
+created by keytool from OpenSSL-generated PKCS12), the Kafka broker logs:
+
+```
+Failed authentication with /172.20.0.x (SSL handshake failed)
+```
+
+Kafdrop's cmdline (`/proc/1/cmdline`) confirms all SSL args are present. The JKS files
+exist. SSL IS being initiated — but the handshake fails.
+
+### Root Cause 3 — EC private key in SEC1 format; Java requires PKCS#8
+
+The cert-provisioner issues EC private keys in **SEC1/RFC-5915 format**
+(`-----BEGIN EC PRIVATE KEY-----`). Java's `KeyFactory` only accepts **PKCS#8 format**
+(`-----BEGIN PRIVATE KEY-----`) when loading a private key from PEM. Passing the SEC1 key
+to Kafka's PEM keystore loader causes:
+
+```
+java.security.InvalidKeyException: IOException: algid parse error, not a sequence
+```
+
+This exception prevents the Kafka AdminClient from initializing, causing Spring to fail
+to start its web server → Kafdrop is unreachable (connection refused, not just slow).
+
+Additionally, `--kafka.properties.<key>=<val>` CLI args do **not** reliably reach the
+Kafka client: Spring Boot's Map/Properties binder may normalize or lose dotted keys like
+`security.protocol` at binding time, meaning `security.protocol=SSL` is never applied and
+Kafdrop silently falls back to PLAINTEXT. The Kafka broker then logs "SSL handshake failed"
+because it receives non-TLS data on an SSL-only listener.
+
+**Fix:** convert the key with `openssl pkcs8`, pass the config via `/kafdrop.sh`'s native
+`KAFKA_PROPERTIES` env var (base64-decoded before Java starts), and use `file://` prefix
+so Spring's `DefaultResourceLoader` returns a `FileUrlResource` (not `ClassPathResource`):
+
+```sh
+# Convert SEC1 → PKCS#8
+openssl pkcs8 -topk8 -nocrypt -in "$CERTS/kafka.key" -out /tmp/kafka-pkcs8.key
+cat "$CERTS/kafka.crt" /tmp/kafka-pkcs8.key > /tmp/kafka-client.pem
+
+PROPS=$(printf '%s\n' \
+  "security.protocol=SSL" \
+  "ssl.truststore.type=PEM" \
+  "ssl.truststore.location=${CERTS}/ca.crt" \
+  "ssl.keystore.type=PEM" \
+  "ssl.keystore.location=/tmp/kafka-client.pem" \
+  "ssl.endpoint.identification.algorithm=" \
+)
+export KAFKA_PROPERTIES=$(printf '%s' "$PROPS" | base64 | tr -d '\n')
+export KAFKA_PROPERTIES_FILE=/tmp/kafka.properties
+
+export CMD_ARGS="--kafka.brokerConnect=kafka:9092 --kafka.properties.file=file:///tmp/kafka.properties --server.port=9000"
+exec /kafdrop.sh
+```
+
+---
+
+### Guidance for Future Iterations
+
+**Four rules that must all hold for Kafdrop with mTLS Kafka:**
+
+1. Always delegate to `/kafdrop.sh` (correct jar glob), never `java -jar /kafdrop.jar`.
+2. Never use `--kafka.properties.file=/abs/path` — Spring resolves it as ClassPathResource. Use `file:///abs/path` prefix instead.
+3. Never pass SSL config as `--kafka.properties.<key>=<val>` CLI args — Spring's binder may lose dotted keys; use `KAFKA_PROPERTIES` base64 + `KAFKA_PROPERTIES_FILE`.
+4. Never use EC private keys directly — convert from SEC1 to PKCS#8 with `openssl pkcs8 -topk8 -nocrypt` before passing to Java.
+
+**Kafka PEM SSL properties split into two groups:**
+
+| Property | Value type |
+|---|---|
+| `ssl.truststore.location` | File path to CA PEM |
+| `ssl.keystore.location` | File path to combined cert+key PEM |
+| `ssl.keystore.certificate.chain` | PEM **content** (inline) |
+| `ssl.keystore.key` | PEM **content** (inline) |
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -2610,3 +2752,5 @@ Use this before marking an experiment implementation complete:
 - [ ] Any Kafka broker plugin that defines a `configure(Map<String, ?> configs)` method must implement **both** `KafkaPrincipalBuilder` (or `Authorizer`, etc.) **and** `org.apache.kafka.common.Configurable` — `KafkaPrincipalBuilder` does not declare `configure`; `@Override` on it causes a compilation error without `Configurable` in the `implements` clause (EXP-028)
 - [ ] A custom `KafkaPrincipalBuilder` used in KRaft mode must also implement `KafkaPrincipalSerde` — Kafka validates this at startup and exits with `requirement failed: principal.builder.class must implement KafkaPrincipalSerde` if missing. Serialize as `"type:name"` UTF-8 bytes (EXP-029)
 - [ ] Dashboard fetch calls for a proxied service must not repeat the service prefix: `/api/<svc>/<actual-path>`, not `/api/<svc>/<svc>/<actual-path>` — nginx strips `/api/<svc>/` and forwards the remainder, so double-prefixing produces `404 page not found` from Go's `http.ServeMux`. The 404 text (`"404 page not found"`) starts with the number `404`, which parses as valid JSON, causing the browser to throw "Unexpected non-whitespace character after JSON at position 4" rather than a clear 404 error (EXP-030)
+- [ ] Never call `java -jar <fixed-path>` in a custom entrypoint for a third-party JVM image — inspect the image's native startup script first (`docker inspect` + `docker run --entrypoint cat`) to find the correct jar path (e.g. Kafdrop uses `/kafdrop*/kafdrop*jar` glob); delegate to the native script via `exec /kafdrop.sh` instead of reimplementing it (EXP-031)
+- [ ] Kafdrop mTLS config: (1) convert EC key from SEC1 to PKCS#8 with `openssl pkcs8 -topk8 -nocrypt` (Java rejects SEC1 with "algid parse error"); (2) pass SSL config via `KAFKA_PROPERTIES` base64 env var + `KAFKA_PROPERTIES_FILE` (decoded by `/kafdrop.sh` before Java starts); (3) use `file:///abs/path` prefix on `--kafka.properties.file` so Spring returns FileUrlResource not ClassPathResource; never pass SSL config as `--kafka.properties.<key>=<val>` CLI args (Spring binder loses dotted keys like `security.protocol`) (EXP-031)
