@@ -141,33 +141,51 @@ Each binary reads configuration from environment variables:
 
 ## Experiments
 
-Self-contained scenarios that demonstrate the core systems in realistic settings.
+Self-contained Docker Compose stacks that demonstrate the core systems in realistic scenarios. Experiments 1–5 are historical reference; **experiment-6 is the active baseline**; experiments 7–14 build on it progressively.
 
 | Experiment | Description |
 |---|---|
 | [experiment-1](experiments/experiment-1/) | Interactive browser demo: register services, grant authorization, orchestrate |
 | [experiment-2](experiments/experiment-2/) | Virtual local cloud with AMQP data plane: robot → RabbitMQ → edge-adapter → orchestrated consumer |
 | [experiment-3](experiments/experiment-3/) | Direct AMQP subscriptions with broker-level topic authorization sourced from ConsumerAuth |
-| [experiment-4](experiments/experiment-4/) | Geo-distributed consumers over AMQP: dual-layer authorization via topic-auth-http (live CA checks) + RabbitMQ user lifecycle management |
+| [experiment-4](experiments/experiment-4/) | Geo-distributed consumers over AMQP: dual-layer authorization via `topic-auth-http` (live CA checks) + RabbitMQ user lifecycle management |
 | [experiment-5](experiments/experiment-5/) | Unified XACML/ABAC policy projection across AMQP and Kafka: one AuthzForce PDP governs both transports; revocation propagates to all PEPs within one sync cycle |
+| [experiment-6](experiments/experiment-6/) | Triple-transport policy projection (AMQP + Kafka + REST) with runtime-configurable `SYNC_INTERVAL`; active baseline for all later experiments |
+| [experiment-7](experiments/experiment-7/) | X.509/TLS extension: REST consumers identified by cert CN; mTLS across all transport paths |
+| [experiment-8](experiments/experiment-8/) | Arrowhead 5.2 profile-based PKI with enforced certificate hierarchy and compliance assessment |
+| [experiment-9](experiments/experiment-9/) | UC3 "Lawn Mowing as a Service": multi-site robot fleets publish over Kafka + AMQP; Portal & Cloud ML aggregates streams; Service Partners consume via mTLS REST proxy PEP |
+| [experiment-10](experiments/experiment-10/) | UC3 with classical PAP/PIP/PDP access-control architecture; eliminates sync delay by separating policy administration, information, and decision points |
+| [experiment-11](experiments/experiment-11/) | Hybrid PAP/PIP/PDP (Strategy A): two policy sources merged into a single XACML PolicySet at push time |
+| [experiment-12](experiments/experiment-12/) | DynamicOrchestration-XACML (Approach B): gRPC PDP interface replaces ConsumerAuthorization for orchestration decisions |
+| [experiment-13](experiments/experiment-13/) | PKI identity unification: cert CN as XACML subject on all paths; cert-level ABAC attributes; CertificateLifecycle gRPC stream auto-populates PIP |
+| [experiment-14](experiments/experiment-14/) | Connection-time certificate revocation: Kafka `ArrowheadPrincipalBuilder` plugin and RabbitMQ `topic-auth-xacml` pre-gate both reject revoked clients before the PDP is consulted |
 
-### Experiment 4 quick start
+### Experiment 6 quick start (active baseline)
 
 ```bash
-cd experiments/experiment-4
+cd experiments/experiment-6
 docker compose up --build
 ```
 
-Three AMQP consumers connect via full AHC orchestration flow. `topic-auth-http` enforces RabbitMQ topic authorization using live ConsumerAuth checks and manages the RabbitMQ user lifecycle. Full details in [experiments/experiment-4/README.md](experiments/experiment-4/README.md).
+Triple-transport authorization: a single ConsumerAuth grant propagates to AMQP (`topic-auth-xacml`), Kafka (`kafka-authz`), and REST (`rest-authz`) within one policy-sync cycle. Dashboard at **http://localhost:3006**. Full details in [experiments/experiment-6/README.md](experiments/experiment-6/README.md).
 
-### Experiment 5 quick start
+### Experiment 13 quick start
 
 ```bash
-cd experiments/experiment-5
-docker compose up --build
+cd experiments/experiment-13
+docker compose up --build -d
 ```
 
-`robot-fleet` publishes telemetry to both RabbitMQ (AMQP) and Kafka simultaneously. `policy-sync` compiles ConsumerAuth grants into a XACML 3.0 PolicySet and uploads it to AuthzForce. Both `topic-auth-xacml` (AMQP PEP) and `kafka-authz` (Kafka SSE PEP) evaluate the same policy — revoking a grant propagates to all transports within one sync cycle. Open the dashboard at **http://localhost:3005**. Full details in [experiments/experiment-5/README.md](experiments/experiment-5/README.md).
+Three robot-fleet sites publish telemetry. PKI identity is unified: every client's cert CN becomes the XACML `subject-id` on Kafka, AMQP, and REST paths. Cert-level attributes (`certLevel`, `certValid`) are injected as XACML subject attributes. Dashboard at **http://localhost:3013**. Full details in [experiments/experiment-13/README.md](experiments/experiment-13/README.md).
+
+### Experiment 14 quick start
+
+```bash
+cd experiments/experiment-14
+docker compose up --build -d
+```
+
+Extends experiment-13 with fail-closed connection-time revocation: a Java `KafkaPrincipalBuilder` plugin rejects Kafka connections from revoked clients at the TLS handshake; `topic-auth-xacml` rejects AMQP connections at the `handleUser`/`handleVhost` stage, before AuthzForce is ever called. Dashboard at **http://localhost:3014**. Full details in [experiments/experiment-14/README.md](experiments/experiment-14/README.md).
 
 ---
 

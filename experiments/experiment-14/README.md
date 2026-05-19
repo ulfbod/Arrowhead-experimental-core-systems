@@ -97,16 +97,36 @@ All ports are experiment-13 host ports + 100:
 | Service | Host port |
 |---|---|
 | profile-ca HTTP | 8687 |
+| profile-ca mTLS | 8688 |
 | profile-ca gRPC | 8689 |
 | AuthzForce | 8796 |
+| ServiceRegistry TLS | 9090 |
+| Authentication | 9091 |
+| ConsumerAuthorization | 9092 |
+| DynamicOrch-XACML | 9093 |
+| authz-pdp gRPC | 9750 |
 | PAP | 9705 |
 | PIP | 9706 |
 | kafka-authz | 9701 |
-| pki-rest-authz HTTP | 9709 |
 | pki-rest-authz mTLS | 9708 |
+| pki-rest-authz HTTP | 9709 |
 | portal-cloud-ml | 9707 |
+| robot-fleet-site-1 | 9716 |
+| robot-fleet-site-2 | 9717 |
+| robot-fleet-site-3 | 9718 |
+| service-partner-1 | 9711 |
+| service-partner-2 | 9712 |
 | RabbitMQ management | 16179 |
+| Kafdrop | 9014 |
 | Dashboard | 3014 |
+
+## Dashboard
+
+Dashboard at **http://localhost:3014**. Three views:
+
+- **Index** — live health status for all services; shows which cert identities are registered in PIP
+- **Demo** — issue a cert via profile-ca, trigger an orchestration request, and observe connection-time rejection vs. message-level enforcement
+- **Admin** — revoke a certificate via `DELETE /ca/certificates/{cn}` and verify that the next Kafka or AMQP connection is rejected before the PDP is ever called
 
 ## Testing
 

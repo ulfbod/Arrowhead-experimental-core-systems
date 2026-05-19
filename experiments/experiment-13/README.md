@@ -54,7 +54,7 @@ grpcurl -plaintext localhost:9650 list
 | topic-auth-xacml | `experiments/experiment-13/services/topic-auth-xacml/` | + PIP query, cert-level XACML enrichment |
 | pki-rest-authz | `experiments/experiment-13/services/pki-rest-authz/` | + PIP query, cert-level XACML enrichment |
 
-## Ports (experiment-12 + 100)
+## Host ports (experiment-12 + 100)
 
 | Service | Host port |
 |---|---|
@@ -63,6 +63,8 @@ grpcurl -plaintext localhost:9650 list
 | profile-ca gRPC | **8589** (new) |
 | AuthzForce | 8696 |
 | ServiceRegistry TLS | 8990 |
+| Authentication | 8991 |
+| ConsumerAuthorization | 8992 |
 | DynamicOrch-XACML | 8993 |
 | authz-pdp gRPC | 9650 |
 | PAP | 9605 |
@@ -70,20 +72,31 @@ grpcurl -plaintext localhost:9650 list
 | kafka-authz | 9601 |
 | pki-rest-authz mTLS | 9608 |
 | pki-rest-authz HTTP | 9609 |
+| portal-cloud-ml | 9607 |
+| robot-fleet-site-1 | 9616 |
+| robot-fleet-site-2 | 9617 |
+| robot-fleet-site-3 | 9618 |
+| service-partner-1 | 9611 |
+| service-partner-2 | 9612 |
+| RabbitMQ management | 16079 |
+| Kafdrop | 9013 |
 | Dashboard | 3013 |
 
 ## Running
 
 ```bash
 cd experiments/experiment-13
-docker compose up --build
-```
-
-System tests:
-
-```bash
+docker compose up --build -d
 bash test-system.sh
 ```
+
+## Dashboard
+
+Dashboard at **http://localhost:3013**. Three views:
+
+- **Index** — live health status for all services; shows which cert identities are registered in PIP
+- **Demo** — issue a cert via profile-ca, trigger an orchestration request, and observe access control decisions across all three transports (Kafka, AMQP, REST)
+- **Admin** — revoke a certificate via `DELETE /ca/certificates/{cn}` and verify that subsequent access attempts are denied
 
 ## What changes from experiment-12
 

@@ -186,6 +186,32 @@ environment:
 ConsumerAuth grants must be seeded manually for this to work. The orchestration
 logic — SR query, per-provider loop, fail-closed semantics — is identical.
 
+## Host ports
+
+| Service | Host port |
+|---|---|
+| profile-ca HTTP | 8487 |
+| profile-ca mTLS | 8488 |
+| RabbitMQ management | 15979 |
+| AuthzForce | 8596 |
+| ServiceRegistry TLS | 8890 |
+| Authentication | 8891 |
+| ConsumerAuthorization | 8892 |
+| authz-pdp gRPC | 9550 |
+| DynamicOrch-XACML | 8893 |
+| PAP | 9505 |
+| PIP | 9506 |
+| kafka-authz | 9501 |
+| portal-cloud-ml | 9507 |
+| pki-rest-authz mTLS | 9508 |
+| pki-rest-authz HTTP | 9509 |
+| robot-fleet-site-1 | 9516 |
+| robot-fleet-site-2 | 9517 |
+| robot-fleet-site-3 | 9518 |
+| service-partner-1 | 9511 |
+| service-partner-2 | 9512 |
+| Dashboard | 3012 |
+
 ## System test
 
 ```bash

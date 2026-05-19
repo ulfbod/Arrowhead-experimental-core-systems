@@ -126,11 +126,11 @@ Reusable modules shared across experiments. Each module is a standalone Go modul
 | `topic-auth-sync` | `support/topic-auth-sync/` | Syncs ConsumerAuth policies to RabbitMQ topic permissions (experiment-3) |
 | `topic-auth-http` | `support/topic-auth-http/` | RabbitMQ HTTP authz backend — live CA checks + user lifecycle management (experiment-4) |
 | `authzforce` | `support/authzforce/` | AuthzForce REST client + XACML 3.0 PolicySet builder (experiments 5+) |
-| `policy-sync` | `support/policy-sync/` | Compiles ConsumerAuth grants into a XACML PolicySet and uploads to AuthzForce (experiment-5) |
-| `topic-auth-xacml` | `support/topic-auth-xacml/` | RabbitMQ HTTP authz backend — delegates all decisions to AuthzForce PDP (experiment-5) |
-| `kafka-authz` | `support/kafka-authz/` | Kafka SSE proxy PEP — authenticates streams against AuthzForce and sends `event: revoked` on policy change (experiment-5) |
-| `rest-authz` | `support/rest-authz/` | HTTP reverse proxy PEP — forwards requests to an upstream service only when AuthzForce returns Permit (experiment-6) |
-| `dashboard-shared` | `support/dashboard-shared/` | Canonical shared React source files (10 components/views/hooks) symlinked into experiment-5 and experiment-6 dashboards |
+| `policy-sync` | `support/policy-sync/` | Compiles ConsumerAuth grants into a XACML PolicySet and uploads to AuthzForce (experiments 5–6) |
+| `topic-auth-xacml` | `support/topic-auth-xacml/` | RabbitMQ HTTP authz backend — delegates all decisions to AuthzForce PDP (experiments 5–14) |
+| `kafka-authz` | `support/kafka-authz/` | Kafka SSE proxy PEP — authenticates streams against AuthzForce and sends `event: revoked` on policy change (experiments 5–14) |
+| `rest-authz` | `support/rest-authz/` | HTTP reverse proxy PEP — forwards requests to an upstream service only when AuthzForce returns Permit (experiments 6–14) |
+| `dashboard-shared` | `support/dashboard-shared/` | Canonical shared React source files (10 components/views/hooks) symlinked into experiment dashboards |
 
 ---
 
@@ -144,6 +144,8 @@ Exploratory code built on top of the core. May include additional frontends, sim
 
 ### Experiments
 
+Experiments 1–5 are preserved as historical reference. Experiment-6 is the **active baseline**; experiments 7–14 build on it progressively.
+
 | Experiment | Description |
 |---|---|
 | [experiment-1](experiments/experiment-1/) | Interactive browser demo: register services, grant authorization, orchestrate |
@@ -151,7 +153,15 @@ Exploratory code built on top of the core. May include additional frontends, sim
 | [experiment-3](experiments/experiment-3/) | Direct AMQP subscriptions with broker-level topic authorization sourced from ConsumerAuth |
 | [experiment-4](experiments/experiment-4/) | Geo-distributed consumers over AMQP: dual-layer authorization via `topic-auth-http` (live CA checks) + RabbitMQ user lifecycle management |
 | [experiment-5](experiments/experiment-5/) | Unified XACML/ABAC policy projection across AMQP and Kafka: `policy-sync` compiles CA grants into a XACML PolicySet; one AuthzForce PDP governs both `topic-auth-xacml` (AMQP) and `kafka-authz` (Kafka SSE) |
-| [experiment-6](experiments/experiment-6/) | Triple-transport policy projection: extends experiment-5 by adding a REST/HTTP path via `rest-authz`; a single CA grant now propagates to all three transports (AMQP, Kafka, REST) within one sync cycle; `SYNC_INTERVAL` is runtime-configurable from the dashboard |
+| [experiment-6](experiments/experiment-6/) | Triple-transport policy projection (AMQP + Kafka + REST) with runtime-configurable `SYNC_INTERVAL`; active baseline for all later experiments |
+| [experiment-7](experiments/experiment-7/) | X.509/TLS extension: REST consumers identified by cert CN; mTLS across all transport paths |
+| [experiment-8](experiments/experiment-8/) | Arrowhead 5.2 profile-based PKI with enforced certificate hierarchy and compliance assessment |
+| [experiment-9](experiments/experiment-9/) | UC3 "Lawn Mowing as a Service": multi-site robot fleets publish over Kafka + AMQP; Portal & Cloud ML aggregates streams; Service Partners consume via mTLS REST proxy PEP |
+| [experiment-10](experiments/experiment-10/) | UC3 with classical PAP/PIP/PDP access-control architecture; eliminates sync delay by separating policy administration, information, and decision points |
+| [experiment-11](experiments/experiment-11/) | Hybrid PAP/PIP/PDP (Strategy A): two policy sources merged into a single XACML PolicySet at push time |
+| [experiment-12](experiments/experiment-12/) | DynamicOrchestration-XACML (Approach B): gRPC PDP interface replaces ConsumerAuthorization for orchestration decisions |
+| [experiment-13](experiments/experiment-13/) | PKI identity unification: cert CN as XACML subject on all paths; cert-level ABAC attributes; CertificateLifecycle gRPC stream auto-populates PIP |
+| [experiment-14](experiments/experiment-14/) | Connection-time certificate revocation: Kafka `ArrowheadPrincipalBuilder` plugin and RabbitMQ `topic-auth-xacml` pre-gate both reject revoked clients before the PDP is consulted |
 
 See [`experiments/CLAUDE_EXPERIMENTS.md`](experiments/CLAUDE_EXPERIMENTS.md) for rules.
 
@@ -239,16 +249,24 @@ No code in `experiments/` or `dashboard/` may import packages from `core/interna
 │               ├── AuthRulesPanel.tsx
 │               └── OrchestrationPanel.tsx
 │
+├── core-evol/
+│   ├── go.mod
+│   ├── cmd/                         # Evolved core binaries (dynamicorch-xacml, etc.)
+│   ├── internal/                    # Evolved core internals
+│   └── proto/                       # Protobuf definitions
+│       ├── authorize/               # gRPC PDP interface (authorize.proto)
+│       └── certlifecycle/           # gRPC cert event stream (certlifecycle.proto)
+│
 ├── support/
 │   ├── message-broker/              # AMQP publish/subscribe library
 │   ├── topic-auth-sync/             # ConsumerAuth → RabbitMQ topic-permission sync (experiment-3)
 │   ├── topic-auth-http/             # RabbitMQ HTTP authz backend, live CA checks (experiment-4)
 │   ├── authzforce/                  # AuthzForce REST client + XACML PolicySet builder
 │   ├── policy-sync/                 # CA → XACML → AuthzForce compiler (experiments 5–6)
-│   ├── topic-auth-xacml/            # RabbitMQ HTTP authz backend → AuthzForce PDP (experiments 5–6)
-│   ├── kafka-authz/                 # Kafka SSE proxy PEP → AuthzForce PDP (experiments 5–6)
-│   ├── rest-authz/                  # HTTP reverse proxy PEP → AuthzForce PDP (experiment-6)
-│   └── dashboard-shared/            # Shared React source files symlinked into exp-5 and exp-6
+│   ├── topic-auth-xacml/            # RabbitMQ HTTP authz backend → AuthzForce PDP (experiments 5–14)
+│   ├── kafka-authz/                 # Kafka SSE proxy PEP → AuthzForce PDP (experiments 5–14)
+│   ├── rest-authz/                  # HTTP reverse proxy PEP → AuthzForce PDP (experiments 6–14)
+│   └── dashboard-shared/            # Shared React source files symlinked into experiment dashboards
 │
 └── experiments/
     ├── CLAUDE_EXPERIMENTS.md
@@ -284,11 +302,19 @@ No code in `experiments/` or `dashboard/` may import packages from `core/interna
     │       ├── robot-fleet/         # dual-publish AMQP + Kafka
     │       ├── consumer-direct/     # AMQP consumer via AHC orchestration flow
     │       └── analytics-consumer/  # Kafka SSE consumer via kafka-authz
-    └── experiment-6/
-        ├── docker-compose.yml
-        ├── dockerfiles/
-        ├── rabbitmq/
-        └── services/
-            ├── data-provider/       # Kafka consumer + REST API (upstream of rest-authz)
-            └── rest-consumer/       # REST subscriber polling via rest-authz
+    ├── experiment-6/
+    │   ├── docker-compose.yml
+    │   ├── dockerfiles/
+    │   ├── rabbitmq/
+    │   └── services/
+    │       ├── data-provider/       # Kafka consumer + REST API (upstream of rest-authz)
+    │       └── rest-consumer/       # REST subscriber polling via rest-authz
+    ├── experiment-7/                # X.509/TLS: REST consumers identified by cert CN
+    ├── experiment-8/                # AH 5.2 profile-based PKI, compliance assessment
+    ├── experiment-9/                # UC3 Lawn Mowing: multi-site fleets + mTLS REST proxy PEP
+    ├── experiment-10/               # UC3 with PAP/PIP/PDP separation
+    ├── experiment-11/               # Hybrid PAP/PIP/PDP: two policy sources merged at push time
+    ├── experiment-12/               # DynamicOrchestration-XACML: gRPC PDP replaces ConsumerAuth
+    ├── experiment-13/               # PKI identity unification: cert CN as XACML subject
+    └── experiment-14/               # Connection-time cert revocation on Kafka + RabbitMQ
 ```
