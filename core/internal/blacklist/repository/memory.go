@@ -3,18 +3,12 @@ package repository
 import (
 	"sync"
 	"time"
+
+	"arrowhead/core/internal/blacklist/model"
 )
 
-// Entry represents a blacklist record.
-type Entry struct {
-	SystemName string     `json:"systemName"`
-	Reason     string     `json:"reason"`
-	ExpiresAt  time.Time  `json:"-"` // zero = never expires
-	Active     bool       `json:"active"`
-	CreatedBy  string     `json:"createdBy"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	UpdatedAt  time.Time  `json:"updatedAt"`
-}
+// Entry is an alias for model.Entry kept for internal convenience.
+type Entry = model.Entry
 
 // Repository is the storage interface for blacklist entries.
 type Repository interface {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"arrowhead/core/internal/blacklist/repository"
+	"arrowhead/core/internal/blacklist/model"
 	"arrowhead/core/internal/blacklist/service"
 )
 
@@ -89,7 +89,7 @@ func (h *Handler) handleMgmtCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	created := make([]repository.Entry, 0, len(body.Entries))
+	created := make([]model.Entry, 0, len(body.Entries))
 	for _, e := range body.Entries {
 		var expiresAt time.Time
 		if e.ExpiresAt != "" {
@@ -136,7 +136,7 @@ type entryDTO struct {
 	UpdatedAt  string  `json:"updatedAt"`
 }
 
-func toDTO(e repository.Entry) entryDTO {
+func toDTO(e model.Entry) entryDTO {
 	d := entryDTO{
 		SystemName: e.SystemName,
 		Reason:     e.Reason,
@@ -152,7 +152,7 @@ func toDTO(e repository.Entry) entryDTO {
 	return d
 }
 
-func entriesResponse(entries []repository.Entry) map[string]any {
+func entriesResponse(entries []model.Entry) map[string]any {
 	dtos := make([]entryDTO, 0, len(entries))
 	for _, e := range entries {
 		dtos = append(dtos, toDTO(e))
@@ -160,8 +160,8 @@ func entriesResponse(entries []repository.Entry) map[string]any {
 	return map[string]any{"entries": dtos, "count": len(dtos)}
 }
 
-func activeEntries(entries []repository.Entry) []repository.Entry {
-	var out []repository.Entry
+func activeEntries(entries []model.Entry) []model.Entry {
+	var out []model.Entry
 	now := time.Now()
 	for _, e := range entries {
 		if !e.Active {

@@ -56,7 +56,7 @@ cd core-evol && go build ./... && go test -race ./...
 **Goal:** Mechanically enforce the import rules in `core/CLAUDE.md` so that violations are
 caught by `go test`, not by human review.
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 ### What to create
 
@@ -526,6 +526,32 @@ unreachable auth server (fail-closed).
 - `core/internal/authentication/api/handler.go` — map `ErrMissingPassword` → 400
 
 **core-evol:** Not applicable.
+
+**Experiment impact — BREAKING:** Experiments 4, 5, 7, and 13 all send credentials as a
+plain string (`"credentials":"secret"`). After this step they will receive 400. Update
+the `authLoginRequest` struct in each affected file as part of this step:
+
+```
+experiments/experiment-4/services/consumer-direct/main.go
+experiments/experiment-4/services/robot-fleet/main.go
+experiments/experiment-5/services/consumer-direct/main.go
+experiments/experiment-5/services/robot-fleet/main.go
+experiments/experiment-7/services/consumer-direct-tls/main.go
+experiments/experiment-7/services/robot-fleet-tls/main.go
+experiments/experiment-13/services/robot-fleet-tls/main.go
+```
+
+In each file, change the `Credentials` field from `string` to a struct:
+```go
+type authLoginRequest struct {
+    SystemName  string            `json:"systemName"`
+    Credentials authCredentials   `json:"credentials"`
+}
+type authCredentials struct {
+    Password string `json:"password"`
+}
+```
+And update the call site where the struct is populated.
 
 **Docs to update after:** `core/GAP_ANALYSIS.md` (mark G43 resolved), `core/SPEC.md`,
 `CONFORMANCE.md`, `core/EXAMPLES.md`.

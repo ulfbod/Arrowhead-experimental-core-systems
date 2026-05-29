@@ -4,6 +4,7 @@ package service
 import (
 	"time"
 
+	"arrowhead/core/internal/blacklist/model"
 	"arrowhead/core/internal/blacklist/repository"
 )
 
@@ -18,8 +19,8 @@ func NewBlacklistService(repo repository.Repository) *BlacklistService {
 
 // Add creates a new blacklist entry for systemName.
 // expiresAt zero value means the entry never expires.
-func (s *BlacklistService) Add(systemName, reason string, expiresAt time.Time, createdBy string) repository.Entry {
-	return s.repo.Save(repository.Entry{
+func (s *BlacklistService) Add(systemName, reason string, expiresAt time.Time, createdBy string) model.Entry {
+	return s.repo.Save(model.Entry{
 		SystemName: systemName,
 		Reason:     reason,
 		ExpiresAt:  expiresAt,
@@ -54,12 +55,12 @@ type QueryFilter struct {
 }
 
 // Query returns all entries, applying filter if non-nil.
-func (s *BlacklistService) Query(filter *QueryFilter) []repository.Entry {
+func (s *BlacklistService) Query(filter *QueryFilter) []model.Entry {
 	all := s.repo.All()
 	if filter == nil {
 		return all
 	}
-	var out []repository.Entry
+	var out []model.Entry
 	for _, e := range all {
 		if filter.Active != nil && e.Active != *filter.Active {
 			continue
