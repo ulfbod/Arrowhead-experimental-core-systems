@@ -176,10 +176,12 @@ services:
       TLS_CERT_FILE: "/certs/serviceregistry.crt"
       TLS_KEY_FILE:  "/certs/serviceregistry.key"
       TLS_CA_FILE:   "/certs/ca.crt"
+      DB_PATH: "/data/serviceregistry.db"
     ports:
       - "9090:8490"
     volumes:
       - certs:/certs:ro
+      - serviceregistry-data:/data
     depends_on:
       cert-provisioner:
         condition: service_completed_successfully
@@ -201,10 +203,12 @@ services:
       TLS_CERT_FILE: "/certs/authentication.crt"
       TLS_KEY_FILE:  "/certs/authentication.key"
       TLS_CA_FILE:   "/certs/ca.crt"
+      DB_PATH: "/data/authentication.db"
     ports:
       - "9091:8491"
     volumes:
       - certs:/certs:ro
+      - authentication-data:/data
     depends_on:
       cert-provisioner:
         condition: service_completed_successfully
@@ -226,10 +230,12 @@ services:
       TLS_CERT_FILE: "/certs/consumerauth.crt"
       TLS_KEY_FILE:  "/certs/consumerauth.key"
       TLS_CA_FILE:   "/certs/ca.crt"
+      DB_PATH: "/data/consumerauth.db"
     ports:
       - "9092:8492"
     volumes:
       - certs:/certs:ro
+      - consumerauth-data:/data
     depends_on:
       cert-provisioner:
         condition: service_completed_successfully
@@ -340,11 +346,18 @@ services:
         condition: service_healthy
       pip:
         condition: service_healthy
+      authentication:
+        condition: service_healthy
     restart: "no"
     command:
       - sh
       - -c
       - |-
+        # Register robot-fleet system identities so they can log in to the Authentication service.
+        curl -s -X POST http://authentication:8081/authentication/mgmt/identities \
+          -H 'Content-Type: application/json' \
+          -d '{"authenticationMethod":"PASSWORD","identities":[{"systemName":"robot-fleet-site-1","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-2","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-3","credentials":{"password":"fleet-secret"}}]}' \
+          | grep -q '"identities"' &&
         # Per-provider orchestration policies (action=orchestrate)
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
           -d '{"subject":"portal-cloud-ml","resource":"telemetry","provider":"robot-fleet-site-1","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
@@ -710,3 +723,6 @@ services:
 volumes:
   certs:
   profile-ca-data:
+  serviceregistry-data:
+  authentication-data:
+  consumerauth-data:

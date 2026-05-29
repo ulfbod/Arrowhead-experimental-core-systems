@@ -56,7 +56,7 @@ function ArchitectureDiagram() {
                          interface: HTTP-INSECURE-JSON
 
   ② Authorization grant (operator action)
-      ConsumerAuth admin  ──POST /authorization/grant──►  ConsumerAuthorization
+      ConsumerAuth admin  ──POST /consumerauthorization/authorization/grant──►  ConsumerAuthorization
                               consumer: rest-consumer
                               provider: data-provider
                               service:  telemetry-rest

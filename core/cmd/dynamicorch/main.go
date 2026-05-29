@@ -25,9 +25,11 @@ package main
 import (
 	"crypto/tls"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
+	"arrowhead/core/internal/generalmgmt"
 	dynapi "arrowhead/core/internal/orchestration/dynamic/api"
 	dynsvc "arrowhead/core/internal/orchestration/dynamic/service"
 	"arrowhead/core/internal/tlsutil"
@@ -53,6 +55,9 @@ func main() {
 	checkAuth := os.Getenv("ENABLE_AUTH") == "true"
 	checkIdentity := os.Getenv("ENABLE_IDENTITY_CHECK") == "true"
 
+	buf := generalmgmt.NewLogBuffer(1000)
+	slog.SetDefault(slog.New(generalmgmt.NewSlogHandler(buf)))
+
 	certFile := os.Getenv("TLS_CERT_FILE")
 	keyFile := os.Getenv("TLS_KEY_FILE")
 	caFile := os.Getenv("TLS_CA_FILE")
@@ -65,7 +70,21 @@ func main() {
 	httpClient := tlsutil.NewHTTPClient(clientTLSCfg)
 
 	orch := dynsvc.NewDynamicOrchestratorWithClient(srURL, caURL, authSysURL, checkAuth, checkIdentity, httpClient)
-	handler := dynapi.NewHandler(orch)
+	sysHandler := dynapi.NewHandler(orch)
+
+	mgmtHandler := generalmgmt.NewHandler(buf, "serviceorchestration/orchestration", map[string]string{
+		"PORT":                 port,
+		"SERVICE_REGISTRY_URL": srURL,
+		"CONSUMER_AUTH_URL":    caURL,
+		"AUTH_SYSTEM_URL":      authSysURL,
+		"ENABLE_AUTH":          os.Getenv("ENABLE_AUTH"),
+		"ENABLE_IDENTITY_CHECK": os.Getenv("ENABLE_IDENTITY_CHECK"),
+		"TLS_PORT":             os.Getenv("TLS_PORT"),
+	})
+
+	root := http.NewServeMux()
+	root.Handle("/serviceorchestration/orchestration/general/", mgmtHandler)
+	root.Handle("/", sysHandler)
 
 	// Optional TLS listener on TLS_PORT for incoming connections.
 	if tlsPort := os.Getenv("TLS_PORT"); tlsPort != "" {
@@ -74,13 +93,14 @@ func main() {
 			log.Fatalf("[DynamicOrchestration] server TLS config: %v", err)
 		}
 		if serverTLSCfg != nil {
-			go startTLS(handler, tlsPort, serverTLSCfg, "DynamicOrchestration")
+			go startTLS(root, tlsPort, serverTLSCfg, "DynamicOrchestration")
 		}
 	}
 
-	log.Printf("[DynamicOrchestration] Listening on :%s  (sr=%s  ca=%s  auth=%s  checkAuth=%v  checkIdentity=%v)",
-		port, srURL, caURL, authSysURL, checkAuth, checkIdentity)
-	log.Fatal(http.ListenAndServe(":"+port, handler))
+	slog.Info("Listening", "system", "DynamicOrchestration", "port", port,
+		"sr", srURL, "ca", caURL, "auth", authSysURL,
+		"checkAuth", checkAuth, "checkIdentity", checkIdentity)
+	log.Fatal(http.ListenAndServe(":"+port, root))
 }
 
 func startTLS(handler http.Handler, port string, tlsCfg *tls.Config, name string) {
@@ -88,7 +108,7 @@ func startTLS(handler http.Handler, port string, tlsCfg *tls.Config, name string
 	if err != nil {
 		log.Fatalf("[%s] TLS listen on :%s: %v", name, port, err)
 	}
-	log.Printf("[%s] Listening on :%s (HTTPS/mTLS)", name, port)
+	slog.Info("Listening (HTTPS/mTLS)", "system", name, "port", port)
 	if err := http.Serve(ln, handler); err != nil {
 		log.Fatalf("[%s] TLS serve: %v", name, err)
 	}

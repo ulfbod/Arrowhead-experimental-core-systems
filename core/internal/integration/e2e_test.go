@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,10 +107,10 @@ func decodeOrchResponse(t *testing.T, resp *http.Response) []map[string]any {
 	t.Helper()
 	defer resp.Body.Close()
 	var result struct {
-		Response []map[string]any `json:"response"`
+		Results []map[string]any `json:"results"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	return result.Response
+	return result.Results
 }
 
 func itoa(n int) string { return fmt.Sprintf("%d", n) }
@@ -119,6 +120,14 @@ func itoa(n int) string { return fmt.Sprintf("%d", n) }
 func startSR(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(srapi.NewHandler(srsvc.NewRegistryService(srrepo.NewMemoryRepository())))
+}
+
+// startAH5SR starts a ServiceRegistry that serves the AH5 API endpoints.
+// DynamicOrchestrator calls POST /serviceregistry/service-discovery/lookup,
+// which is only available on the AH5 handler.
+func startAH5SR(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(srapi.NewAH5Handler(srsvc.NewAH5RegistryService(srrepo.NewAH5Store())))
 }
 
 func startAuth(t *testing.T) *httptest.Server {
@@ -159,12 +168,29 @@ func registerService(t *testing.T, sr *httptest.Server, systemName, serviceDef s
 	}, http.StatusCreated)
 }
 
-func grantRule(t *testing.T, ca *httptest.Server, consumer, provider, service string) {
+// registerServiceAH5 registers a service via the AH5 endpoint and returns its instanceId.
+// systemName must be PascalCase (e.g. "Sensor1"), serviceDef must be camelCase (e.g. "temperatureService").
+func registerServiceAH5(t *testing.T, sr *httptest.Server, systemName, serviceDef string) string {
 	t.Helper()
-	mustPost(t, ca, "/authorization/grant", map[string]string{
-		"consumerSystemName": consumer,
-		"providerSystemName": provider,
-		"serviceDefinition":  service,
+	result := mustPost(t, sr, "/serviceregistry/service-discovery/register", map[string]any{
+		"systemName":            systemName,
+		"serviceDefinitionName": serviceDef,
+		"version":               "1.0.0",
+	}, http.StatusCreated)
+	id, _ := result["instanceId"].(string)
+	return id
+}
+
+func grantRule(t *testing.T, ca *httptest.Server, consumer, provider, target string) {
+	t.Helper()
+	mustPost(t, ca, "/consumerauthorization/authorization/grant", map[string]any{
+		"provider":   provider,
+		"targetType": "SERVICE_DEF",
+		"target":     target,
+		"defaultPolicy": map[string]any{
+			"policyType": "WHITELIST",
+			"policyList": []string{consumer},
+		},
 	}, http.StatusCreated)
 }
 
@@ -185,61 +211,61 @@ func login(t *testing.T, auth *httptest.Server, systemName string) string {
 // ── Dynamic Orchestration ─────────────────────────────────────────────────────
 
 func TestE2EDynamicOrchestrationWithoutAuth(t *testing.T) {
-	sr := startSR(t); defer sr.Close()
+	sr := startAH5SR(t); defer sr.Close()
 	ca := startCA(t); defer ca.Close()
-	registerService(t, sr, "sensor-1", "temperature-service")
+	registerServiceAH5(t, sr, "Sensor1", "temperatureService")
 
 	dynOrch := startDynOrch(t, sr.URL, ca.URL, "", false, false)
 	defer dynOrch.Close()
 
-	results := decodeOrchResponse(t, post(t, dynOrch, "/orchestration/dynamic", map[string]any{
-		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
-		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	results := decodeOrchResponse(t, post(t, dynOrch, "/serviceorchestration/orchestration/pull", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "ConsumerApp", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperatureService"},
 	}))
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if results[0]["provider"].(map[string]any)["systemName"] != "sensor-1" {
-		t.Errorf("unexpected provider: %v", results[0]["provider"])
+	if results[0]["providerName"].(string) != "Sensor1" {
+		t.Errorf("unexpected provider: %v", results[0]["providerName"])
 	}
 }
 
 func TestE2EDynamicOrchestrationWithAuth(t *testing.T) {
-	sr := startSR(t); defer sr.Close()
+	sr := startAH5SR(t); defer sr.Close()
 	ca := startCA(t); defer ca.Close()
 
-	registerService(t, sr, "sensor-1", "temperature-service")
-	registerService(t, sr, "sensor-2", "temperature-service")
-	grantRule(t, ca, "consumer-app", "sensor-1", "temperature-service")
-	// sensor-2 has no grant.
+	registerServiceAH5(t, sr, "Sensor1", "temperatureService")
+	registerServiceAH5(t, sr, "Sensor2", "temperatureService")
+	grantRule(t, ca, "ConsumerApp", "Sensor1", "temperatureService")
+	// Sensor2 has no grant.
 
 	dynOrch := startDynOrch(t, sr.URL, ca.URL, "", true, false)
 	defer dynOrch.Close()
 
-	results := decodeOrchResponse(t, post(t, dynOrch, "/orchestration/dynamic", map[string]any{
-		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
-		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	results := decodeOrchResponse(t, post(t, dynOrch, "/serviceorchestration/orchestration/pull", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "ConsumerApp", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperatureService"},
 	}))
 	if len(results) != 1 {
 		t.Fatalf("expected 1 authorized result, got %d", len(results))
 	}
-	if results[0]["provider"].(map[string]any)["systemName"] != "sensor-1" {
-		t.Errorf("expected sensor-1 (authorized), got %v", results[0]["provider"])
+	if results[0]["providerName"].(string) != "Sensor1" {
+		t.Errorf("expected Sensor1 (authorized), got %v", results[0]["providerName"])
 	}
 }
 
 func TestE2EDynamicOrchestrationNoGrantNoResults(t *testing.T) {
-	sr := startSR(t); defer sr.Close()
+	sr := startAH5SR(t); defer sr.Close()
 	ca := startCA(t); defer ca.Close()
-	registerService(t, sr, "sensor-1", "temperature-service")
+	registerServiceAH5(t, sr, "Sensor1", "temperatureService")
 	// No auth rules granted.
 
 	dynOrch := startDynOrch(t, sr.URL, ca.URL, "", true, false)
 	defer dynOrch.Close()
 
-	results := decodeOrchResponse(t, post(t, dynOrch, "/orchestration/dynamic", map[string]any{
-		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
-		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	results := decodeOrchResponse(t, post(t, dynOrch, "/serviceorchestration/orchestration/pull", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "ConsumerApp", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperatureService"},
 	}))
 	if len(results) != 0 {
 		t.Errorf("expected 0 results (no auth rules), got %d", len(results))
@@ -251,7 +277,7 @@ func TestE2EDynamicOrchestrationNoGrantNoResults(t *testing.T) {
 func TestE2ESimpleStoreOrchestration(t *testing.T) {
 	ss := startSimpleStore(t); defer ss.Close()
 
-	mustPost(t, ss, "/orchestration/simplestore/rules", map[string]any{
+	mustPost(t, ss, "/serviceorchestration/orchestration/simplestore/rules", map[string]any{
 		"consumerSystemName": "consumer-app",
 		"serviceDefinition":  "temperature-service",
 		"provider":           map[string]any{"systemName": "sensor-1", "address": "10.0.0.1", "port": 9000},
@@ -259,32 +285,32 @@ func TestE2ESimpleStoreOrchestration(t *testing.T) {
 		"interfaces":         []string{"HTTP-INSECURE-JSON"},
 	}, http.StatusCreated)
 
-	results := decodeOrchResponse(t, post(t, ss, "/orchestration/simplestore", map[string]any{
+	results := decodeOrchResponse(t, post(t, ss, "/serviceorchestration/orchestration/pull", map[string]any{
 		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
 		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
 	}))
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if results[0]["provider"].(map[string]any)["systemName"] != "sensor-1" {
-		t.Errorf("unexpected provider: %v", results[0]["provider"])
+	if results[0]["providerName"].(string) != "sensor-1" {
+		t.Errorf("unexpected provider: %v", results[0]["providerName"])
 	}
 }
 
 func TestE2ESimpleStoreRuleLifecycle(t *testing.T) {
 	ss := startSimpleStore(t); defer ss.Close()
 
-	result := mustPost(t, ss, "/orchestration/simplestore/rules", map[string]any{
+	result := mustPost(t, ss, "/serviceorchestration/orchestration/simplestore/rules", map[string]any{
 		"consumerSystemName": "consumer-app",
 		"serviceDefinition":  "temperature-service",
 		"provider":           map[string]any{"systemName": "sensor-1", "address": "10.0.0.1", "port": 9000},
 		"serviceUri":         "/temperature",
 		"interfaces":         []string{"HTTP"},
 	}, http.StatusCreated)
-	id := int(result["id"].(float64))
+	id := result["id"].(string)
 
 	// Confirm rule exists.
-	listResp, _ := ss.Client().Get(ss.URL + "/orchestration/simplestore/rules")
+	listResp, _ := ss.Client().Get(ss.URL + "/serviceorchestration/orchestration/simplestore/rules")
 	var listBody struct{ Count int }
 	json.NewDecoder(listResp.Body).Decode(&listBody)
 	listResp.Body.Close()
@@ -293,9 +319,9 @@ func TestE2ESimpleStoreRuleLifecycle(t *testing.T) {
 	}
 
 	// Delete and confirm gone.
-	deleteAt(t, ss, "/orchestration/simplestore/rules/"+itoa(id), http.StatusOK)
+	deleteAt(t, ss, "/serviceorchestration/orchestration/simplestore/rules/"+id, http.StatusNoContent)
 
-	results := decodeOrchResponse(t, post(t, ss, "/orchestration/simplestore", map[string]any{
+	results := decodeOrchResponse(t, post(t, ss, "/serviceorchestration/orchestration/pull", map[string]any{
 		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
 		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
 	}))
@@ -318,104 +344,124 @@ func TestE2EFlexibleStorePriorityOrdering(t *testing.T) {
 			"provider": map[string]any{"systemName": "preferred", "address": "10.0.0.1", "port": 9001},
 			"serviceUri": "/temperature", "interfaces": []string{"HTTP"}, "priority": 1},
 	} {
-		mustPost(t, fs, "/orchestration/flexiblestore/rules", rule, http.StatusCreated)
+		mustPost(t, fs, "/serviceorchestration/orchestration/flexiblestore/rules", rule, http.StatusCreated)
 	}
 
-	results := decodeOrchResponse(t, post(t, fs, "/orchestration/flexiblestore", map[string]any{
+	results := decodeOrchResponse(t, post(t, fs, "/serviceorchestration/orchestration/pull", map[string]any{
 		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
 		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
 	}))
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
-	if results[0]["provider"].(map[string]any)["systemName"] != "preferred" {
-		t.Errorf("expected 'preferred' first (priority 1), got %v", results[0]["provider"])
+	if results[0]["providerName"].(string) != "preferred" {
+		t.Errorf("expected 'preferred' first (priority 1), got %v", results[0]["providerName"])
 	}
 }
 
 func TestE2EFlexibleStoreMetadataFiltering(t *testing.T) {
 	fs := startFlexibleStore(t); defer fs.Close()
 
-	mustPost(t, fs, "/orchestration/flexiblestore/rules", map[string]any{
+	mustPost(t, fs, "/serviceorchestration/orchestration/flexiblestore/rules", map[string]any{
 		"consumerSystemName": "consumer-app", "serviceDefinition": "temperature-service",
 		"provider": map[string]any{"systemName": "eu-sensor", "address": "10.0.0.1", "port": 9001},
 		"serviceUri": "/temperature", "interfaces": []string{"HTTP"}, "priority": 1,
 		"metadataFilter": map[string]string{"region": "eu"},
 	}, http.StatusCreated)
-	mustPost(t, fs, "/orchestration/flexiblestore/rules", map[string]any{
+	mustPost(t, fs, "/serviceorchestration/orchestration/flexiblestore/rules", map[string]any{
 		"consumerSystemName": "consumer-app", "serviceDefinition": "temperature-service",
 		"provider": map[string]any{"systemName": "global-sensor", "address": "10.0.0.2", "port": 9002},
 		"serviceUri": "/temperature", "interfaces": []string{"HTTP"}, "priority": 2,
 	}, http.StatusCreated)
 
 	// EU request matches both rules (global filter is an empty subset of any metadata).
-	euResults := decodeOrchResponse(t, post(t, fs, "/orchestration/flexiblestore", map[string]any{
+	euResults := decodeOrchResponse(t, post(t, fs, "/serviceorchestration/orchestration/pull", map[string]any{
 		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
 		"requestedService": map[string]any{"serviceDefinition": "temperature-service", "metadata": map[string]string{"region": "eu"}},
 	}))
 	if len(euResults) != 2 {
 		t.Fatalf("eu request: expected 2 results, got %d", len(euResults))
 	}
-	if euResults[0]["provider"].(map[string]any)["systemName"] != "eu-sensor" {
-		t.Errorf("expected eu-sensor first, got %v", euResults[0]["provider"])
+	if euResults[0]["providerName"].(string) != "eu-sensor" {
+		t.Errorf("expected eu-sensor first, got %v", euResults[0]["providerName"])
 	}
 
 	// No-metadata request matches only the global rule.
-	noMetaResults := decodeOrchResponse(t, post(t, fs, "/orchestration/flexiblestore", map[string]any{
+	noMetaResults := decodeOrchResponse(t, post(t, fs, "/serviceorchestration/orchestration/pull", map[string]any{
 		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
 		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
 	}))
 	if len(noMetaResults) != 1 {
 		t.Fatalf("no-metadata request: expected 1 result, got %d", len(noMetaResults))
 	}
-	if noMetaResults[0]["provider"].(map[string]any)["systemName"] != "global-sensor" {
-		t.Errorf("expected global-sensor, got %v", noMetaResults[0]["provider"])
+	if noMetaResults[0]["providerName"].(string) != "global-sensor" {
+		t.Errorf("expected global-sensor, got %v", noMetaResults[0]["providerName"])
 	}
 }
 
 // ── ConsumerAuthorization lifecycle ──────────────────────────────────────────
 
 func TestE2EAuthorizationRuleLifecycle(t *testing.T) {
-	ca := startCA(t); defer ca.Close()
+	ca := startCA(t)
+	defer ca.Close()
 
-	result := mustPost(t, ca, "/authorization/grant", map[string]string{
-		"consumerSystemName": "consumer-app",
-		"providerSystemName": "sensor-1",
-		"serviceDefinition":  "temperature-service",
+	// Grant returns instanceId (not a numeric id).
+	result := mustPost(t, ca, "/consumerauthorization/authorization/grant", map[string]any{
+		"provider":      "sensor-1",
+		"targetType":    "SERVICE_DEF",
+		"target":        "temperature-service",
+		"defaultPolicy": map[string]any{"policyType": "WHITELIST", "policyList": []string{"consumer-app"}},
 	}, http.StatusCreated)
-	id := int(result["id"].(float64))
+	instanceID, ok := result["instanceId"].(string)
+	if !ok || instanceID == "" {
+		t.Fatalf("grant response missing instanceId: %v", result)
+	}
 
-	verifyResult := mustPost(t, ca, "/authorization/verify", map[string]string{
-		"consumerSystemName": "consumer-app",
-		"providerSystemName": "sensor-1",
-		"serviceDefinition":  "temperature-service",
-	}, http.StatusOK)
-	if verifyResult["authorized"] != true {
+	// Verify returns plain JSON boolean.
+	verifyResp := post(t, ca, "/consumerauthorization/authorization/verify", map[string]any{
+		"consumer":   "consumer-app",
+		"provider":   "sensor-1",
+		"target":     "temperature-service",
+		"targetType": "SERVICE_DEF",
+	})
+	defer verifyResp.Body.Close()
+	var authorized bool
+	json.NewDecoder(verifyResp.Body).Decode(&authorized)
+	if !authorized {
 		t.Error("expected authorized=true after grant")
 	}
 
-	deleteAt(t, ca, "/authorization/revoke/"+itoa(id), http.StatusOK)
+	// Revoke by instanceId (URL-encode the pipes).
+	encoded := strings.ReplaceAll(instanceID, "|", "%7C")
+	deleteAt(t, ca, "/consumerauthorization/authorization/revoke/"+encoded, http.StatusOK)
 
-	verifyAfterRevoke := mustPost(t, ca, "/authorization/verify", map[string]string{
-		"consumerSystemName": "consumer-app",
-		"providerSystemName": "sensor-1",
-		"serviceDefinition":  "temperature-service",
-	}, http.StatusOK)
-	if verifyAfterRevoke["authorized"] != false {
+	// Verify after revoke.
+	verifyResp2 := post(t, ca, "/consumerauthorization/authorization/verify", map[string]any{
+		"consumer":   "consumer-app",
+		"provider":   "sensor-1",
+		"target":     "temperature-service",
+		"targetType": "SERVICE_DEF",
+	})
+	defer verifyResp2.Body.Close()
+	var authorized2 bool
+	json.NewDecoder(verifyResp2.Body).Decode(&authorized2)
+	if authorized2 {
 		t.Error("expected authorized=false after revoke")
 	}
 }
 
 func TestE2EDuplicateGrantRejected(t *testing.T) {
-	ca := startCA(t); defer ca.Close()
+	ca := startCA(t)
+	defer ca.Close()
 
-	body := map[string]string{
-		"consumerSystemName": "consumer-app",
-		"providerSystemName": "sensor-1",
-		"serviceDefinition":  "temperature-service",
+	body := map[string]any{
+		"provider":      "sensor-1",
+		"targetType":    "SERVICE_DEF",
+		"target":        "temperature-service",
+		"defaultPolicy": map[string]any{"policyType": "ALL"},
 	}
-	mustPost(t, ca, "/authorization/grant", body, http.StatusCreated)
-	resp := post(t, ca, "/authorization/grant", body)
+	mustPost(t, ca, "/consumerauthorization/authorization/grant", body, http.StatusCreated)
+	resp := post(t, ca, "/consumerauthorization/authorization/grant", body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("expected 409 for duplicate grant, got %d", resp.StatusCode)
@@ -427,51 +473,51 @@ func TestE2EDuplicateGrantRejected(t *testing.T) {
 // TestE2EFullFlow is the complete Arrowhead workflow:
 // provider registers → admin grants auth → consumer orchestrates → provider returned.
 func TestE2EFullFlow(t *testing.T) {
-	sr := startSR(t); defer sr.Close()
+	sr := startAH5SR(t); defer sr.Close()
 	ca := startCA(t); defer ca.Close()
 	dynOrch := startDynOrch(t, sr.URL, ca.URL, "", true, false)
 	defer dynOrch.Close()
 
-	registerService(t, sr, "sensor-1", "temperature-service")
-	grantRule(t, ca, "consumer-app", "sensor-1", "temperature-service")
+	registerServiceAH5(t, sr, "Sensor1", "temperatureService")
+	grantRule(t, ca, "ConsumerApp", "Sensor1", "temperatureService")
 
-	results := decodeOrchResponse(t, post(t, dynOrch, "/orchestration/dynamic", map[string]any{
-		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
-		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	results := decodeOrchResponse(t, post(t, dynOrch, "/serviceorchestration/orchestration/pull", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "ConsumerApp", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperatureService"},
 	}))
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result in full flow, got %d", len(results))
 	}
-	if results[0]["provider"].(map[string]any)["systemName"] != "sensor-1" {
-		t.Errorf("unexpected provider: %v", results[0]["provider"])
+	if results[0]["providerName"].(string) != "Sensor1" {
+		t.Errorf("unexpected provider: %v", results[0]["providerName"])
 	}
 }
 
 // TestE2EUnregisterClearsOrchestration verifies that after a provider unregisters,
 // dynamic orchestration no longer returns it.
 func TestE2EUnregisterClearsOrchestration(t *testing.T) {
-	sr := startSR(t); defer sr.Close()
+	sr := startAH5SR(t); defer sr.Close()
 	ca := startCA(t); defer ca.Close()
 	dynOrch := startDynOrch(t, sr.URL, ca.URL, "", false, false)
 	defer dynOrch.Close()
 
-	registerService(t, sr, "sensor-1", "temperature-service")
+	instanceID := registerServiceAH5(t, sr, "Sensor1", "temperatureService")
 
-	before := decodeOrchResponse(t, post(t, dynOrch, "/orchestration/dynamic", map[string]any{
-		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
-		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	before := decodeOrchResponse(t, post(t, dynOrch, "/serviceorchestration/orchestration/pull", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "ConsumerApp", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperatureService"},
 	}))
 	if len(before) != 1 {
 		t.Fatalf("expected 1 before unregister, got %d", len(before))
 	}
 
-	deleteJSON(t, sr, "/serviceregistry/unregister",
-		`{"serviceDefinition":"temperature-service","providerSystem":{"systemName":"sensor-1","address":"10.0.0.1","port":9000},"version":1}`,
-		http.StatusOK)
+	// AH5 revoke by instanceId.
+	encoded := strings.ReplaceAll(instanceID, "|", "%7C")
+	deleteAt(t, sr, "/serviceregistry/service-discovery/revoke/"+encoded, http.StatusOK)
 
-	after := decodeOrchResponse(t, post(t, dynOrch, "/orchestration/dynamic", map[string]any{
-		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
-		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	after := decodeOrchResponse(t, post(t, dynOrch, "/serviceorchestration/orchestration/pull", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "ConsumerApp", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperatureService"},
 	}))
 	if len(after) != 0 {
 		t.Errorf("expected 0 after unregister, got %d", len(after))
@@ -483,16 +529,16 @@ func TestE2EUnregisterClearsOrchestration(t *testing.T) {
 // TestE2EIdentityCheckBlocksWithoutToken verifies that when ENABLE_IDENTITY_CHECK=true,
 // a request without an Authorization header is rejected with 401.
 func TestE2EIdentityCheckBlocksWithoutToken(t *testing.T) {
-	sr := startSR(t); defer sr.Close()
+	sr := startAH5SR(t); defer sr.Close()
 	auth := startAuth(t); defer auth.Close()
-	registerService(t, sr, "sensor-1", "temperature-service")
+	registerServiceAH5(t, sr, "Sensor1", "temperatureService")
 
 	dynOrch := startDynOrch(t, sr.URL, "", auth.URL, false, true)
 	defer dynOrch.Close()
 
-	resp := post(t, dynOrch, "/orchestration/dynamic", map[string]any{
-		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
-		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	resp := post(t, dynOrch, "/serviceorchestration/orchestration/pull", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "ConsumerApp", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperatureService"},
 	})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -504,29 +550,29 @@ func TestE2EIdentityCheckBlocksWithoutToken(t *testing.T) {
 // consumer logs in → receives token → presents token → orchestrator verifies identity
 // → uses verified systemName for CA check → authorized provider returned.
 func TestE2EIdentityCheckAllowsWithValidToken(t *testing.T) {
-	sr := startSR(t); defer sr.Close()
+	sr := startAH5SR(t); defer sr.Close()
 	auth := startAuth(t); defer auth.Close()
 	ca := startCA(t); defer ca.Close()
 
-	registerService(t, sr, "sensor-1", "temperature-service")
-	grantRule(t, ca, "consumer-app", "sensor-1", "temperature-service")
+	registerServiceAH5(t, sr, "Sensor1", "temperatureService")
+	grantRule(t, ca, "ConsumerApp", "Sensor1", "temperatureService")
 
 	// Consumer logs in and gets a token.
-	token := login(t, auth, "consumer-app")
+	token := login(t, auth, "ConsumerApp")
 
 	dynOrch := startDynOrch(t, sr.URL, ca.URL, auth.URL, true, true)
 	defer dynOrch.Close()
 
-	resp := postWithToken(t, dynOrch, "/orchestration/dynamic", map[string]any{
-		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
-		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	resp := postWithToken(t, dynOrch, "/serviceorchestration/orchestration/pull", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "ConsumerApp", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperatureService"},
 	}, token)
 	results := decodeOrchResponse(t, resp)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if results[0]["provider"].(map[string]any)["systemName"] != "sensor-1" {
-		t.Errorf("unexpected provider: %v", results[0]["provider"])
+	if results[0]["providerName"].(string) != "Sensor1" {
+		t.Errorf("unexpected provider: %v", results[0]["providerName"])
 	}
 }
 
@@ -534,25 +580,25 @@ func TestE2EIdentityCheckAllowsWithValidToken(t *testing.T) {
 // impersonate another system: the verified token identity is used for CA checks,
 // not the self-reported requesterSystem.systemName.
 func TestE2EIdentityCheckPreventsImpersonation(t *testing.T) {
-	sr := startSR(t); defer sr.Close()
+	sr := startAH5SR(t); defer sr.Close()
 	auth := startAuth(t); defer auth.Close()
 	ca := startCA(t); defer ca.Close()
 
-	registerService(t, sr, "sensor-1", "temperature-service")
-	// Only "consumer-app" is authorized — not "impersonator".
-	grantRule(t, ca, "consumer-app", "sensor-1", "temperature-service")
+	registerServiceAH5(t, sr, "Sensor1", "temperatureService")
+	// Only "ConsumerApp" is authorized — not "Impersonator".
+	grantRule(t, ca, "ConsumerApp", "Sensor1", "temperatureService")
 
-	// "consumer-app" logs in and gets a token.
-	token := login(t, auth, "consumer-app")
+	// "ConsumerApp" logs in and gets a token.
+	token := login(t, auth, "ConsumerApp")
 
 	dynOrch := startDynOrch(t, sr.URL, ca.URL, auth.URL, true, true)
 	defer dynOrch.Close()
 
-	// Request claims to be "impersonator" but presents consumer-app's token.
-	// The orchestrator should use "consumer-app" (from token) for CA check → authorized.
-	resp := postWithToken(t, dynOrch, "/orchestration/dynamic", map[string]any{
-		"requesterSystem":  map[string]any{"systemName": "impersonator", "address": "localhost", "port": 0},
-		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	// Request claims to be "Impersonator" but presents ConsumerApp's token.
+	// The orchestrator should use "ConsumerApp" (from token) for CA check → authorized.
+	resp := postWithToken(t, dynOrch, "/serviceorchestration/orchestration/pull", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "Impersonator", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperatureService"},
 	}, token)
 	results := decodeOrchResponse(t, resp)
 	if len(results) != 1 {
@@ -560,12 +606,73 @@ func TestE2EIdentityCheckPreventsImpersonation(t *testing.T) {
 	}
 
 	// Conversely: a system with no token at all should be blocked.
-	noTokenResp := post(t, dynOrch, "/orchestration/dynamic", map[string]any{
-		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
-		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	noTokenResp := post(t, dynOrch, "/serviceorchestration/orchestration/pull", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "ConsumerApp", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperatureService"},
 	})
 	noTokenResp.Body.Close()
 	if noTokenResp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected 401 without token, got %d", noTokenResp.StatusCode)
+	}
+}
+
+// ── AH5 ServiceRegistry composite instanceId (Step 2 / G13) ──────────────────
+
+// ── AH5 423 Locked on device delete with dependent system (Step 3 / G18) ──────
+
+func TestAH5DeviceRevoke423WithDependentSystem(t *testing.T) {
+	ah5SR := httptest.NewServer(srapi.NewAH5Handler(srsvc.NewAH5RegistryService(srrepo.NewAH5Store())))
+	defer ah5SR.Close()
+
+	// Register device
+	mustPost(t, ah5SR, "/serviceregistry/device-discovery/register",
+		map[string]any{"name": "GW01"}, http.StatusCreated)
+
+	// Register system referencing device
+	mustPost(t, ah5SR, "/serviceregistry/system-discovery/register",
+		map[string]any{
+			"name":       "Sensor1",
+			"deviceName": "GW01",
+			"addresses":  []map[string]any{{"type": "IP", "address": "192.0.2.1"}},
+		}, http.StatusCreated)
+
+	// Attempt to revoke device — expect 423 Locked
+	req, _ := http.NewRequest(http.MethodDelete, ah5SR.URL+"/serviceregistry/device-discovery/revoke/GW01", nil)
+	resp, err := ah5SR.Client().Do(req)
+	if err != nil {
+		t.Fatalf("DELETE failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusLocked {
+		t.Errorf("expected 423 Locked, got %d", resp.StatusCode)
+	}
+}
+
+func TestAH5ServiceRegistrationCompositeInstanceID(t *testing.T) {
+	ah5SR := httptest.NewServer(srapi.NewAH5Handler(srsvc.NewAH5RegistryService(srrepo.NewAH5Store())))
+	defer ah5SR.Close()
+
+	body, _ := json.Marshal(map[string]any{
+		"systemName":            "Provider1",
+		"serviceDefinitionName": "temperature",
+		"version":               "1.0.0",
+	})
+	resp, err := ah5SR.Client().Post(
+		ah5SR.URL+"/serviceregistry/service-discovery/register",
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 201/200, got %d", resp.StatusCode)
+	}
+	var inst map[string]any
+	json.NewDecoder(resp.Body).Decode(&inst)
+	id, _ := inst["instanceId"].(string)
+	if !strings.Contains(id, "|") {
+		t.Errorf("AH5 instanceId should be composite string, got %q", id)
 	}
 }

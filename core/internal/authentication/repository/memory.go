@@ -12,8 +12,11 @@ import (
 type Repository interface {
 	Save(token *model.IdentityToken)
 	FindByToken(token string) (*model.IdentityToken, bool)
+	FindBySystemName(name string) (*model.IdentityToken, bool)
 	Delete(token string) bool
+	DeleteBySystemName(name string)
 	DeleteExpired()
+	All() []*model.IdentityToken
 }
 
 // MemoryRepository is a thread-safe, in-memory token store.
@@ -47,6 +50,38 @@ func (r *MemoryRepository) Delete(token string) bool {
 	}
 	delete(r.tokens, token)
 	return true
+}
+
+func (r *MemoryRepository) FindBySystemName(name string) (*model.IdentityToken, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	now := time.Now()
+	for _, t := range r.tokens {
+		if t.SystemName == name && !now.After(t.ExpiresAt) {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+func (r *MemoryRepository) DeleteBySystemName(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k, t := range r.tokens {
+		if t.SystemName == name {
+			delete(r.tokens, k)
+		}
+	}
+}
+
+func (r *MemoryRepository) All() []*model.IdentityToken {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]*model.IdentityToken, 0, len(r.tokens))
+	for _, t := range r.tokens {
+		result = append(result, t)
+	}
+	return result
 }
 
 func (r *MemoryRepository) DeleteExpired() {

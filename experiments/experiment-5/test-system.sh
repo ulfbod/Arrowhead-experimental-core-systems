@@ -191,7 +191,7 @@ echo "=== 7. Revocation: consumer-1 AMQP connection closed after grant revoked =
 # BUG FIX: topic-auth-xacml now runs a revocation loop every 15 s that
 # closes AMQP connections for consumers whose grants were removed.
 
-lookup=$(http_body http://localhost:8082/authorization/lookup)
+lookup=$(http_body http://localhost:8082/consumerauthorization/authorization/lookup)
 grant_id=$(echo "$lookup" \
   | grep -oE '"id":[0-9]+[^}]*"consumerSystemName":"demo-consumer-1"' \
   | grep -oE '"id":[0-9]+' | grep -oE '[0-9]+' | head -1)
@@ -210,7 +210,7 @@ else
     fail "consumer-1 has active AMQP connection before revocation" ">0" "0"
   fi
 
-  revoke_code=$(http_code -X DELETE "http://localhost:8082/authorization/revoke/$grant_id")
+  revoke_code=$(http_code -X DELETE "http://localhost:8082/consumerauthorization/authorization/revoke/$grant_id")
   check_eq "revoke consumer-1 grant → 200" "200" "$revoke_code"
 
   echo "  waiting 30 s for policy-sync + revocation loop propagation..."
@@ -226,7 +226,7 @@ else
   echo "  consumer-1 AuthzForce after revoke: $deny_body"
   assert_json_value "consumer-1 → Deny in AuthzForce after revocation" "decision" "Deny" "$deny_body"
 
-  regrant=$(http_body -X POST http://localhost:8082/authorization/grant \
+  regrant=$(http_body -X POST http://localhost:8082/consumerauthorization/authorization/grant \
     -H 'Content-Type: application/json' \
     -d '{"consumerSystemName":"demo-consumer-1","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}')
   if [[ "$regrant" == *'"id":'* ]] || [[ "$regrant" == *"already exists"* ]]; then

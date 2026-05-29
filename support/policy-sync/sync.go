@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -17,32 +19,40 @@ const (
 	policySetID = "urn:arrowhead:exp5:telemetry"
 )
 
-// AuthRule mirrors the ConsumerAuthorization rule wire type.
-type AuthRule struct {
-	ID                 int    `json:"id"`
-	ConsumerSystemName string `json:"consumerSystemName"`
-	ProviderSystemName string `json:"providerSystemName"`
-	ServiceDefinition  string `json:"serviceDefinition"`
+// PolicyDef mirrors the ConsumerAuthorization PolicyDef wire type.
+type PolicyDef struct {
+	PolicyType string   `json:"policyType"`
+	PolicyList []string `json:"policyList,omitempty"`
 }
 
-// LookupResponse is the ConsumerAuthorization /authorization/lookup response.
+// AuthPolicy mirrors the ConsumerAuthorization AuthPolicy wire type.
+type AuthPolicy struct {
+	InstanceID    string    `json:"instanceId"`
+	Provider      string    `json:"provider"`
+	TargetType    string    `json:"targetType"`
+	Target        string    `json:"target"`
+	DefaultPolicy PolicyDef `json:"defaultPolicy"`
+}
+
+// LookupResponse is returned by POST /consumerauthorization/authorization/mgmt/query.
 type LookupResponse struct {
-	Rules []AuthRule `json:"rules"`
-	Count int        `json:"count"`
+	Policies   []AuthPolicy `json:"policies"`
+	Count      int          `json:"count"`
+	TotalCount int          `json:"totalCount"`
 }
 
 // syncer holds the sync state: AuthzForce client, domain ID, current policy
-// version counter, and the last known rule count for change detection.
+// version counter, and the last known grant count for change detection.
 type syncer struct {
-	client          *az.Client
-	caURL           string
-	authToken       string
-	httpClient      *http.Client
-	domainExtID     string // AuthzForce externalId (from AUTHZFORCE_DOMAIN env)
-	domainID        string
-	version         int
-	grantsCount     int
-	lastSyncedAt    time.Time
+	client       *az.Client
+	caURL        string
+	authToken    string
+	httpClient   *http.Client
+	domainExtID  string // AuthzForce externalId (from AUTHZFORCE_DOMAIN env)
+	domainID     string
+	version      int
+	grantsCount  int
+	lastSyncedAt time.Time
 }
 
 func newSyncer(client *az.Client, caURL string, httpClient *http.Client) *syncer {
@@ -62,18 +72,33 @@ func (s *syncer) init(domainExtID string) error {
 	return s.sync()
 }
 
-// sync fetches CA rules, compiles them into a XACML policy, and pushes it to
+// sync fetches CA policies, compiles them into a XACML policy, and pushes it to
 // AuthzForce. Increments the version counter on each call.
 func (s *syncer) sync() error {
-	rules, err := s.fetchRules()
+	policies, err := s.fetchPolicies()
 	if err != nil {
 		return fmt.Errorf("fetchRules: %w", err)
 	}
 
-	// Compile grants.
-	grants := make([]az.Grant, 0, len(rules))
-	for _, r := range rules {
-		grants = append(grants, az.Grant{Consumer: r.ConsumerSystemName, Service: r.ServiceDefinition})
+	// Expand WHITELIST policies into (consumer, service, provider) grants.
+	// Each WHITELIST policy lists consumers that may access the provider's service.
+	// ALL and BLACKLIST types are logged and skipped — XACML requires enumerated subjects.
+	grants := make([]az.Grant, 0)
+	for _, p := range policies {
+		switch p.DefaultPolicy.PolicyType {
+		case "WHITELIST":
+			for _, consumer := range p.DefaultPolicy.PolicyList {
+				grants = append(grants, az.Grant{
+					Consumer: consumer,
+					Service:  p.Target,
+					Provider: p.Provider,
+				})
+			}
+		case "ALL":
+			log.Printf("[policy-sync] skipping policy %s (policyType=ALL cannot be represented as enumerated XACML subjects)", p.InstanceID)
+		default:
+			log.Printf("[policy-sync] skipping policy %s (unsupported policyType=%s)", p.InstanceID, p.DefaultPolicy.PolicyType)
+		}
 	}
 
 	s.version++
@@ -88,12 +113,16 @@ func (s *syncer) sync() error {
 	return nil
 }
 
-// fetchRules calls ConsumerAuth GET /authorization/lookup and returns the rules.
-func (s *syncer) fetchRules() ([]AuthRule, error) {
-	req, err := http.NewRequest(http.MethodGet, s.caURL+"/authorization/lookup", nil)
+// fetchPolicies calls POST /consumerauthorization/authorization/mgmt/query with an
+// empty body to retrieve all stored authorization policies.
+func (s *syncer) fetchPolicies() ([]AuthPolicy, error) {
+	req, err := http.NewRequest(http.MethodPost,
+		s.caURL+"/consumerauthorization/authorization/mgmt/query",
+		bytes.NewBufferString("{}"))
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Content-Type", "application/json")
 	if s.authToken != "" {
 		req.Header.Set("Authorization", "Bearer "+s.authToken)
 	}
@@ -109,7 +138,7 @@ func (s *syncer) fetchRules() ([]AuthRule, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
 		return nil, err
 	}
-	return lr.Rules, nil
+	return lr.Policies, nil
 }
 
 // buildHTTPClient returns an *http.Client. When TLS_CERT_FILE, TLS_KEY_FILE, and

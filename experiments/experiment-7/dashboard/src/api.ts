@@ -80,7 +80,7 @@ export async function fetchRabbitMQHealth(signal?: AbortSignal): Promise<HealthP
 // ── ConsumerAuthorization ─────────────────────────────────────────────────────
 
 export function fetchAuthRules(signal?: AbortSignal): Promise<LookupResponse> {
-  return get<LookupResponse>('/api/consumerauth/authorization/lookup', { signal })
+  return get<LookupResponse>('/api/consumerauth/consumerauthorization/authorization/lookup', { signal })
 }
 
 export async function addGrant(
@@ -88,7 +88,7 @@ export async function addGrant(
   providerSystemName: string,
   serviceDefinition: string,
 ): Promise<AuthRule> {
-  const resp = await fetch('/api/consumerauth/authorization/grant', {
+  const resp = await fetch('/api/consumerauth/consumerauthorization/authorization/grant', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ consumerSystemName, providerSystemName, serviceDefinition }),
@@ -101,7 +101,7 @@ export async function addGrant(
 }
 
 export async function revokeGrant(id: number): Promise<void> {
-  const resp = await fetch(`/api/consumerauth/authorization/revoke/${id}`, { method: 'DELETE' })
+  const resp = await fetch(`/api/consumerauth/consumerauthorization/authorization/revoke/${id}`, { method: 'DELETE' })
   if (!resp.ok) {
     const text = await resp.text()
     throw new Error(`HTTP ${resp.status}: ${text}`)

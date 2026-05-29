@@ -400,19 +400,19 @@ pip_ver_before=$(echo "$pip_before" | python3 -c 'import sys,json; print(json.lo
 echo "  PIP version before: $pip_ver_before"
 
 # Add a new ConsumerAuth grant that PIP doesn't know about yet.
-ca_resp=$(curl -s -X POST http://localhost:8792/authorization/grant \
+ca_resp=$(curl -s -X POST http://localhost:8792/consumerauthorization/authorization/grant \
   -H 'Content-Type: application/json' \
   -d '{"consumerSystemName":"pip-sync-probe","providerSystemName":"portal-cloud-ml","serviceDefinition":"telemetry-rest"}' \
   --cacert "$CA_FILE" \
   --resolve "consumerauth:8492:127.0.0.1" \
-  https://consumerauth:8492/authorization/grant 2>/dev/null || \
-  curl -s -X POST http://localhost:9409/../../../consumerauth/authorization/grant \
+  https://consumerauth:8492/consumerauthorization/authorization/grant 2>/dev/null || \
+  curl -s -X POST http://localhost:9409/../../../consumerauth/consumerauthorization/authorization/grant \
   -H 'Content-Type: application/json' \
   -d '{"consumerSystemName":"pip-sync-probe","providerSystemName":"portal-cloud-ml","serviceDefinition":"telemetry-rest"}' 2>/dev/null || \
   echo "")
 
 # Alternatively use the plain HTTP port if accessible
-ca_resp2=$(curl -s -X POST "http://localhost:8792/authorization/grant" \
+ca_resp2=$(curl -s -X POST "http://localhost:8792/consumerauthorization/authorization/grant" \
   -H 'Content-Type: application/json' \
   -d '{"consumerSystemName":"pip-sync-probe","providerSystemName":"portal-cloud-ml","serviceDefinition":"telemetry-rest"}' 2>/dev/null || echo "")
 

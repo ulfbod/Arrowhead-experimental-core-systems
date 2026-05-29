@@ -23,6 +23,24 @@ depend on.
 
 ---
 
+## Deployment note — default addresses use Docker service names
+
+Every support service that calls another service uses a Docker Compose service hostname as its default (e.g. `authzforce:8080`, `kafka:9092`, `rabbitmq:15672`, `consumerauth:8082`). These defaults resolve correctly inside a Docker Compose network where container names act as DNS entries. They will **not** resolve outside Docker — in bare-metal, VM, or any DHCP deployment every relevant env var must be set explicitly.
+
+Quick reference — variables that must be set in non-Docker deployments:
+
+| Variable | Services that use it | Docker default |
+|---|---|---|
+| `AUTHZFORCE_URL` | `topic-auth-xacml`, `kafka-authz`, `rest-authz`, `policy-sync` | `http://authzforce:8080/authzforce-ce` |
+| `CONSUMERAUTH_URL` | `policy-sync`, `topic-auth-http`, `topic-auth-sync` | `http://consumerauth:8082` |
+| `KAFKA_BROKERS` | `kafka-authz` | `kafka:9092` |
+| `RABBITMQ_MGMT_URL` | `topic-auth-xacml`, `topic-auth-http` | `http://rabbitmq:15672` |
+| `RABBITMQ_URL` | `topic-auth-sync` | `http://localhost:15672` |
+
+There are no hardcoded IP addresses in the source. All network addresses are read from environment variables at startup; a wrong or missing value produces an immediate connection error, not silent misbehaviour.
+
+---
+
 ## Libraries
 
 ### `authzforce`
@@ -81,7 +99,7 @@ They differ in **where** authorization decisions come from.
 RabbitMQ is configured with a single HTTP auth backend
 (`auth_backends.1 = rabbit_auth_backend_http`) that points at this service.
 Every broker operation (connect, vhost, bind, publish) triggers a real-time
-query to ConsumerAuthorization (`GET /authorization/lookup`). A revoked grant
+query to ConsumerAuthorization (`GET /consumerauthorization/authorization/lookup`). A revoked grant
 takes effect on the consumer's next broker operation — no polling delay.
 
 Optional revocation loop: if `RABBITMQ_MGMT_URL` is set, a background goroutine
@@ -109,7 +127,7 @@ Key environment variables:
 **Polling sync into RabbitMQ — active in experiment-3; superseded by `topic-auth-http` (experiment-4) and XACML/AuthzForce (experiments 5+).**
 
 Instead of a live HTTP auth backend, this service periodically polls
-ConsumerAuthorization (`GET /authorization/lookup`) and reconciles RabbitMQ
+ConsumerAuthorization (`GET /consumerauthorization/authorization/lookup`) and reconciles RabbitMQ
 users and topic permissions via the RabbitMQ management API. Authorization
 decisions are therefore evaluated by RabbitMQ's internal engine against the
 pre-configured permissions.

@@ -58,7 +58,7 @@ var validOrchestrateBody = map[string]any{
 
 func createRuleAndGetID(t *testing.T, h http.Handler) int64 {
 	t.Helper()
-	w := postJSON(t, h, "/orchestration/flexiblestore/rules", validRuleBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/flexiblestore/rules", validRuleBody)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create rule failed: %d %s", w.Code, w.Body.String())
 	}
@@ -71,7 +71,7 @@ func createRuleAndGetID(t *testing.T, h http.Handler) int64 {
 
 func TestHandlerCreateRuleValid(t *testing.T) {
 	h := newTestHandler()
-	w := postJSON(t, h, "/orchestration/flexiblestore/rules", validRuleBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/flexiblestore/rules", validRuleBody)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -96,7 +96,7 @@ func TestHandlerCreateRuleWithMetadataFilter(t *testing.T) {
 		"priority":           1,
 		"metadataFilter":     map[string]string{"region": "eu"},
 	}
-	w := postJSON(t, h, "/orchestration/flexiblestore/rules", body)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/flexiblestore/rules", body)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", w.Code)
 	}
@@ -109,7 +109,7 @@ func TestHandlerCreateRuleWithMetadataFilter(t *testing.T) {
 
 func TestHandlerListRulesEmpty(t *testing.T) {
 	h := newTestHandler()
-	w := getReq(t, h, "/orchestration/flexiblestore/rules")
+	w := getReq(t, h, "/serviceorchestration/orchestration/flexiblestore/rules")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -123,7 +123,7 @@ func TestHandlerListRulesEmpty(t *testing.T) {
 func TestHandlerDeleteRuleValid(t *testing.T) {
 	h := newTestHandler()
 	id := createRuleAndGetID(t, h)
-	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/orchestration/flexiblestore/rules/%d", id), nil)
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/serviceorchestration/orchestration/flexiblestore/rules/%d", id), nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -133,7 +133,7 @@ func TestHandlerDeleteRuleValid(t *testing.T) {
 
 func TestHandlerDeleteRuleNotFound(t *testing.T) {
 	h := newTestHandler()
-	req := httptest.NewRequest(http.MethodDelete, "/orchestration/flexiblestore/rules/999", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/serviceorchestration/orchestration/flexiblestore/rules/999", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -146,17 +146,17 @@ func TestHandlerDeleteRuleNotFound(t *testing.T) {
 func TestHandlerOrchestrateMatch(t *testing.T) {
 	h := newTestHandler()
 	createRuleAndGetID(t, h)
-	w := postJSON(t, h, "/orchestration/flexiblestore", validOrchestrateBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/pull", validOrchestrateBody)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	var resp orchmodel.OrchestrationResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if len(resp.Response) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(resp.Response))
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
 	}
-	if resp.Response[0].Provider.SystemName != "sensor-1" {
-		t.Errorf("unexpected provider: %q", resp.Response[0].Provider.SystemName)
+	if resp.Results[0].ProviderName != "sensor-1" {
+		t.Errorf("unexpected provider: %q", resp.Results[0].ProviderName)
 	}
 }
 
@@ -171,27 +171,89 @@ func TestHandlerOrchestratePriorityOrdering(t *testing.T) {
 			"provider": map[string]any{"systemName": "high", "address": "a", "port": 2},
 			"serviceUri": "/t", "interfaces": []string{"HTTP"}, "priority": 1},
 	} {
-		postJSON(t, h, "/orchestration/flexiblestore/rules", body)
+		postJSON(t, h, "/serviceorchestration/orchestration/flexiblestore/rules", body)
 	}
 
-	w := postJSON(t, h, "/orchestration/flexiblestore", validOrchestrateBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/pull", validOrchestrateBody)
 	var resp orchmodel.OrchestrationResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if len(resp.Response) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(resp.Response))
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(resp.Results))
 	}
-	if resp.Response[0].Provider.SystemName != "high" {
-		t.Errorf("expected high-priority provider first, got %q", resp.Response[0].Provider.SystemName)
+	if resp.Results[0].ProviderName != "high" {
+		t.Errorf("expected high-priority provider first, got %q", resp.Results[0].ProviderName)
 	}
 }
 
 func TestHandlerOrchestrateNoMatch(t *testing.T) {
 	h := newTestHandler()
-	w := postJSON(t, h, "/orchestration/flexiblestore", validOrchestrateBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/pull", validOrchestrateBody)
 	var resp orchmodel.OrchestrationResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if len(resp.Response) != 0 {
-		t.Errorf("expected empty response, got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected empty response, got %d", len(resp.Results))
+	}
+}
+
+// ---- Error paths ----
+
+func TestHandlerOrchestrateWrongMethod(t *testing.T) {
+	h := newTestHandler()
+	w := getReq(t, h, "/serviceorchestration/orchestration/pull")
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandlerOrchestrateInvalidJSON(t *testing.T) {
+	h := newTestHandler()
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/pull", bytes.NewBufferString("{bad"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandlerRulesWrongMethod(t *testing.T) {
+	h := newTestHandler()
+	req := httptest.NewRequest(http.MethodPut, "/serviceorchestration/orchestration/flexiblestore/rules", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandlerCreateRuleInvalidJSON(t *testing.T) {
+	h := newTestHandler()
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/flexiblestore/rules", bytes.NewBufferString("{bad"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandlerDeleteRuleWrongMethod(t *testing.T) {
+	h := newTestHandler()
+	req := httptest.NewRequest(http.MethodGet, "/serviceorchestration/orchestration/flexiblestore/rules/1", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandlerDeleteRuleInvalidID(t *testing.T) {
+	h := newTestHandler()
+	req := httptest.NewRequest(http.MethodDelete, "/serviceorchestration/orchestration/flexiblestore/rules/abc", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
 	}
 }
 
@@ -199,7 +261,7 @@ func TestHandlerOrchestrateNoMatch(t *testing.T) {
 
 func TestHandlerHealth(t *testing.T) {
 	h := newTestHandler()
-	for _, path := range []string{"/health", "/orchestration/flexiblestore/health"} {
+	for _, path := range []string{"/health", "/serviceorchestration/orchestration/pull/health"} {
 		w := getReq(t, h, path)
 		if w.Code != http.StatusOK {
 			t.Errorf("%s: expected 200, got %d", path, w.Code)

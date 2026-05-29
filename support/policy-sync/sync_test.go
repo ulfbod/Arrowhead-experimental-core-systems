@@ -63,10 +63,15 @@ func (m *mockAuthzForce) handler() http.Handler {
 	return mux
 }
 
-// mockCA serves a fixed set of authorization rules.
-func mockCA(rules []AuthRule) *httptest.Server {
+// mockCA serves authorization policies in the new provider-centric WHITELIST format.
+// It handles POST /consumerauthorization/authorization/mgmt/query (no filter required).
+func mockCA(policies []AuthPolicy) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		lr := LookupResponse{Rules: rules, Count: len(rules)}
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+		lr := LookupResponse{Policies: policies, Count: len(policies), TotalCount: len(policies)}
 		json.NewEncoder(w).Encode(lr)
 	}))
 }
@@ -94,18 +99,71 @@ func TestSync_noRules_emptyPolicy(t *testing.T) {
 	}
 }
 
-func TestSync_threeRules_threePolicies(t *testing.T) {
-	rules := []AuthRule{
-		{ID: 1, ConsumerSystemName: "consumer-1", ServiceDefinition: "telemetry"},
-		{ID: 2, ConsumerSystemName: "consumer-2", ServiceDefinition: "telemetry"},
-		{ID: 3, ConsumerSystemName: "consumer-3", ServiceDefinition: "telemetry"},
+func TestSync_whitelistExpanded(t *testing.T) {
+	// One WHITELIST policy with three consumers — should expand to three grants.
+	policies := []AuthPolicy{
+		{
+			InstanceID: "PR|LOCAL|robot-fleet-site-1|SERVICE_DEF|telemetry",
+			Provider:   "robot-fleet-site-1",
+			TargetType: "SERVICE_DEF",
+			Target:     "telemetry",
+			DefaultPolicy: PolicyDef{
+				PolicyType: "WHITELIST",
+				PolicyList: []string{"consumer-1", "consumer-2", "consumer-3"},
+			},
+		},
 	}
 
 	m := &mockAuthzForce{}
 	azSrv := httptest.NewServer(m.handler())
 	defer azSrv.Close()
 
-	ca := mockCA(rules)
+	ca := mockCA(policies)
+	defer ca.Close()
+
+	s := newSyncer(az.New(azSrv.URL), ca.URL, http.DefaultClient)
+	if err := s.init("test-ext-id"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	policy := m.policyUploads[0]
+	for _, name := range []string{"consumer-1", "consumer-2", "consumer-3"} {
+		if !strings.Contains(policy, name) {
+			t.Fatalf("policy missing grant for %s", name)
+		}
+	}
+}
+
+func TestSync_multipleProviders(t *testing.T) {
+	// Two WHITELIST policies for different providers — all consumers must appear.
+	policies := []AuthPolicy{
+		{
+			InstanceID: "PR|LOCAL|provider-a|SERVICE_DEF|svc-x",
+			Provider:   "provider-a",
+			TargetType: "SERVICE_DEF",
+			Target:     "svc-x",
+			DefaultPolicy: PolicyDef{
+				PolicyType: "WHITELIST",
+				PolicyList: []string{"consumer-1", "consumer-2"},
+			},
+		},
+		{
+			InstanceID: "PR|LOCAL|provider-b|SERVICE_DEF|svc-y",
+			Provider:   "provider-b",
+			TargetType: "SERVICE_DEF",
+			Target:     "svc-y",
+			DefaultPolicy: PolicyDef{
+				PolicyType: "WHITELIST",
+				PolicyList: []string{"consumer-3"},
+			},
+		},
+	}
+
+	m := &mockAuthzForce{}
+	azSrv := httptest.NewServer(m.handler())
+	defer azSrv.Close()
+
+	ca := mockCA(policies)
 	defer ca.Close()
 
 	s := newSyncer(az.New(azSrv.URL), ca.URL, http.DefaultClient)
@@ -160,5 +218,22 @@ func TestSync_rootPolicyRefUpdated(t *testing.T) {
 	}
 	if !strings.Contains(m.rootPolicySet[0], policySetID) {
 		t.Fatalf("root policy ref missing policy set ID %q", policySetID)
+	}
+}
+
+func TestSync_methodIsPost(t *testing.T) {
+	// Verify that fetchPolicies uses POST (not GET).
+	var gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		lr := LookupResponse{}
+		json.NewEncoder(w).Encode(lr)
+	}))
+	defer srv.Close()
+
+	s := &syncer{caURL: srv.URL, httpClient: http.DefaultClient}
+	s.fetchPolicies() //nolint:errcheck
+	if gotMethod != http.MethodPost {
+		t.Fatalf("expected POST, got %s", gotMethod)
 	}
 }

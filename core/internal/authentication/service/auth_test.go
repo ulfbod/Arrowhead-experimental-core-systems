@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"regexp"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ func newAuthService(dur time.Duration) *service.AuthService {
 
 func TestLoginValid(t *testing.T) {
 	svc := newAuthService(time.Hour)
-	resp, err := svc.Login(model.LoginRequest{SystemName: "sensor-1", Credentials: "any"})
+	resp, err := svc.Login(model.LoginRequest{SystemName: "sensor-1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -27,14 +28,14 @@ func TestLoginValid(t *testing.T) {
 	if resp.SystemName != "sensor-1" {
 		t.Errorf("SystemName = %q, want sensor-1", resp.SystemName)
 	}
-	if resp.ExpiresAt.Before(time.Now()) {
-		t.Error("ExpiresAt must be in the future")
+	if resp.ExpirationTime.Before(time.Now()) {
+		t.Error("ExpirationTime must be in the future")
 	}
 }
 
 func TestLoginEmptySystemName(t *testing.T) {
 	svc := newAuthService(time.Hour)
-	_, err := svc.Login(model.LoginRequest{SystemName: "", Credentials: "x"})
+	_, err := svc.Login(model.LoginRequest{SystemName: ""})
 	if err == nil {
 		t.Fatal("expected error for empty systemName")
 	}
@@ -76,8 +77,8 @@ func TestVerifyValidToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !resp.Valid {
-		t.Error("expected valid=true")
+	if !resp.Verified {
+		t.Error("expected verified=true")
 	}
 	if resp.SystemName != "sys" {
 		t.Errorf("SystemName = %q, want sys", resp.SystemName)
@@ -90,7 +91,7 @@ func TestVerifyUnknownToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.Valid {
+	if resp.Verified {
 		t.Error("expected valid=false for unknown token")
 	}
 }
@@ -104,7 +105,7 @@ func TestVerifyExpiredToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.Valid {
+	if resp.Verified {
 		t.Error("expected valid=false for expired token")
 	}
 }
@@ -116,7 +117,7 @@ func TestVerifyExpiredTokenIsDeleted(t *testing.T) {
 
 	// A second verify on the same token should also return invalid.
 	resp, _ := svc.Verify(login.Token)
-	if resp.Valid {
+	if resp.Verified {
 		t.Error("expected valid=false after expired token was lazily deleted")
 	}
 }
@@ -132,7 +133,7 @@ func TestLogoutValid(t *testing.T) {
 	}
 
 	resp, _ := svc.Verify(login.Token)
-	if resp.Valid {
+	if resp.Verified {
 		t.Error("token should be invalid after logout")
 	}
 }
@@ -142,6 +143,65 @@ func TestLogoutUnknownToken(t *testing.T) {
 	err := svc.Logout("ghost-token")
 	if err == nil {
 		t.Fatal("expected error for unknown token")
+	}
+}
+
+// ---- Token format ----
+
+func TestLoginTokenIsUUIDv4(t *testing.T) {
+	svc := newAuthService(time.Hour)
+	resp, err := svc.Login(model.LoginRequest{SystemName: "TestSystem"})
+	if err != nil {
+		t.Fatalf("Login failed: %v", err)
+	}
+	uuidRe := regexp.MustCompile(
+		`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
+	)
+	if !uuidRe.MatchString(resp.Token) {
+		t.Errorf("token %q is not a UUID v4", resp.Token)
+	}
+}
+
+func TestLoginTokensAreUnique(t *testing.T) {
+	svc := newAuthService(time.Hour)
+	r1, _ := svc.Login(model.LoginRequest{SystemName: "S"})
+	r2, _ := svc.Login(model.LoginRequest{SystemName: "S"})
+	if r1.Token == r2.Token {
+		t.Error("two Login calls produced identical tokens")
+	}
+}
+
+// ---- Cleanup goroutine ----
+
+func TestDeleteExpiredCalledOnCleanup(t *testing.T) {
+	repo := repository.NewMemoryRepository()
+	// 1ms token duration so token expires almost immediately.
+	// 10ms cleanup interval so cleanup fires well within the 50ms sleep.
+	svc := service.NewAuthServiceWithCleanup(repo, time.Millisecond, 10*time.Millisecond)
+	resp, _ := svc.Login(model.LoginRequest{SystemName: "expiry-test"})
+	// Wait for cleanup to fire.
+	time.Sleep(50 * time.Millisecond)
+	// After cleanup, the token has been deleted from the repo.
+	vr, _ := svc.Verify(resp.Token)
+	if vr.Verified {
+		t.Error("expected expired token to be gone after cleanup")
+	}
+}
+
+// ---- ChangeCredentials ----
+
+func TestChangeCredentialsActiveSession(t *testing.T) {
+	svc := newAuthService(time.Hour)
+	svc.Login(model.LoginRequest{SystemName: "sys-b"})
+	if err := svc.ChangeCredentials("sys-b"); err != nil {
+		t.Errorf("expected nil error for active session, got: %v", err)
+	}
+}
+
+func TestChangeCredentialsNoSession(t *testing.T) {
+	svc := newAuthService(time.Hour)
+	if err := svc.ChangeCredentials("nobody"); err == nil {
+		t.Error("expected error when no active session exists")
 	}
 }
 

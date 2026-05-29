@@ -249,18 +249,25 @@ services:
     depends_on:
       consumerauth:
         condition: service_healthy
+      authentication:
+        condition: service_healthy
     restart: "no"
     command:
       - sh
       - -c
       - |-
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-1","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"analytics-consumer","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"pki-consumer","providerSystemName":"data-provider-tls","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"test-probe","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"test-probe","providerSystemName":"data-provider-tls","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists'
+        # Register robot-fleet system identities so they can log in to the Authentication service.
+        curl -s -X POST http://authentication:8081/authentication/mgmt/identities \\
+          -H 'Content-Type: application/json' \\
+          -d '{"authenticationMethod":"PASSWORD","identities":[{"systemName":"robot-fleet-tls","credentials":{"password":"fleet-secret"}}]}' \\
+          | grep -q '"identities"' &&
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-1","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"analytics-consumer","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"pki-consumer","providerSystemName":"data-provider-tls","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"test-probe","providerSystemName":"robot-fleet-tls","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"test-probe","providerSystemName":"data-provider-tls","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists'
 
   # ── Policy Engine ─────────────────────────────────────────────────────────────
 

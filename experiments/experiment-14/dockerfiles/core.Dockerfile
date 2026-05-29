@@ -1,7 +1,7 @@
 # Builds an Arrowhead core system binary for experiment-14.
 # Build context: repo root (ArrowheadCore/core/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 ARG CMD
 WORKDIR /src
 COPY . .

@@ -10,7 +10,7 @@ import (
 // fakeConsumerAuth serves a fixed LookupResponse.
 func newFakeConsumerAuth(rules []Grant) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/authorization/lookup" {
+		if r.URL.Path != "/consumerauthorization/authorization/lookup" {
 			http.NotFound(w, r)
 			return
 		}

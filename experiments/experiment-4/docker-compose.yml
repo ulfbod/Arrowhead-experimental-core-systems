@@ -148,7 +148,7 @@ services:
       - |-
         grant() {
           n=0
-          until curl -sf -X POST http://consumerauth:8082/authorization/grant \
+          until curl -sf -X POST http://consumerauth:8082/consumerauthorization/authorization/grant \
             -H 'Content-Type: application/json' -d "$1" \
             | grep -qE '"id":|already exists'; do
             n=$((n+1)); [ $n -lt 5 ] || return 1; sleep 2

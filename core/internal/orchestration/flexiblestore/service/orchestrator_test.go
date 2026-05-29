@@ -99,17 +99,17 @@ func TestOrchestratePriorityOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Response) != 3 {
-		t.Fatalf("expected 3 results, got %d", len(resp.Response))
+	if len(resp.Results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(resp.Results))
 	}
-	if resp.Response[0].Provider.SystemName != "sensor-high" {
-		t.Errorf("first result should be highest priority (sensor-high), got %q", resp.Response[0].Provider.SystemName)
+	if resp.Results[0].ProviderName != "sensor-high" {
+		t.Errorf("first result should be highest priority (sensor-high), got %q", resp.Results[0].ProviderName)
 	}
-	if resp.Response[1].Provider.SystemName != "sensor-mid" {
-		t.Errorf("second result should be sensor-mid, got %q", resp.Response[1].Provider.SystemName)
+	if resp.Results[1].ProviderName != "sensor-mid" {
+		t.Errorf("second result should be sensor-mid, got %q", resp.Results[1].ProviderName)
 	}
-	if resp.Response[2].Provider.SystemName != "sensor-low" {
-		t.Errorf("third result should be sensor-low, got %q", resp.Response[2].Provider.SystemName)
+	if resp.Results[2].ProviderName != "sensor-low" {
+		t.Errorf("third result should be sensor-low, got %q", resp.Results[2].ProviderName)
 	}
 }
 
@@ -127,14 +127,14 @@ func TestOrchestratePriorityZeroIsLowest(t *testing.T) {
 	orch.CreateRule(zero)
 
 	resp, _ := orch.Orchestrate(validOrchRequest())
-	if len(resp.Response) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(resp.Response))
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(resp.Results))
 	}
-	if resp.Response[0].Provider.SystemName != "explicit-priority" {
-		t.Errorf("priority-5 should come before priority-0, got %q first", resp.Response[0].Provider.SystemName)
+	if resp.Results[0].ProviderName != "explicit-priority" {
+		t.Errorf("priority-5 should come before priority-0, got %q first", resp.Results[0].ProviderName)
 	}
-	if resp.Response[1].Provider.SystemName != "zero-priority" {
-		t.Errorf("priority-0 should be last, got %q", resp.Response[1].Provider.SystemName)
+	if resp.Results[1].ProviderName != "zero-priority" {
+		t.Errorf("priority-0 should be last, got %q", resp.Results[1].ProviderName)
 	}
 }
 
@@ -145,11 +145,11 @@ func TestOrchestratePriorityInResult(t *testing.T) {
 	orch.CreateRule(req)
 
 	resp, _ := orch.Orchestrate(validOrchRequest())
-	if len(resp.Response) != 1 {
+	if len(resp.Results) != 1 {
 		t.Fatalf("expected 1 result")
 	}
-	if resp.Response[0].Priority != 7 {
-		t.Errorf("Priority in result = %d, want 7", resp.Response[0].Priority)
+	if resp.Results[0].Priority != 7 {
+		t.Errorf("Priority in result = %d, want 7", resp.Results[0].Priority)
 	}
 }
 
@@ -165,8 +165,8 @@ func TestOrchestrateMetadataFilterMatch(t *testing.T) {
 	orchReq := validOrchRequest()
 	orchReq.RequestedService.Metadata = map[string]string{"region": "eu", "unit": "celsius"}
 	resp, _ := orch.Orchestrate(orchReq)
-	if len(resp.Response) != 1 {
-		t.Errorf("expected 1 result for matching metadata, got %d", len(resp.Response))
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result for matching metadata, got %d", len(resp.Results))
 	}
 }
 
@@ -179,8 +179,8 @@ func TestOrchestrateMetadataFilterNoMatch(t *testing.T) {
 	orchReq := validOrchRequest()
 	orchReq.RequestedService.Metadata = map[string]string{"region": "us"}
 	resp, _ := orch.Orchestrate(orchReq)
-	if len(resp.Response) != 0 {
-		t.Errorf("expected 0 results for mismatched metadata, got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected 0 results for mismatched metadata, got %d", len(resp.Results))
 	}
 }
 
@@ -192,8 +192,8 @@ func TestOrchestrateEmptyFilterMatchesAll(t *testing.T) {
 	orchReq := validOrchRequest()
 	orchReq.RequestedService.Metadata = map[string]string{"region": "anywhere"}
 	resp, _ := orch.Orchestrate(orchReq)
-	if len(resp.Response) != 1 {
-		t.Errorf("expected 1 result for empty filter, got %d", len(resp.Response))
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result for empty filter, got %d", len(resp.Results))
 	}
 }
 
@@ -206,8 +206,8 @@ func TestOrchestrateMetadataFilterMissingKey(t *testing.T) {
 	// Request has no metadata at all.
 	orchReq := validOrchRequest()
 	resp, _ := orch.Orchestrate(orchReq)
-	if len(resp.Response) != 0 {
-		t.Errorf("expected 0 results when filter key absent from request, got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected 0 results when filter key absent from request, got %d", len(resp.Results))
 	}
 }
 
@@ -224,8 +224,8 @@ func TestOrchestrateNoMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Response) != 0 {
-		t.Errorf("expected 0 results, got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(resp.Results))
 	}
 }
 

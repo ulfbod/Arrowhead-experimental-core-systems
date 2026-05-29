@@ -324,33 +324,35 @@ echo
 echo "=== 14. Revocation: service-partner-1 denied after grant removed ==="
 
 if [ -f "$PROBE_SY_CRT" ] && [ -f "$PROBE_SY_KEY" ]; then
-  lookup=$(curl -s \
+  # Look up the telemetry-rest policy (instanceId is provider|targetType|target).
+  lookup=$(curl -s -X POST \
     --cert "$PROBE_SY_CRT" --key "$PROBE_SY_KEY" \
     --cacert "$CA_FILE" \
     --resolve "consumerauth:8492:127.0.0.1" \
-    https://consumerauth:8492/authorization/lookup)
-  grant_id=$(echo "$lookup" \
-    | grep -oE '"id":[0-9]+[^}]*"consumerSystemName":"service-partner-1"' \
-    | grep -oE '"id":[0-9]+' | grep -oE '[0-9]+' | head -1)
+    https://consumerauth:8492/consumerauthorization/authorization/lookup \
+    -H 'Content-Type: application/json' \
+    -d '{"targetNames":["telemetry-rest"],"targetType":"SERVICE_DEF"}')
+  grant_id=$(echo "$lookup" | grep -oE '"instanceId":"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"')
 
   if [ -z "$grant_id" ]; then
-    fail "service-partner-1 grant in ConsumerAuth" "grant" "not found — check setup container logs"
+    fail "telemetry-rest grant in ConsumerAuth" "grant" "not found — check setup container logs"
     echo "  Skipping revocation test."
   else
-    pass "service-partner-1 grant found (id=$grant_id)"
+    pass "telemetry-rest grant found (instanceId=$grant_id)"
 
     permit_before=$(http_body -X POST http://localhost:9209/auth/check \
       -H 'Content-Type: application/json' \
       -d '{"consumer":"service-partner-1","service":"telemetry-rest"}')
     assert_json_value "service-partner-1 → Permit before revocation" "decision" "Permit" "$permit_before"
 
+    encoded_id=$(echo "$grant_id" | sed 's/|/%7C/g')
     revoke_code=$(curl -s -o /dev/null -w "%{http_code}" \
       -X DELETE \
       --cert "$PROBE_SY_CRT" --key "$PROBE_SY_KEY" \
       --cacert "$CA_FILE" \
       --resolve "consumerauth:8492:127.0.0.1" \
-      "https://consumerauth:8492/authorization/revoke/$grant_id"; echo -n "")
-    check_eq "revoke service-partner-1 grant via TLS → 200" "200" "$revoke_code"
+      "https://consumerauth:8492/consumerauthorization/authorization/revoke/$encoded_id"; echo -n "")
+    check_eq "revoke telemetry-rest policy via TLS → 200" "200" "$revoke_code"
 
     echo "  waiting 30s for policy-sync to propagate revocation..."
     sleep 30
@@ -361,18 +363,17 @@ if [ -f "$PROBE_SY_CRT" ] && [ -f "$PROBE_SY_KEY" ]; then
     echo "  auth check after revoke: $deny_body"
     assert_json_value "service-partner-1 → Deny after revocation" "decision" "Deny" "$deny_body"
 
-    regrant=$(curl -s \
-      -X POST \
+    regrant=$(curl -s -X POST \
       --cert "$PROBE_SY_CRT" --key "$PROBE_SY_KEY" \
       --cacert "$CA_FILE" \
       --resolve "consumerauth:8492:127.0.0.1" \
-      https://consumerauth:8492/authorization/grant \
+      https://consumerauth:8492/consumerauthorization/authorization/grant \
       -H 'Content-Type: application/json' \
-      -d '{"consumerSystemName":"service-partner-1","providerSystemName":"portal-cloud-ml","serviceDefinition":"telemetry-rest"}')
-    if [[ "$regrant" == *'"id":'* ]] || [[ "$regrant" == *"already exists"* ]]; then
-      pass "service-partner-1 grant restored"
+      -d '{"provider":"portal-cloud-ml","targetType":"SERVICE_DEF","target":"telemetry-rest","defaultPolicy":{"policyType":"WHITELIST","policyList":["service-partner-1","service-partner-2","test-probe"]}}')
+    if [[ "$regrant" == *'"instanceId":'* ]] || [[ "$regrant" == *"already exists"* ]]; then
+      pass "telemetry-rest grant restored"
     else
-      fail "service-partner-1 grant restored" '"id":N or already exists' "$regrant"
+      fail "telemetry-rest grant restored" '"instanceId": or already exists' "$regrant"
     fi
 
     echo "  waiting 15s for grant restoration to propagate..."

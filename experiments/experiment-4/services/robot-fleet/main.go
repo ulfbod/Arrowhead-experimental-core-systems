@@ -65,7 +65,7 @@ type authLoginRequest struct {
 type authLoginResponse struct {
 	Token      string    `json:"token"`
 	SystemName string    `json:"systemName"`
-	ExpiresAt  time.Time `json:"expiresAt"`
+	ExpirationTime time.Time `json:"expirationTime"`
 }
 
 func envOr(key, def string) string {

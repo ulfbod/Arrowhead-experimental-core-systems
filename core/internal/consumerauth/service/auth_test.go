@@ -14,9 +14,10 @@ func newAuthService() *service.AuthService {
 
 func validGrant() model.GrantRequest {
 	return model.GrantRequest{
-		ConsumerSystemName: "consumer-app",
-		ProviderSystemName: "sensor-1",
-		ServiceDefinition:  "temperature-service",
+		Provider:      "sensor-1",
+		TargetType:    model.TargetServiceDef,
+		Target:        "temperature-service",
+		DefaultPolicy: model.PolicyDef{PolicyType: model.PolicyWhitelist, PolicyList: []string{"consumer-app"}},
 	}
 }
 
@@ -24,15 +25,16 @@ func validGrant() model.GrantRequest {
 
 func TestGrantValid(t *testing.T) {
 	svc := newAuthService()
-	rule, err := svc.Grant(validGrant())
+	policy, err := svc.Grant(validGrant())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if rule.ID == 0 {
-		t.Error("expected non-zero ID")
+	want := "PR|LOCAL|sensor-1|SERVICE_DEF|temperature-service"
+	if policy.InstanceID != want {
+		t.Errorf("InstanceID = %q, want %q", policy.InstanceID, want)
 	}
-	if rule.ConsumerSystemName != "consumer-app" {
-		t.Errorf("ConsumerSystemName = %q", rule.ConsumerSystemName)
+	if policy.Provider != "sensor-1" {
+		t.Errorf("Provider = %q", policy.Provider)
 	}
 }
 
@@ -41,10 +43,10 @@ func TestGrantValidation(t *testing.T) {
 		name   string
 		mutate func(*model.GrantRequest)
 	}{
-		{"empty consumer", func(r *model.GrantRequest) { r.ConsumerSystemName = "" }},
-		{"whitespace consumer", func(r *model.GrantRequest) { r.ConsumerSystemName = "  " }},
-		{"empty provider", func(r *model.GrantRequest) { r.ProviderSystemName = "" }},
-		{"empty service", func(r *model.GrantRequest) { r.ServiceDefinition = "" }},
+		{"empty provider", func(r *model.GrantRequest) { r.Provider = "" }},
+		{"whitespace provider", func(r *model.GrantRequest) { r.Provider = "  " }},
+		{"empty target", func(r *model.GrantRequest) { r.Target = "" }},
+		{"empty targetType", func(r *model.GrantRequest) { r.TargetType = "" }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -70,14 +72,14 @@ func TestGrantDuplicateReturnsError(t *testing.T) {
 	}
 }
 
-func TestGrantSameConsumerDifferentServiceAllowed(t *testing.T) {
+func TestGrantSameproviderDifferentTargetAllowed(t *testing.T) {
 	svc := newAuthService()
 	svc.Grant(validGrant())
 	req2 := validGrant()
-	req2.ServiceDefinition = "humidity-service"
+	req2.Target = "humidity-service"
 	_, err := svc.Grant(req2)
 	if err != nil {
-		t.Fatalf("different service should be allowed: %v", err)
+		t.Fatalf("different target should be allowed: %v", err)
 	}
 }
 
@@ -85,90 +87,63 @@ func TestGrantSameConsumerDifferentServiceAllowed(t *testing.T) {
 
 func TestRevokeValid(t *testing.T) {
 	svc := newAuthService()
-	rule, _ := svc.Grant(validGrant())
-	if err := svc.Revoke(rule.ID); err != nil {
+	policy, _ := svc.Grant(validGrant())
+	if err := svc.Revoke(policy.InstanceID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	resp := svc.Verify(model.VerifyRequest{
-		ConsumerSystemName: rule.ConsumerSystemName,
-		ProviderSystemName: rule.ProviderSystemName,
-		ServiceDefinition:  rule.ServiceDefinition,
+	ok := svc.Verify(model.VerifyRequest{
+		Consumer:   "consumer-app",
+		Target:     "temperature-service",
+		TargetType: model.TargetServiceDef,
 	})
-	if resp.Authorized {
-		t.Error("rule should no longer authorize after revoke")
+	if ok {
+		t.Error("should not be authorized after revoke")
 	}
 }
 
 func TestRevokeNotFound(t *testing.T) {
 	svc := newAuthService()
-	if err := svc.Revoke(999); err == nil {
-		t.Fatal("expected error for nonexistent rule")
+	err := svc.Revoke("PR|LOCAL|nobody|SERVICE_DEF|svc")
+	if err == nil {
+		t.Fatal("expected error for nonexistent policy")
 	}
 }
 
 // ---- Lookup ----
 
-func TestLookupNoFilter(t *testing.T) {
+func TestLookupByTargetType(t *testing.T) {
 	svc := newAuthService()
 	svc.Grant(validGrant())
 	req2 := validGrant()
-	req2.ConsumerSystemName = "other-consumer"
+	req2.Target = "humidity-service"
 	svc.Grant(req2)
 
-	resp := svc.Lookup("", "", "")
+	resp := svc.Lookup(model.LookupRequest{TargetType: model.TargetServiceDef})
 	if resp.Count != 2 {
-		t.Errorf("expected 2 rules, got %d", resp.Count)
+		t.Errorf("expected 2 policies, got %d", resp.Count)
 	}
 }
 
-func TestLookupFilterByConsumer(t *testing.T) {
+func TestLookupByTargetName(t *testing.T) {
 	svc := newAuthService()
 	svc.Grant(validGrant())
 	req2 := validGrant()
-	req2.ConsumerSystemName = "other"
+	req2.Target = "humidity-service"
 	svc.Grant(req2)
 
-	resp := svc.Lookup("consumer-app", "", "")
+	resp := svc.Lookup(model.LookupRequest{TargetNames: []string{"temperature-service"}})
 	if resp.Count != 1 {
 		t.Errorf("expected 1, got %d", resp.Count)
 	}
-	if resp.Rules[0].ConsumerSystemName != "consumer-app" {
-		t.Error("wrong rule returned")
-	}
-}
-
-func TestLookupFilterByProvider(t *testing.T) {
-	svc := newAuthService()
-	svc.Grant(validGrant())
-	req2 := validGrant()
-	req2.ConsumerSystemName = "c2"
-	req2.ProviderSystemName = "other-provider"
-	svc.Grant(req2)
-
-	resp := svc.Lookup("", "sensor-1", "")
-	if resp.Count != 1 {
-		t.Errorf("expected 1, got %d", resp.Count)
-	}
-}
-
-func TestLookupFilterByService(t *testing.T) {
-	svc := newAuthService()
-	svc.Grant(validGrant())
-	req2 := validGrant()
-	req2.ConsumerSystemName = "c2"
-	req2.ServiceDefinition = "pressure-service"
-	svc.Grant(req2)
-
-	resp := svc.Lookup("", "", "pressure-service")
-	if resp.Count != 1 || resp.Rules[0].ServiceDefinition != "pressure-service" {
-		t.Errorf("unexpected lookup result: %+v", resp)
+	if resp.Policies[0].Target != "temperature-service" {
+		t.Error("wrong policy returned")
 	}
 }
 
 func TestLookupEmptyReturnsEmptySlice(t *testing.T) {
 	svc := newAuthService()
-	resp := svc.Lookup("", "", "")
-	if resp.Rules == nil {
+	resp := svc.Lookup(model.LookupRequest{})
+	if resp.Policies == nil {
 		t.Error("expected empty slice, not nil")
 	}
 	if resp.Count != 0 {
@@ -178,67 +153,77 @@ func TestLookupEmptyReturnsEmptySlice(t *testing.T) {
 
 // ---- Verify ----
 
-func TestVerifyAuthorized(t *testing.T) {
-	svc := newAuthService()
-	rule, _ := svc.Grant(validGrant())
-
-	resp := svc.Verify(model.VerifyRequest{
-		ConsumerSystemName: "consumer-app",
-		ProviderSystemName: "sensor-1",
-		ServiceDefinition:  "temperature-service",
-	})
-	if !resp.Authorized {
-		t.Error("expected authorized=true")
-	}
-	if resp.RuleID == nil || *resp.RuleID != rule.ID {
-		t.Errorf("expected RuleID=%d, got %v", rule.ID, resp.RuleID)
-	}
-}
-
-func TestVerifyUnauthorized(t *testing.T) {
-	svc := newAuthService()
-	resp := svc.Verify(model.VerifyRequest{
-		ConsumerSystemName: "no-such-consumer",
-		ProviderSystemName: "sensor-1",
-		ServiceDefinition:  "temperature-service",
-	})
-	if resp.Authorized {
-		t.Error("expected authorized=false")
-	}
-	if resp.RuleID != nil {
-		t.Error("expected nil RuleID for unauthorized pair")
-	}
-}
-
-// ---- GenerateToken ----
-
-func TestGenerateTokenAuthorized(t *testing.T) {
+func TestVerifyAuthorizedWhitelist(t *testing.T) {
 	svc := newAuthService()
 	svc.Grant(validGrant())
-	resp, err := svc.GenerateToken(model.TokenRequest{
-		ConsumerSystemName: "consumer-app",
-		ProviderSystemName: "sensor-1",
-		ServiceDefinition:  "temperature-service",
+	ok := svc.Verify(model.VerifyRequest{
+		Consumer:   "consumer-app",
+		Target:     "temperature-service",
+		TargetType: model.TargetServiceDef,
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.Token == "" {
-		t.Error("expected non-empty token")
-	}
-	if resp.ConsumerSystemName != "consumer-app" {
-		t.Errorf("ConsumerSystemName = %q", resp.ConsumerSystemName)
+	if !ok {
+		t.Error("expected authorized=true")
 	}
 }
 
-func TestGenerateTokenUnauthorized(t *testing.T) {
+func TestVerifyAuthorizedAll(t *testing.T) {
 	svc := newAuthService()
-	_, err := svc.GenerateToken(model.TokenRequest{
-		ConsumerSystemName: "stranger",
-		ProviderSystemName: "sensor-1",
-		ServiceDefinition:  "temperature-service",
+	svc.Grant(model.GrantRequest{
+		Provider:      "prov",
+		TargetType:    model.TargetServiceDef,
+		Target:        "svc",
+		DefaultPolicy: model.PolicyDef{PolicyType: model.PolicyAll},
 	})
-	if err == nil {
-		t.Fatal("expected error for unauthorized consumer")
+	ok := svc.Verify(model.VerifyRequest{Consumer: "anyone", Target: "svc", TargetType: model.TargetServiceDef})
+	if !ok {
+		t.Error("expected authorized=true for ALL policy")
+	}
+}
+
+func TestVerifyUnauthorizedNotInWhitelist(t *testing.T) {
+	svc := newAuthService()
+	svc.Grant(validGrant())
+	ok := svc.Verify(model.VerifyRequest{
+		Consumer:   "no-such-consumer",
+		Target:     "temperature-service",
+		TargetType: model.TargetServiceDef,
+	})
+	if ok {
+		t.Error("expected authorized=false")
+	}
+}
+
+func TestVerifyBlacklist(t *testing.T) {
+	svc := newAuthService()
+	svc.Grant(model.GrantRequest{
+		Provider:      "prov",
+		TargetType:    model.TargetServiceDef,
+		Target:        "svc",
+		DefaultPolicy: model.PolicyDef{PolicyType: model.PolicyBlacklist, PolicyList: []string{"bad-actor"}},
+	})
+	if svc.Verify(model.VerifyRequest{Consumer: "bad-actor", Target: "svc", TargetType: model.TargetServiceDef}) {
+		t.Error("blacklisted consumer should not be authorized")
+	}
+	if !svc.Verify(model.VerifyRequest{Consumer: "good-actor", Target: "svc", TargetType: model.TargetServiceDef}) {
+		t.Error("non-blacklisted consumer should be authorized")
+	}
+}
+
+func TestVerifyWithProvider(t *testing.T) {
+	svc := newAuthService()
+	svc.Grant(validGrant()) // sensor-1, WHITELIST: [consumer-app]
+	// sensor-2 has no policy → consumer-app should NOT be authorized for sensor-2
+	if svc.Verify(model.VerifyRequest{
+		Consumer: "consumer-app", Provider: "sensor-2",
+		Target: "temperature-service", TargetType: model.TargetServiceDef,
+	}) {
+		t.Error("expected false: no policy for sensor-2")
+	}
+	// sensor-1 has policy → consumer-app should be authorized
+	if !svc.Verify(model.VerifyRequest{
+		Consumer: "consumer-app", Provider: "sensor-1",
+		Target: "temperature-service", TargetType: model.TargetServiceDef,
+	}) {
+		t.Error("expected true: consumer-app is in whitelist for sensor-1")
 	}
 }

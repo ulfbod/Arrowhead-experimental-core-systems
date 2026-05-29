@@ -24,10 +24,12 @@ package main
 
 import (
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 
+	"arrowhead/core-evol/internal/generalmgmt"
 	"arrowhead/core-evol/internal/orchestration"
 )
 
@@ -40,12 +42,15 @@ func main() {
 	enableAuth := strings.ToLower(envOr("ENABLE_AUTH", "true")) != "false"
 	port := envOr("PORT", "8083")
 
+	buf := generalmgmt.NewLogBuffer(1000)
+	slog.SetDefault(slog.New(generalmgmt.NewSlogHandler(buf)))
+
 	var decider orchestration.AuthDecider
 
 	switch authBackend {
 	case "consumerauth":
 		decider = orchestration.NewCADecider(caURL)
-		log.Printf("dynamicorch-xacml: auth backend=consumerauth url=%s", caURL)
+		slog.Info("auth backend", "backend", "consumerauth", "url", caURL)
 
 	default: // "grpc"
 		grpcDecider, conn, err := orchestration.NewGRPCDecider(authzPDPAddr)
@@ -54,18 +59,30 @@ func main() {
 		}
 		defer conn.Close()
 		decider = grpcDecider
-		log.Printf("dynamicorch-xacml: auth backend=grpc addr=%s", authzPDPAddr)
+		slog.Info("auth backend", "backend", "grpc", "addr", authzPDPAddr)
 	}
 
 	sr := orchestration.NewSRClient(srURL)
 	orch := orchestration.NewXACMLOrchestrator(sr, decider, domainID, enableAuth)
 
-	mux := http.NewServeMux()
-	orchestration.RegisterRoutes(mux, orch, domainID, enableAuth)
+	mgmtHandler := generalmgmt.NewHandler(buf, "serviceorchestration/orchestration", map[string]string{
+		"srUrl":       srURL,
+		"authBackend": authBackend,
+		"domainId":    domainID,
+		"enableAuth":  envOr("ENABLE_AUTH", "true"),
+		"port":        port,
+	})
+
+	sysHandler := http.NewServeMux()
+	orchestration.RegisterRoutes(sysHandler, orch, domainID, enableAuth)
+
+	root := http.NewServeMux()
+	root.Handle("/serviceorchestration/orchestration/general/", mgmtHandler)
+	root.Handle("/", sysHandler)
 
 	addr := ":" + port
-	log.Printf("dynamicorch-xacml listening on %s (auth=%v backend=%s)", addr, enableAuth, authBackend)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	slog.Info("dynamicorch-xacml listening", "addr", addr, "auth", enableAuth, "backend", authBackend)
+	if err := http.ListenAndServe(addr, root); err != nil {
 		log.Fatalf("server: %v", err)
 	}
 }

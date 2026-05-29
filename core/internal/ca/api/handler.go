@@ -130,5 +130,29 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+	exType := errTypeForStatus(status)
+	type errBody struct {
+		ErrorMessage  string `json:"errorMessage"`
+		ErrorCode     int    `json:"errorCode"`
+		ExceptionType string `json:"exceptionType"`
+		Origin        string `json:"origin"`
+	}
+	writeJSON(w, status, errBody{ErrorMessage: msg, ErrorCode: status, ExceptionType: exType, Origin: "ca.certificate"})
+}
+
+func errTypeForStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest, http.StatusMethodNotAllowed:
+		return "INVALID_PARAMETER"
+	case http.StatusUnauthorized:
+		return "AUTH"
+	case http.StatusForbidden:
+		return "FORBIDDEN"
+	case http.StatusNotFound:
+		return "DATA_NOT_FOUND"
+	case http.StatusLocked:
+		return "LOCKED"
+	default:
+		return "INTERNAL_SERVER_ERROR"
+	}
 }

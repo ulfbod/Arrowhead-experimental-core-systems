@@ -335,11 +335,18 @@ services:
         condition: service_healthy
       pip:
         condition: service_healthy
+      authentication:
+        condition: service_healthy
     restart: "no"
     command:
       - sh
       - -c
       - |-
+        # Register robot-fleet system identities so they can log in to the Authentication service.
+        curl -s -X POST http://authentication:8081/authentication/mgmt/identities \
+          -H 'Content-Type: application/json' \
+          -d '{"authenticationMethod":"PASSWORD","identities":[{"systemName":"robot-fleet-site-1","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-2","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-3","credentials":{"password":"fleet-secret"}}]}' \
+          | grep -q '"identities"' &&
         # Per-provider orchestration policies: resource=service, provider=system, action=orchestrate
         # These are evaluated by authz-pdp when DynamicOrch-XACML makes a gRPC Decide call.
         # action=orchestrate cleanly separates this namespace from enforcement (action=consume).

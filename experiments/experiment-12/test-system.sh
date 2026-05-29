@@ -123,24 +123,24 @@ assert_json_value "GET /status → status=UP" "status"  "UP" "$orch_status"
 assert_json_field "GET /status → xacml"    "xacml"    "$orch_status"
 assert_json_field "GET /status → domainID" "domainID" "$orch_status"
 
-# Wrong method on /orchestration/dynamic → 405
-check_eq "GET /orchestration/dynamic → 405" "405" \
-  "$(http_code http://localhost:8893/orchestration/dynamic)"
+# Wrong method on /serviceorchestration/orchestration/pull → 405
+check_eq "GET /serviceorchestration/orchestration/pull → 405" "405" \
+  "$(http_code http://localhost:8893/serviceorchestration/orchestration/pull)"
 
 # Missing requester → 400
 check_eq "POST missing requester → 400" "400" \
-  "$(http_code -X POST http://localhost:8893/orchestration/dynamic \
+  "$(http_code -X POST http://localhost:8893/serviceorchestration/orchestration/pull \
     -H 'Content-Type: application/json' \
     -d '{"requesterSystem":{"systemName":""},"requestedService":{"serviceDefinition":"telemetry"}}')"
 
 # Missing service → 400
 check_eq "POST missing service → 400" "400" \
-  "$(http_code -X POST http://localhost:8893/orchestration/dynamic \
+  "$(http_code -X POST http://localhost:8893/serviceorchestration/orchestration/pull \
     -H 'Content-Type: application/json' \
     -d '{"requesterSystem":{"systemName":"test-probe"},"requestedService":{"serviceDefinition":""}}')"
 
 # Unauthorized consumer → empty list (no matching per-provider policy)
-orch_unauth=$(http_body -X POST http://localhost:8893/orchestration/dynamic \
+orch_unauth=$(http_body -X POST http://localhost:8893/serviceorchestration/orchestration/pull \
   -H 'Content-Type: application/json' \
   -d '{"requesterSystem":{"systemName":"unauthorized","address":"1.1.1.1","port":8000},"requestedService":{"serviceDefinition":"telemetry"}}')
 assert_json_field "Unauthorized consumer → response field exists" "response" "$orch_unauth"
@@ -148,7 +148,7 @@ assert_contains   "Unauthorized consumer → empty response" '"response":[]' "$(
 
 # Per-provider: test-probe has policy for telemetry@robot-fleet-site-1 only
 # → should return robot-fleet-site-1 but not site-2 or site-3
-orch_probe=$(http_body -X POST http://localhost:8893/orchestration/dynamic \
+orch_probe=$(http_body -X POST http://localhost:8893/serviceorchestration/orchestration/pull \
   -H 'Content-Type: application/json' \
   -d '{"requesterSystem":{"systemName":"test-probe","address":"1.1.1.1","port":8000},"requestedService":{"serviceDefinition":"telemetry"}}')
 assert_json_field "test-probe telemetry → response field" "response" "$orch_probe"
@@ -163,7 +163,7 @@ else
 fi
 
 # Per-provider: service-partner-1 has policy for telemetry-rest@portal-cloud-ml
-orch_sp1=$(http_body -X POST http://localhost:8893/orchestration/dynamic \
+orch_sp1=$(http_body -X POST http://localhost:8893/serviceorchestration/orchestration/pull \
   -H 'Content-Type: application/json' \
   -d '{"requesterSystem":{"systemName":"service-partner-1","address":"1.1.1.1","port":8000},"requestedService":{"serviceDefinition":"telemetry-rest"}}')
 assert_json_field "service-partner-1 telemetry-rest → response field" "response" "$orch_sp1"

@@ -21,7 +21,7 @@ source "$(dirname "$0")/../test-lib.sh"
 REVOKED_IDS=""
 restore_all() {
   for name in demo-consumer-1 demo-consumer-2 demo-consumer-3; do
-    http_body -s -X POST http://localhost:8082/authorization/grant \
+    http_body -s -X POST http://localhost:8082/consumerauthorization/authorization/grant \
       -H 'Content-Type: application/json' \
       -d "{\"consumerSystemName\":\"$name\",\"providerSystemName\":\"robot-fleet\",\"serviceDefinition\":\"telemetry\"}" \
       > /dev/null 2>&1 || true
@@ -40,7 +40,7 @@ smoke_http "ConsumerAuth /health"      http://localhost:8082/health
 smoke_http "RabbitMQ management"       http://localhost:15674/api/overview -u admin:admin
 smoke_http "topic-auth-http /health"   http://localhost:9090/health
 
-grants_body=$(http_body http://localhost:8082/authorization/lookup 2>/dev/null || echo "{}")
+grants_body=$(http_body http://localhost:8082/consumerauthorization/authorization/lookup 2>/dev/null || echo "{}")
 grant_count=$(echo "$grants_body" | grep -oE '"count":[0-9]+' | grep -oE '[0-9]+' || echo "0")
 if [ "${grant_count:-0}" -ge 1 ]; then
   pass "ConsumerAuth grants seeded (count=$grant_count)"
@@ -73,7 +73,7 @@ assert_http "RabbitMQ management /api/overview" 200 http://localhost:15674/api/o
 # ── Section 3: CA grants seeded by setup ──────────────────────────────────────
 echo
 echo "=== 3. ConsumerAuth grants ==="
-grants_body=$(http_body http://localhost:8082/authorization/lookup)
+grants_body=$(http_body http://localhost:8082/consumerauthorization/authorization/lookup)
 echo "  $grants_body"
 assert_json_gt "at least 3 grants seeded" "count" 2 "$grants_body"
 
@@ -123,7 +123,7 @@ echo
 echo "=== 6. Revocation: consumer-2 AMQP connection closed after grant revoked ==="
 
 # Find demo-consumer-2 grant ID.
-lookup=$(http_body http://localhost:8082/authorization/lookup)
+lookup=$(http_body http://localhost:8082/consumerauthorization/authorization/lookup)
 grant_id=$(echo "$lookup" | grep -oE '"id":[0-9]+[^}]*"consumerSystemName":"demo-consumer-2"' | grep -oE '"id":[0-9]+' | grep -oE '[0-9]+' | head -1)
 if [ -z "$grant_id" ]; then
   # Try the other field order
@@ -157,8 +157,8 @@ else
   count_before=$(echo "$stats_before" | grep -oE '"msgCount":[0-9]+' | grep -oE '[0-9]+' || echo "0")
 
   # Revoke the grant.
-  revoke_code=$(http_code -X DELETE "http://localhost:8082/authorization/revoke/$grant_id")
-  check_eq "DELETE /authorization/revoke/$grant_id → 200" "200" "$revoke_code"
+  revoke_code=$(http_code -X DELETE "http://localhost:8082/consumerauthorization/authorization/revoke/$grant_id")
+  check_eq "DELETE /consumerauthorization/authorization/revoke/$grant_id → 200" "200" "$revoke_code"
 
   # Verify auth/user now denies consumer-2 (live CA check).
   check_eq "auth/user demo-consumer-2 → deny after revoke" "deny" \
@@ -190,7 +190,7 @@ else
   echo
   echo "=== 7. Re-grant: consumer-2 reconnects ==="
 
-  regrant=$(http_body -X POST http://localhost:8082/authorization/grant \
+  regrant=$(http_body -X POST http://localhost:8082/consumerauthorization/authorization/grant \
     -H 'Content-Type: application/json' \
     -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"robot-fleet","serviceDefinition":"telemetry"}')
   if [[ "$regrant" == *'"id":'* ]] || [[ "$regrant" == *"already exists"* ]]; then

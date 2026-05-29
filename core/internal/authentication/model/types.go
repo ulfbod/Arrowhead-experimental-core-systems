@@ -8,24 +8,30 @@ type IdentityToken struct {
 	Token      string    `json:"token"`
 	SystemName string    `json:"systemName"`
 	ExpiresAt  time.Time `json:"expiresAt"`
+	LoginTime  time.Time `json:"loginTime"`
 }
 
 // LoginRequest is the body for POST /authentication/identity/login.
+// CredentialsMap is populated by the handler from the JSON "credentials" field,
+// which may be either a plain string (legacy) or {"password":"..."} (AH5).
 type LoginRequest struct {
-	SystemName  string `json:"systemName"`
-	Credentials string `json:"credentials"`
+	SystemName     string            `json:"systemName"`
+	CredentialsMap map[string]string `json:"-"`
 }
 
 // LoginResponse is returned on successful login.
 type LoginResponse struct {
-	Token      string    `json:"token"`
-	SystemName string    `json:"systemName"`
-	ExpiresAt  time.Time `json:"expiresAt"`
+	Token          string    `json:"token"`
+	SystemName     string    `json:"systemName"`
+	ExpirationTime time.Time `json:"expirationTime"`
+	Sysop          bool      `json:"sysop"`
 }
 
-// VerifyResponse is returned by GET /authentication/identity/verify.
+// VerifyResponse is returned by GET /authentication/identity/verify/{token}.
 type VerifyResponse struct {
-	Valid      bool      `json:"valid"`
-	SystemName string    `json:"systemName,omitempty"`
-	ExpiresAt  time.Time `json:"expiresAt,omitempty"`
+	Verified       bool   `json:"verified"`
+	SystemName     string `json:"systemName,omitempty"`
+	LoginTime      string `json:"loginTime,omitempty"`
+	ExpirationTime string `json:"expirationTime,omitempty"`
+	Sysop          bool   `json:"sysop"`
 }

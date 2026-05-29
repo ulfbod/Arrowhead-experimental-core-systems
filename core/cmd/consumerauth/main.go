@@ -12,12 +12,14 @@ package main
 import (
 	"crypto/tls"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
 	"arrowhead/core/internal/consumerauth/api"
 	"arrowhead/core/internal/consumerauth/repository"
 	"arrowhead/core/internal/consumerauth/service"
+	"arrowhead/core/internal/generalmgmt"
 	"arrowhead/core/internal/tlsutil"
 )
 
@@ -27,9 +29,32 @@ func main() {
 		port = "8082"
 	}
 
-	repo := repository.NewMemoryRepository()
+	buf := generalmgmt.NewLogBuffer(1000)
+	slog.SetDefault(slog.New(generalmgmt.NewSlogHandler(buf)))
+
+	var repo repository.Repository
+	if dbPath := os.Getenv("DB_PATH"); dbPath != "" {
+		var err error
+		sqliteRepo, err := repository.NewSQLiteRepository(dbPath)
+		if err != nil {
+			log.Fatalf("[ConsumerAuthorization] open database: %v", err)
+		}
+		repo = sqliteRepo
+	} else {
+		repo = repository.NewMemoryRepository()
+	}
 	svc := service.NewAuthService(repo)
-	handler := api.NewHandler(svc)
+	sysHandler := api.NewHandler(svc)
+
+	mgmtHandler := generalmgmt.NewHandler(buf, "authorization", map[string]string{
+		"PORT":    port,
+		"DB_PATH": os.Getenv("DB_PATH"),
+		"TLS_PORT": os.Getenv("TLS_PORT"),
+	})
+
+	root := http.NewServeMux()
+	root.Handle("/authorization/general/", mgmtHandler)
+	root.Handle("/", sysHandler)
 
 	// Optional TLS listener on TLS_PORT.
 	if tlsPort := os.Getenv("TLS_PORT"); tlsPort != "" {
@@ -42,12 +67,12 @@ func main() {
 			log.Fatalf("[ConsumerAuthorization] TLS config: %v", err)
 		}
 		if tlsCfg != nil {
-			go startTLS(handler, tlsPort, tlsCfg, "ConsumerAuthorization")
+			go startTLS(root, tlsPort, tlsCfg, "ConsumerAuthorization")
 		}
 	}
 
-	log.Printf("[ConsumerAuthorization] Listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, handler))
+	slog.Info("Listening", "system", "ConsumerAuthorization", "port", port)
+	log.Fatal(http.ListenAndServe(":"+port, root))
 }
 
 func startTLS(handler http.Handler, port string, tlsCfg *tls.Config, name string) {
@@ -55,7 +80,7 @@ func startTLS(handler http.Handler, port string, tlsCfg *tls.Config, name string
 	if err != nil {
 		log.Fatalf("[%s] TLS listen on :%s: %v", name, port, err)
 	}
-	log.Printf("[%s] Listening on :%s (HTTPS/mTLS)", name, port)
+	slog.Info("Listening (HTTPS/mTLS)", "system", name, "port", port)
 	if err := http.Serve(ln, handler); err != nil {
 		log.Fatalf("[%s] TLS serve: %v", name, err)
 	}

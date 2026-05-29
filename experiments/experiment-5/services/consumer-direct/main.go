@@ -76,7 +76,7 @@ type authLoginRequest struct {
 type authLoginResponse struct {
 	Token      string    `json:"token"`
 	SystemName string    `json:"systemName"`
-	ExpiresAt  time.Time `json:"expiresAt"`
+	ExpirationTime time.Time `json:"expirationTime"`
 }
 
 type orchSystem struct {
@@ -153,7 +153,7 @@ func orchestrate(orchURL, systemName, token string) (orchResult, error) {
 		},
 	}
 	body, _ := json.Marshal(req)
-	r, err := http.NewRequest(http.MethodPost, orchURL+"/orchestration/dynamic", bytes.NewReader(body))
+	r, err := http.NewRequest(http.MethodPost, orchURL+"/serviceorchestration/orchestration/pull", bytes.NewReader(body))
 	if err != nil {
 		return orchResult{}, err
 	}
@@ -192,7 +192,7 @@ func generateToken(caURL, consumer, provider, service string) {
 		ProviderSystemName: provider,
 		ServiceDefinition:  service,
 	})
-	resp, err := http.Post(caURL+"/authorization/token/generate", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(caURL+"/consumerauthorization/authorization/token/generate", "application/json", bytes.NewReader(body))
 	if err != nil {
 		log.Printf("[consumer] authorization token request failed: %v", err)
 		return

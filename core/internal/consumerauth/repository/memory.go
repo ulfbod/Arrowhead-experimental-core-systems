@@ -1,55 +1,62 @@
-// Package repository provides in-memory rule storage for ConsumerAuthorization.
+// Package repository provides in-memory policy storage for ConsumerAuthorization.
 package repository
 
 import (
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	"arrowhead/core/internal/consumerauth/model"
 )
 
+// Repository defines policy storage operations.
 type Repository interface {
-	Save(rule model.AuthRule) model.AuthRule
-	Delete(id int64) bool
-	All() []model.AuthRule
+	Save(policy model.AuthPolicy) model.AuthPolicy
+	Delete(instanceID string) bool
+	FindByInstanceID(instanceID string) (model.AuthPolicy, bool)
+	All() []model.AuthPolicy
 }
 
+// MemoryRepository is a thread-safe, in-memory policy store.
 type MemoryRepository struct {
-	mu      sync.RWMutex
-	rules   map[int64]model.AuthRule
-	counter int64
+	mu       sync.RWMutex
+	policies map[string]model.AuthPolicy
 }
 
 func NewMemoryRepository() *MemoryRepository {
-	return &MemoryRepository{rules: make(map[int64]model.AuthRule)}
+	return &MemoryRepository{policies: make(map[string]model.AuthPolicy)}
 }
 
-func (r *MemoryRepository) Save(rule model.AuthRule) model.AuthRule {
+func (r *MemoryRepository) Save(policy model.AuthPolicy) model.AuthPolicy {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	rule.ID = atomic.AddInt64(&r.counter, 1)
-	r.rules[rule.ID] = rule
-	return rule
+	r.policies[policy.InstanceID] = policy
+	return policy
 }
 
-func (r *MemoryRepository) Delete(id int64) bool {
+func (r *MemoryRepository) Delete(instanceID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.rules[id]; !ok {
+	if _, ok := r.policies[instanceID]; !ok {
 		return false
 	}
-	delete(r.rules, id)
+	delete(r.policies, instanceID)
 	return true
 }
 
-func (r *MemoryRepository) All() []model.AuthRule {
+func (r *MemoryRepository) FindByInstanceID(instanceID string) (model.AuthPolicy, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := make([]model.AuthRule, 0, len(r.rules))
-	for _, rule := range r.rules {
-		out = append(out, rule)
+	p, ok := r.policies[instanceID]
+	return p, ok
+}
+
+func (r *MemoryRepository) All() []model.AuthPolicy {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]model.AuthPolicy, 0, len(r.policies))
+	for _, p := range r.policies {
+		out = append(out, p)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool { return out[i].InstanceID < out[j].InstanceID })
 	return out
 }

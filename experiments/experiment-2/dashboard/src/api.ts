@@ -80,7 +80,7 @@ export function fetchAllServices(signal?: AbortSignal): Promise<QueryResponse> {
 // ── ConsumerAuthorization ─────────────────────────────────────────────────────
 
 export function fetchAuthRules(signal?: AbortSignal): Promise<LookupResponse> {
-  return get<LookupResponse>('/api/consumerauth/authorization/lookup', { signal })
+  return get<LookupResponse>('/api/consumerauth/consumerauthorization/authorization/lookup', { signal })
 }
 
 // ── RabbitMQ ──────────────────────────────────────────────────────────────────
@@ -158,7 +158,7 @@ export function fetchOrchestration(
   signal?: AbortSignal,
 ): Promise<OrchResponse> {
   return post<OrchResponse>(
-    '/api/dynamicorch/orchestration/dynamic',
+    '/api/dynamicorch/serviceorchestration/orchestration/pull',
     {
       requesterSystem: { systemName: consumerName, address: 'localhost', port: 9002 },
       requestedService: { serviceDefinition: serviceDef, interfaces: ['HTTP-INSECURE-JSON'] },

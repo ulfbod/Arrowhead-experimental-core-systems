@@ -12,6 +12,7 @@ package main
 import (
 	"crypto/tls"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"arrowhead/core/internal/authentication/api"
 	"arrowhead/core/internal/authentication/repository"
 	"arrowhead/core/internal/authentication/service"
+	"arrowhead/core/internal/generalmgmt"
 	"arrowhead/core/internal/tlsutil"
 )
 
@@ -29,9 +31,38 @@ func main() {
 	}
 	tokenDuration := 3600 * time.Second // 1 hour default
 
-	repo := repository.NewMemoryRepository()
-	svc := service.NewAuthService(repo, tokenDuration)
-	handler := api.NewHandler(svc)
+	buf := generalmgmt.NewLogBuffer(1000)
+	slog.SetDefault(slog.New(generalmgmt.NewSlogHandler(buf)))
+
+	var tokenRepo repository.Repository
+	var identityRepo repository.IdentityRepository
+	if dbPath := os.Getenv("DB_PATH"); dbPath != "" {
+		sqliteRepo, err := repository.NewSQLiteRepository(dbPath)
+		if err != nil {
+			log.Fatalf("[Authentication] open token database: %v", err)
+		}
+		tokenRepo = sqliteRepo
+		sqliteIdentityRepo, err := repository.NewSQLiteIdentityRepository(dbPath + ".identities")
+		if err != nil {
+			log.Fatalf("[Authentication] open identity database: %v", err)
+		}
+		identityRepo = sqliteIdentityRepo
+	} else {
+		tokenRepo = repository.NewMemoryRepository()
+		identityRepo = repository.NewMemoryIdentityRepository()
+	}
+	svc := service.NewAuthServiceFull(tokenRepo, identityRepo, tokenDuration)
+	sysHandler := api.NewHandler(svc)
+
+	mgmtHandler := generalmgmt.NewHandler(buf, "authentication", map[string]string{
+		"PORT":    port,
+		"DB_PATH": os.Getenv("DB_PATH"),
+		"TLS_PORT": os.Getenv("TLS_PORT"),
+	})
+
+	root := http.NewServeMux()
+	root.Handle("/authentication/general/", mgmtHandler)
+	root.Handle("/", sysHandler)
 
 	// Optional TLS listener on TLS_PORT.
 	if tlsPort := os.Getenv("TLS_PORT"); tlsPort != "" {
@@ -44,12 +75,12 @@ func main() {
 			log.Fatalf("[Authentication] TLS config: %v", err)
 		}
 		if tlsCfg != nil {
-			go startTLS(handler, tlsPort, tlsCfg, "Authentication")
+			go startTLS(root, tlsPort, tlsCfg, "Authentication")
 		}
 	}
 
-	log.Printf("[Authentication] Listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, handler))
+	slog.Info("Listening", "system", "Authentication", "port", port)
+	log.Fatal(http.ListenAndServe(":"+port, root))
 }
 
 func startTLS(handler http.Handler, port string, tlsCfg *tls.Config, name string) {
@@ -57,7 +88,7 @@ func startTLS(handler http.Handler, port string, tlsCfg *tls.Config, name string
 	if err != nil {
 		log.Fatalf("[%s] TLS listen on :%s: %v", name, port, err)
 	}
-	log.Printf("[%s] Listening on :%s (HTTPS/mTLS)", name, port)
+	slog.Info("Listening (HTTPS/mTLS)", "system", name, "port", port)
 	if err := http.Serve(ln, handler); err != nil {
 		log.Fatalf("[%s] TLS serve: %v", name, err)
 	}

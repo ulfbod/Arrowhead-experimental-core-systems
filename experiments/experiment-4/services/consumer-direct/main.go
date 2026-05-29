@@ -74,7 +74,7 @@ type authLoginRequest struct {
 type authLoginResponse struct {
 	Token      string    `json:"token"`
 	SystemName string    `json:"systemName"`
-	ExpiresAt  time.Time `json:"expiresAt"`
+	ExpirationTime time.Time `json:"expirationTime"`
 }
 
 type orchSystem struct {
@@ -143,7 +143,7 @@ func authLogin(authURL, systemName, credentials string) (string, error) {
 	return lr.Token, nil
 }
 
-// orchestrate calls POST /orchestration/dynamic with the Bearer token.
+// orchestrate calls POST /serviceorchestration/orchestration/pull with the Bearer token.
 // Returns an error if the response contains no authorized providers.
 func orchestrate(orchURL, systemName, token string) (orchResult, error) {
 	req := orchRequest{
@@ -154,7 +154,7 @@ func orchestrate(orchURL, systemName, token string) (orchResult, error) {
 		},
 	}
 	body, _ := json.Marshal(req)
-	r, err := http.NewRequest(http.MethodPost, orchURL+"/orchestration/dynamic", bytes.NewReader(body))
+	r, err := http.NewRequest(http.MethodPost, orchURL+"/serviceorchestration/orchestration/pull", bytes.NewReader(body))
 	if err != nil {
 		return orchResult{}, err
 	}
@@ -184,7 +184,7 @@ func orchestrate(orchURL, systemName, token string) (orchResult, error) {
 	return or.Response[0], nil
 }
 
-// generateToken calls POST /authorization/token/generate (Phase 4).
+// generateToken calls POST /consumerauthorization/authorization/token/generate (Phase 4).
 // Logs errors but does not fail — the AMQP connection proceeds regardless.
 func generateToken(caURL, consumer, provider, service string) {
 	if caURL == "" {
@@ -195,7 +195,7 @@ func generateToken(caURL, consumer, provider, service string) {
 		ProviderSystemName: provider,
 		ServiceDefinition:  service,
 	})
-	resp, err := http.Post(caURL+"/authorization/token/generate", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(caURL+"/consumerauthorization/authorization/token/generate", "application/json", bytes.NewReader(body))
 	if err != nil {
 		log.Printf("[consumer] authorization token request failed: %v", err)
 		return

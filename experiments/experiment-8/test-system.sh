@@ -410,7 +410,7 @@ if [ -f "$PROBE_SY_CRT" ] && [ -f "$PROBE_SY_KEY" ]; then
     --cert "$PROBE_SY_CRT" --key "$PROBE_SY_KEY" \
     --cacert "$CA_FILE" \
     --resolve "consumerauth:8492:127.0.0.1" \
-    https://consumerauth:8492/authorization/lookup)
+    https://consumerauth:8492/consumerauthorization/authorization/lookup)
   pki_grant_id=$(echo "$lookup" \
     | grep -oE '"id":[0-9]+[^}]*"consumerSystemName":"pki-consumer"' \
     | grep -oE '"id":[0-9]+' | grep -oE '[0-9]+' | head -1)
@@ -431,7 +431,7 @@ if [ -f "$PROBE_SY_CRT" ] && [ -f "$PROBE_SY_KEY" ]; then
       --cert "$PROBE_SY_CRT" --key "$PROBE_SY_KEY" \
       --cacert "$CA_FILE" \
       --resolve "consumerauth:8492:127.0.0.1" \
-      "https://consumerauth:8492/authorization/revoke/$pki_grant_id"; echo -n "")
+      "https://consumerauth:8492/consumerauthorization/authorization/revoke/$pki_grant_id"; echo -n "")
     check_eq "revoke pki-consumer grant via TLS port 8492 → 200" "200" "$revoke_code"
 
     echo "  waiting 30 s for policy-sync cycle to propagate revocation..."
@@ -448,7 +448,7 @@ if [ -f "$PROBE_SY_CRT" ] && [ -f "$PROBE_SY_KEY" ]; then
       --cert "$PROBE_SY_CRT" --key "$PROBE_SY_KEY" \
       --cacert "$CA_FILE" \
       --resolve "consumerauth:8492:127.0.0.1" \
-      https://consumerauth:8492/authorization/grant \
+      https://consumerauth:8492/consumerauthorization/authorization/grant \
       -H 'Content-Type: application/json' \
       -d '{"consumerSystemName":"pki-consumer","providerSystemName":"data-provider-tls","serviceDefinition":"telemetry-rest"}')
     if [[ "$regrant" == *'"id":'* ]] || [[ "$regrant" == *"already exists"* ]]; then

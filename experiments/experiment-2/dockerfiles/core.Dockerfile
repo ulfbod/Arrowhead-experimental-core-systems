@@ -6,7 +6,7 @@
 # Example:
 #   docker build --build-arg CMD=ca -f dockerfiles/core.Dockerfile ../../core
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 ARG CMD
 WORKDIR /src
 COPY go.mod go.sum ./

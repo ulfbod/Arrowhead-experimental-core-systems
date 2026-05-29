@@ -2703,6 +2703,359 @@ exec /kafdrop.sh
 
 ---
 
+## EXP-032 — `support/policy-sync` (and `topic-auth-sync`, `topic-auth-http`) used stale ConsumerAuth path after core path migration (experiment-9, 2026-05-28)
+
+### Symptom
+
+`policy-sync` container enters an unhealthy retry loop immediately after starting, even though
+the ConsumerAuth container is healthy and its health-check passes:
+
+```
+[policy-sync] init attempt 1 failed: fetchRules: ConsumerAuth lookup returned 404 — retrying in 5s
+[policy-sync] init attempt 2 failed: fetchRules: ConsumerAuth lookup returned 404 — retrying in 5s
+...
+```
+
+All dependent containers (kafka-authz, topic-auth-xacml, robot-fleet services) fail to start
+because they wait on `condition: service_healthy` for policy-sync.
+
+### Root Cause
+
+Step 6 of the AH5 conformance update renamed all ConsumerAuth routes from `/authorization/...`
+to `/consumerauthorization/authorization/...`. The core system, e2e tests, experiment Go
+services, docker-compose files, and dashboard were all updated.
+
+However, three support modules that call `GET /authorization/lookup` were not updated:
+
+| Module | File |
+|--------|------|
+| `support/policy-sync` | `sync.go` line 93 |
+| `support/topic-auth-sync` | `sync.go` line 107 |
+| `support/topic-auth-http` | `sync.go` line 90 |
+
+Each module builds its HTTP request as:
+```go
+http.NewRequest(http.MethodGet, s.caURL+"/authorization/lookup", nil)
+```
+
+ConsumerAuth now returns 404 for `/authorization/lookup` because the route no longer exists.
+The failure is silent at build time — the path is a string literal, not a constant from the
+core package.
+
+The test mocks for `topic-auth-sync` and `topic-auth-http` used the old path as a routing
+key in `http.ServeMux`, so tests passed with the old path and would have failed with the
+new path — but since the mocks were also not updated, tests kept passing while runtime broke.
+
+### Fix
+
+Updated all three `sync.go` files to use `/consumerauthorization/authorization/lookup`:
+- `support/policy-sync/sync.go`
+- `support/topic-auth-sync/sync.go`
+- `support/topic-auth-http/sync.go`
+
+Updated the corresponding test mock route registrations:
+- `support/topic-auth-sync/sync_test.go` (`mockConsumerAuth.ServeHTTP` path check)
+- `support/topic-auth-http/sync_test.go` (`mockCA.handler()` mux registration)
+
+Updated documentation: `support/README.md`, `support/DIAGRAMS.md`.
+
+### Lesson
+
+**When renaming a core HTTP path, also audit support modules.** Support modules call core
+APIs as string literals — they are not covered by Go's type system and will not produce
+compile errors when paths change. Test mocks that contain the old path as a routing key
+will also silently pass after the rename, masking the breakage.
+
+**The pattern to look for:** any `http.NewRequest` or `http.Post` call in `support/` that
+contains a path segment from the renamed route.
+
+**Checklist item added** — see pre-flight checklist below.
+
+---
+
+## EXP-033 — All `core.Dockerfile` files failed to build after `modernc.org/sqlite` was added (experiment-13, 2026-05-28)
+
+### Symptom
+
+`docker compose up --build` for experiment-13 (and any experiment that builds core binaries) fails at the Go build step for `serviceregistry`, `authentication`, and `consumerauth`:
+
+```
+> [serviceregistry builder 4/4] RUN CGO_ENABLED=0 go build -o /app ./cmd/serviceregistry:
+go: go.mod requires go >= 1.25.0 (running go 1.22.12; GOTOOLCHAIN=local)
+```
+
+All three core service builds fail with exit code 1.
+
+### Root Cause
+
+Step 9 added `modernc.org/sqlite v1.50.1` as a dependency. That library's own `go.mod` declares `go 1.25.0`, which propagates as the minimum Go version into `core/go.mod`. All `core.Dockerfile` files used `FROM golang:1.22-alpine`, which bundles Go 1.22.12 with `GOTOOLCHAIN=local`. Go 1.22 refuses to build a module whose `go` directive specifies a higher version.
+
+The mismatch was invisible locally because the developer machine runs Go 1.25.0.
+
+### Fix
+
+Updated all 13 `core.Dockerfile` files (`experiments/experiment-{2..14}/dockerfiles/core.Dockerfile`) from `FROM golang:1.22-alpine` to `FROM golang:1.25-alpine`.
+
+### Generalised Lesson
+
+A transitive dependency's `go` directive sets the floor for the entire build. When adding any new dependency with `go get`, check the resulting `go` directive in `core/go.mod`. If it bumped, every `core.Dockerfile` must be updated to match before the next Docker build.
+
+---
+
+## EXP-034 — `setup` container fails because CA grant API changed to provider-centric WHITELIST model (experiment-9, 2026-05-28)
+
+### Symptom
+
+`docker compose up --build` for experiment-9 shows:
+
+```
+✘ Container experiment-9-setup-1  service "setup" didn't complete successfully: exit 1
+```
+
+All downstream services that depend on `setup` (`policy-sync`, `topic-auth-xacml`, `kafka-authz`, etc.) are therefore never started.
+
+### Root Cause
+
+The `setup` container seeded authorization grants using the old per-consumer request shape:
+
+```sh
+-d '{"consumerSystemName":"portal-cloud-ml","providerSystemName":"robot-fleet-site-1","serviceDefinition":"telemetry"}'
+```
+
+The ConsumerAuthorization API migrated to a provider-centric WHITELIST model. The new grant body is:
+
+```json
+{
+  "provider":      "robot-fleet-site-1",
+  "targetType":    "SERVICE_DEF",
+  "target":        "telemetry",
+  "defaultPolicy": { "policyType": "WHITELIST", "policyList": ["portal-cloud-ml"] }
+}
+```
+
+The old fields are unrecognised; the request is rejected with 400.
+
+Two compounding issues made this worse:
+
+1. **5 grants → 2 policies**: The CA now has exactly ONE policy per `(provider, targetType, target)` triple — its `instanceId` is `PR|LOCAL|<provider>|<targetType>|<target>`. Creating separate grants for service-partner-1 and service-partner-2 against the same `portal-cloud-ml/telemetry-rest` target produces a 409 on the second call. The fix is to consolidate multiple consumers into one WHITELIST grant.
+
+2. **Grep pattern mismatch**: The setup script validated success with `grep -qE '"id":|already exists'`. The new response uses `"instanceId":` (not `"id":`) and the conflict message is "authorization policy already exists". The grep for `"id":` does not match `"instanceId":` because the key is `instanceId` with an uppercase `I`. The pattern must be updated to `'"instanceId":|already exists'`.
+
+The `test-system.sh` Section 14 revocation test had the same staleness problems: it looked up the grant with `"consumerSystemName":"service-partner-1"` (no longer in the response shape), revoked by numeric `id` (now a string `instanceId`), and re-granted with the old format.
+
+### Fix
+
+**`docker-compose.yml` setup service** — replace 5 individual grants with 2 consolidated WHITELIST grants:
+
+```sh
+# robot-fleet-site-1 telemetry: portal-cloud-ml and test-probe
+curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant \
+  -H 'Content-Type: application/json' \
+  -d '{"provider":"robot-fleet-site-1","targetType":"SERVICE_DEF","target":"telemetry","defaultPolicy":{"policyType":"WHITELIST","policyList":["portal-cloud-ml","test-probe"]}}' \
+  | grep -qE '"instanceId":|already exists'
+
+# portal-cloud-ml telemetry-rest: service-partner-1, service-partner-2, test-probe
+curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant \
+  -H 'Content-Type: application/json' \
+  -d '{"provider":"portal-cloud-ml","targetType":"SERVICE_DEF","target":"telemetry-rest","defaultPolicy":{"policyType":"WHITELIST","policyList":["service-partner-1","service-partner-2","test-probe"]}}' \
+  | grep -qE '"instanceId":|already exists'
+```
+
+**`test-system.sh` Section 14** — look up by `targetNames`, extract `instanceId` (string), URL-encode pipes for the revoke URL, and re-grant using the new format with the full WHITELIST.
+
+### Generalised Lesson
+
+When `core/` changes the ConsumerAuthorization API shape (field names, response structure, idempotency key), every `setup` container curl command and every `test-system.sh` revocation test in every experiment must be updated. The old per-consumer request body is silently unrecognised (returns 400), and grep patterns that match `"id":` will not match `"instanceId":`. After any CA API change, run `grep -rn "consumerSystemName\|providerSystemName\|serviceDefinition" experiments/` to find all stale grant calls.
+
+---
+
+## EXP-036 — policy-sync fails with 405: ConsumerAuth lookup method and response shape changed (experiment-9, 2026-05-28)
+
+### Symptom
+
+`docker compose up --build` shows `policy-sync-1  Error` / unhealthy after ~150s:
+
+```
+[policy-sync] init attempt N failed: fetchRules: ConsumerAuth lookup returned 405 — retrying in 5s
+```
+
+All services that depend on `policy-sync` (kafka-authz, topic-auth-xacml, robot-fleet) are never created.
+
+### Root Cause
+
+The ConsumerAuthorization API changed in two ways that `support/policy-sync/sync.go` did not track:
+
+**1. HTTP method changed: GET → POST**
+
+`fetchRules` called `GET /consumerauthorization/authorization/lookup`. The endpoint handler now
+requires `POST` and rejects `GET` with 405 Method Not Allowed.
+
+**2. Request body now required, and response shape completely changed**
+
+The old `GET /lookup` returned rows in the flat per-consumer model:
+```json
+{"rules": [{"id": 1, "consumerSystemName": "...", "providerSystemName": "...", "serviceDefinition": "..."}], "count": N}
+```
+
+The new `POST /lookup` requires at least one filter (`instanceIds`, `cloudIdentifiers`, or `targetNames`),
+which makes it unsuitable for a "fetch all" use case. The correct endpoint for fetching all policies is
+`POST /consumerauthorization/authorization/mgmt/query` with an empty `{}` body, which returns:
+```json
+{"policies": [{"instanceId": "...", "provider": "...", "targetType": "...", "target": "...", "defaultPolicy": {"policyType": "WHITELIST", "policyList": ["consumer-1", ...]}}], "count": N, "totalCount": N}
+```
+
+**3. Grant expansion logic changed**
+
+The old model had one row per (consumer, provider, service). The new WHITELIST model has one policy per
+(provider, target) with a list of consumers. `policy-sync` must now expand each WHITELIST policy into
+one `az.Grant` per consumer:
+
+```go
+// Old (flat rows, one grant per row):
+grants = append(grants, az.Grant{Consumer: r.ConsumerSystemName, Service: r.ServiceDefinition})
+
+// New (WHITELIST expansion):
+for _, consumer := range p.DefaultPolicy.PolicyList {
+    grants = append(grants, az.Grant{Consumer: consumer, Service: p.Target, Provider: p.Provider})
+}
+```
+
+`ALL` and `BLACKLIST` policy types cannot be represented as enumerated XACML subject lists and are
+logged and skipped.
+
+### Fix
+
+**`support/policy-sync/sync.go`:**
+- Replaced `AuthRule` type with `PolicyDef` + `AuthPolicy` + `LookupResponse` matching the new API
+- Changed `fetchRules` → `fetchPolicies`: uses `POST /consumerauthorization/authorization/mgmt/query`
+  with `bytes.NewBufferString("{}")` as body and `Content-Type: application/json`
+- Updated `sync()` grant compilation: iterates over policies, expands WHITELIST policyList into grants
+
+**`support/policy-sync/sync_test.go`:**
+- Updated `mockCA` to handle `POST` (returns 405 on `GET`)
+- Replaced `TestSync_threeRules_threePolicies` with `TestSync_whitelistExpanded` (WHITELIST format)
+- Added `TestSync_multipleProviders` (two WHITELIST policies)
+- Added `TestSync_methodIsPost` to assert the HTTP method
+
+### Generalised Lesson
+
+`support/policy-sync` is tightly coupled to the ConsumerAuthorization wire format. Whenever `core/`
+changes the ConsumerAuth lookup endpoint (method, path, request body, or response shape), `sync.go`
+must be updated in lockstep. The checklist item for EXP-032 ("grep for old path in support/") should be
+extended to also cover method changes. Run `go test ./...` in `support/policy-sync` after any such
+change — the mock CA in `sync_test.go` will immediately reveal method or shape mismatches.
+
+---
+
+## EXP-035 — Robot-fleet sites show DOWN: missing identity registration in Authentication service (experiment-13, 2026-05-28)
+
+### Symptom
+
+All three `robot-fleet-site-{1,2,3}` dashboard cards show **DOWN** with no stats.
+All other services (profile-ca, AuthzForce, core systems, AMQP/Kafka PEPs, portal-cloud-ml, service partners) show OK.
+The robot-fleet containers crash-loop: `docker compose logs robot-fleet-site-1` shows:
+
+```
+[robot-fleet-tls] authentication failed: auth login returned 401: {"error":"invalid credentials"}
+```
+
+followed by an immediate exit.
+
+### Root Cause
+
+The Authentication core system (`cmd/authentication/main.go`) always calls `NewAuthServiceFull`, which wires
+an `IdentityRepository`. When `identityRepo != nil`, `Login` performs:
+
+```go
+id, ok := s.identityRepo.Get(req.SystemName)
+if !ok {
+    return nil, ErrInvalidCredentials  // → 401
+}
+```
+
+If the system is not in the identity store, login fails with 401 regardless of what credentials are supplied.
+`robot-fleet-tls` calls `log.Fatalf` on any authentication error.
+
+The `setup` container seeded PAP policies but never called
+`POST /authentication/mgmt/identities` to register the robot-fleet systems.
+The Authentication service starts with only the bootstrap Sysop identity.
+
+**Compounding issue:** `handleStats` and `handleConfig` GET in `robot-fleet-tls/main.go` dereference
+`fleet` without nil-checking it:
+
+```go
+func handleStats(w http.ResponseWriter, _ *http.Request) {
+    fleetMu.RLock()
+    stats := fleet.Stats()   // ← panics if fleet == nil (set only after successful startup)
+    fleetMu.RUnlock()
+```
+
+The panic is recovered by Go's HTTP server, but `fleetMu.RUnlock()` is never reached — the reader count
+leaks. In practice the crash-loop exits before reaching the fleet initialisation anyway, so the nil
+dereference is never hit during the crash loop — but it would trigger on every `/stats` or GET `/config`
+request during the restart window.
+
+### Fix
+
+**`experiments/experiment-13/docker-compose.yml` setup service:**
+
+1. Add `authentication: condition: service_healthy` to `depends_on`.
+2. Call `POST /authentication/mgmt/identities` (plain HTTP port 8081, no mTLS needed from init container)
+   before any PAP policy seeding:
+
+```sh
+curl -s -X POST http://authentication:8081/authentication/mgmt/identities \
+  -H 'Content-Type: application/json' \
+  -d '{"authenticationMethod":"PASSWORD","identities":[
+    {"systemName":"robot-fleet-site-1","credentials":{"password":"fleet-secret"}},
+    {"systemName":"robot-fleet-site-2","credentials":{"password":"fleet-secret"}},
+    {"systemName":"robot-fleet-site-3","credentials":{"password":"fleet-secret"}}
+  ]}' | grep -q '"identities"'
+```
+
+**`experiments/experiment-13/services/robot-fleet-tls/main.go`:**
+
+Add nil guards matching `handleHealth`'s pattern:
+
+```go
+func handleStats(w http.ResponseWriter, _ *http.Request) {
+    fleetMu.RLock()
+    var stats FleetStats
+    if fleet != nil {
+        stats = fleet.Stats()
+    }
+    fleetMu.RUnlock()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(stats)
+}
+
+func handleConfig(w http.ResponseWriter, r *http.Request) {
+    switch r.Method {
+    case http.MethodGet:
+        fleetMu.RLock()
+        var cfg FleetConfig
+        if fleet != nil {
+            cfg = fleet.Config()
+        }
+        fleetMu.RUnlock()
+        ...
+```
+
+### Generalised Lesson
+
+Any service that calls `POST /authentication/identity/login` requires its identity to exist in the
+Authentication service's `IdentityRepository`. The repository is empty on first boot (except for Sysop).
+The `setup` container must:
+1. Depend on `authentication: condition: service_healthy`
+2. Register all system identities via `POST /authentication/mgmt/identities` before other services start
+
+Additionally: handlers that dereference a lazily-initialised global pointer must nil-check it inside the
+lock region. If the method call panics before `mu.RUnlock()`, Go's HTTP server recovers the panic but the
+reader count leaks permanently — subsequent writers (`Lock()`) block forever, and eventually new readers
+(`RLock()`) block too (Go's `sync.RWMutex` queues new readers behind a pending writer).
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -2754,3 +3107,9 @@ Use this before marking an experiment implementation complete:
 - [ ] Dashboard fetch calls for a proxied service must not repeat the service prefix: `/api/<svc>/<actual-path>`, not `/api/<svc>/<svc>/<actual-path>` — nginx strips `/api/<svc>/` and forwards the remainder, so double-prefixing produces `404 page not found` from Go's `http.ServeMux`. The 404 text (`"404 page not found"`) starts with the number `404`, which parses as valid JSON, causing the browser to throw "Unexpected non-whitespace character after JSON at position 4" rather than a clear 404 error (EXP-030)
 - [ ] Never call `java -jar <fixed-path>` in a custom entrypoint for a third-party JVM image — inspect the image's native startup script first (`docker inspect` + `docker run --entrypoint cat`) to find the correct jar path (e.g. Kafdrop uses `/kafdrop*/kafdrop*jar` glob); delegate to the native script via `exec /kafdrop.sh` instead of reimplementing it (EXP-031)
 - [ ] Kafdrop mTLS config: (1) convert EC key from SEC1 to PKCS#8 with `openssl pkcs8 -topk8 -nocrypt` (Java rejects SEC1 with "algid parse error"); (2) pass SSL config via `KAFKA_PROPERTIES` base64 env var + `KAFKA_PROPERTIES_FILE` (decoded by `/kafdrop.sh` before Java starts); (3) use `file:///abs/path` prefix on `--kafka.properties.file` so Spring returns FileUrlResource not ClassPathResource; never pass SSL config as `--kafka.properties.<key>=<val>` CLI args (Spring binder loses dotted keys like `security.protocol`) (EXP-031)
+- [ ] After any core HTTP path rename, run `grep -rn "/<old-path>" support/` and update every matching `http.NewRequest` / `http.Post` call and test mock in `support/` — path strings are not type-checked and test mocks with the old path silently pass while runtime breaks (EXP-032)
+- [ ] When `core/` changes the ConsumerAuth lookup endpoint method (GET→POST), path, required body, or response shape, update `support/policy-sync/sync.go` in lockstep: method, URL (`/mgmt/query` for no-filter fetch-all), type definitions, and WHITELIST expansion in `sync()`. Run `go test ./...` in `support/policy-sync` — the mock CA will catch method and shape mismatches immediately (EXP-036)
+- [ ] When adding a Go dependency that itself declares a high `go` directive in its own `go.mod` (e.g. `modernc.org/sqlite v1.50.1` requires `go 1.25.0`), update every `core.Dockerfile` that builds from that module — the Docker builder uses the image's bundled toolchain and `GOTOOLCHAIN=local` blocks builds on a lower version; bump `FROM golang:X.Y-alpine` to match the new minimum (EXP-033)
+- [ ] After any CA API change, run `grep -rn "consumerSystemName\|providerSystemName" experiments/` — the CA grant API uses a provider-centric WHITELIST model (`provider`/`targetType`/`target`/`defaultPolicy.policyList`) with ONE policy per `(provider, targetType, target)` triple; old per-consumer fields are silently rejected with 400. Also update grep success patterns from `"id":` to `"instanceId":` (EXP-034)
+- [ ] The `setup` container must depend on `authentication: condition: service_healthy` and register every non-Sysop system via `POST /authentication/mgmt/identities` before any downstream service starts. Missing registration causes 401 → `log.Fatalf` → crash loop → DOWN in the dashboard (EXP-035)
+- [ ] Handlers that dereference a lazily-initialised global (e.g. `fleet *Fleet` assigned only after all connections succeed) must nil-check it inside the `mu.RLock()` / `mu.Lock()` block — a nil method call panics before the deferred unlock, permanently leaking the lock and eventually deadlocking all later callers (EXP-035)

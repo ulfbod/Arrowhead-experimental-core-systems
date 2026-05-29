@@ -2,9 +2,7 @@
 package repository
 
 import (
-	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"arrowhead/core/internal/model"
@@ -18,9 +16,8 @@ type AH5Store struct {
 	systems            map[string]*model.AH5System
 	serviceDefinitions map[string]*model.ServiceDefinition
 	interfaceTemplates map[string]*model.InterfaceTemplate
-	// serviceInstances keyed by instanceId (string counter).
+	// serviceInstances keyed by composite ID: "SystemName|ServiceDefinitionName|version"
 	serviceInstances map[string]*model.AH5ServiceInstance
-	counter          atomic.Int64
 }
 
 // NewAH5Store returns an empty AH5Store.
@@ -368,7 +365,7 @@ func (s *AH5Store) SaveServiceInstance(req *model.ServiceRegistrationRequest) (*
 			return inst, false
 		}
 	}
-	id := fmt.Sprintf("%d", s.counter.Add(1))
+	id := compositeServiceID(req.SystemName, req.ServiceDefinitionName, req.Version)
 	inst := &model.AH5ServiceInstance{
 		InstanceID:            id,
 		Provider:              provider,
@@ -399,7 +396,7 @@ func (s *AH5Store) CreateServiceInstance(req *model.ServiceCreateRequest) (*mode
 		}
 	}
 	provider := s.providerFor(req.SystemName, t)
-	id := fmt.Sprintf("%d", s.counter.Add(1))
+	id := compositeServiceID(req.SystemName, req.ServiceDefinitionName, req.Version)
 	inst := &model.AH5ServiceInstance{
 		InstanceID:            id,
 		Provider:              provider,
@@ -461,6 +458,25 @@ func (s *AH5Store) DeleteServiceInstances(ids []string) {
 	for _, id := range ids {
 		delete(s.serviceInstances, id)
 	}
+}
+
+// HasDependentSystems returns true if any stored system references deviceName.
+// Used to enforce 423 Locked on device deletion.
+func (s *AH5Store) HasDependentSystems(deviceName string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, sys := range s.systems {
+		if sys.Device != nil && sys.Device.Name == deviceName {
+			return true
+		}
+	}
+	return false
+}
+
+// compositeServiceID constructs the canonical service instance ID from its
+// natural key: "SystemName|ServiceDefinitionName|version".
+func compositeServiceID(systemName, serviceDefName, version string) string {
+	return systemName + "|" + serviceDefName + "|" + version
 }
 
 // providerFor returns the registered AH5System for systemName, or a minimal

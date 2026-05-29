@@ -130,9 +130,9 @@ services:
       - sh
       - -c
       - |-
-        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer","providerSystemName":"edge-adapter","serviceDefinition":"telemetry"}' &&
-        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"edge-adapter","serviceDefinition":"telemetry"}' &&
-        curl -sf -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"edge-adapter","serviceDefinition":"telemetry"}'
+        curl -sf -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer","providerSystemName":"edge-adapter","serviceDefinition":"telemetry"}' &&
+        curl -sf -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-2","providerSystemName":"edge-adapter","serviceDefinition":"telemetry"}' &&
+        curl -sf -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"demo-consumer-3","providerSystemName":"edge-adapter","serviceDefinition":"telemetry"}'
 
   # ── Experiment Services ──────────────────────────────────────────────────────
 

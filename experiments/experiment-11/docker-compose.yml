@@ -7,7 +7,7 @@
 #   ConsumerAuth grant → PIP sync (~10 s delay) → AuthzForce XACML effect
 #   PAP-native policy  → AuthzForce XACML effect (instant, on every Create/Delete)
 #
-# PIP polls ConsumerAuth /authorization/lookup and stores a versioned grant cache.
+# PIP polls ConsumerAuth /consumerauthorization/authorization/lookup and stores a versioned grant cache.
 # PAP background loop detects PIP version changes and rebuilds XACML only when
 # the grant set has changed, avoiding unnecessary AuthzForce calls.
 #
@@ -253,7 +253,7 @@ services:
         condition: service_healthy
 
   # ── PIP — Policy Information Point ───────────────────────────────────────────
-  # Caches ConsumerAuth grants. Polls ConsumerAuth /authorization/lookup and
+  # Caches ConsumerAuth grants. Polls ConsumerAuth /consumerauthorization/authorization/lookup and
   # exposes a versioned grant cache at /grants. PAP background loop polls PIP
   # and rebuilds XACML only when the version (i.e. grant content) changes.
   # Start PIP before PAP so that PAP's initial SyncFromPIP() can succeed.
@@ -315,11 +315,18 @@ services:
         condition: service_healthy
       consumerauth:
         condition: service_healthy
+      authentication:
+        condition: service_healthy
     restart: "no"
     command:
       - sh
       - -c
       - |-
+        # Register robot-fleet system identities so they can log in to the Authentication service.
+        curl -s -X POST http://authentication:8081/authentication/mgmt/identities \
+          -H 'Content-Type: application/json' \
+          -d '{"authenticationMethod":"PASSWORD","identities":[{"systemName":"robot-fleet-site-1","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-2","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-3","credentials":{"password":"fleet-secret"}}]}' \
+          | grep -q '"identities"' &&
         # XACML policies via PAP (native — instant effect)
         curl -s -X POST http://pap:9405/policies -H 'Content-Type: application/json' \
           -d '{"subject":"portal-cloud-ml","resource":"telemetry","action":"consume","effect":"Permit"}' | grep -q '"id"' &&
@@ -332,11 +339,11 @@ services:
         curl -s -X POST http://pap:9405/policies -H 'Content-Type: application/json' \
           -d '{"subject":"test-probe","resource":"telemetry","action":"consume","effect":"Permit"}' | grep -q '"id"' &&
         # Arrowhead orchestration grants via ConsumerAuth (PIP syncs these automatically)
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' \
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' \
           -d '{"consumerSystemName":"portal-cloud-ml","providerSystemName":"robot-fleet-site-1","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' \
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' \
           -d '{"consumerSystemName":"service-partner-1","providerSystemName":"portal-cloud-ml","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' \
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' \
           -d '{"consumerSystemName":"service-partner-2","providerSystemName":"portal-cloud-ml","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists'
 
   # ── AMQP Enforcement ─────────────────────────────────────────────────────────

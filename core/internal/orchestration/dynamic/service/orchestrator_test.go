@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,52 +11,53 @@ import (
 	"arrowhead/core/internal/orchestration/dynamic/service"
 )
 
-// srResponse builds a fake ServiceRegistry query response with the given providers.
+// srResponse builds a fake AH5 ServiceRegistry service-discovery/lookup response.
 func srResponse(providers ...string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		type system struct {
-			SystemName string `json:"systemName"`
-			Address    string `json:"address"`
-			Port       int    `json:"port"`
+		type provider struct {
+			Name string `json:"name"`
+		}
+		type iface struct {
+			TemplateName string `json:"templateName"`
 		}
 		type instance struct {
-			ServiceDefinition string   `json:"serviceDefinition"`
-			ProviderSystem    system   `json:"providerSystem"`
-			ServiceUri        string   `json:"serviceUri"`
-			Interfaces        []string `json:"interfaces"`
-			Version           int      `json:"version"`
+			InstanceID            string   `json:"instanceId"`
+			Provider              provider `json:"provider"`
+			ServiceDefinitionName string   `json:"serviceDefinitionName"`
+			Interfaces            []iface  `json:"interfaces"`
+			Version               string   `json:"version"`
 		}
 		type response struct {
-			ServiceQueryData []instance `json:"serviceQueryData"`
-			UnfilteredHits   int        `json:"unfilteredHits"`
+			Entries []instance `json:"entries"`
+			Count   int        `json:"count"`
 		}
 		var instances []instance
 		for i, p := range providers {
 			instances = append(instances, instance{
-				ServiceDefinition: "temperature-service",
-				ProviderSystem:    system{SystemName: p, Address: "10.0.0.1", Port: 9000 + i},
-				ServiceUri:        "/temperature",
-				Interfaces:        []string{"HTTP"},
-				Version:           1,
+				InstanceID:            p + "|temperature-service|1",
+				Provider:              provider{Name: p},
+				ServiceDefinitionName: "temperature-service",
+				Interfaces:            []iface{{TemplateName: "HTTP"}},
+				Version:               fmt.Sprintf("%d", i+1),
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response{ServiceQueryData: instances, UnfilteredHits: len(instances)})
+		json.NewEncoder(w).Encode(response{Entries: instances, Count: len(instances)})
 	}
 }
 
-// caResponse builds a fake ConsumerAuthorization verify response.
+// caResponse builds a fake ConsumerAuthorization verify response (plain JSON Boolean).
 func caAlwaysAuthorized() func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]bool{"authorized": true})
+		json.NewEncoder(w).Encode(true)
 	}
 }
 
 func caAlwaysDenied() func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]bool{"authorized": false})
+		json.NewEncoder(w).Encode(false)
 	}
 }
 
@@ -63,7 +65,7 @@ func caAlwaysDenied() func(http.ResponseWriter, *http.Request) {
 func fakeAuthSys(valid bool, systemName string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"valid": valid, "systemName": systemName})
+		json.NewEncoder(w).Encode(map[string]any{"verified": valid, "systemName": systemName})
 	}
 }
 
@@ -92,8 +94,8 @@ func TestOrchestrateDynamicNoAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Response) != 2 {
-		t.Errorf("expected 2 results (auth disabled), got %d", len(resp.Response))
+	if len(resp.Results) != 2 {
+		t.Errorf("expected 2 results (auth disabled), got %d", len(resp.Results))
 	}
 }
 
@@ -108,8 +110,8 @@ func TestOrchestrateDynamicEmptySR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Response) != 0 {
-		t.Errorf("expected 0 results for empty SR, got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected 0 results for empty SR, got %d", len(resp.Results))
 	}
 }
 
@@ -126,8 +128,8 @@ func TestOrchestrateDynamicAuthAllAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Response) != 2 {
-		t.Errorf("expected 2 results (all authorized), got %d", len(resp.Response))
+	if len(resp.Results) != 2 {
+		t.Errorf("expected 2 results (all authorized), got %d", len(resp.Results))
 	}
 }
 
@@ -142,8 +144,8 @@ func TestOrchestrateDynamicAuthAllDenied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Response) != 0 {
-		t.Errorf("expected 0 results (all denied), got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected 0 results (all denied), got %d", len(resp.Results))
 	}
 }
 
@@ -152,12 +154,12 @@ func TestOrchestrateDynamicAuthPartial(t *testing.T) {
 	allowedProvider := "sensor-1"
 	ca := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			ProviderSystemName string `json:"providerSystemName"`
+			Provider string `json:"provider"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
-		authorized := req.ProviderSystemName == allowedProvider
+		authorized := req.Provider == allowedProvider
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]bool{"authorized": authorized})
+		json.NewEncoder(w).Encode(authorized)
 	}))
 	defer ca.Close()
 
@@ -169,11 +171,11 @@ func TestOrchestrateDynamicAuthPartial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Response) != 1 {
-		t.Fatalf("expected 1 authorized result, got %d", len(resp.Response))
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 authorized result, got %d", len(resp.Results))
 	}
-	if resp.Response[0].Provider.SystemName != "sensor-1" {
-		t.Errorf("expected sensor-1, got %q", resp.Response[0].Provider.SystemName)
+	if resp.Results[0].ProviderName != "sensor-1" {
+		t.Errorf("expected sensor-1, got %q", resp.Results[0].ProviderName)
 	}
 }
 
@@ -188,8 +190,8 @@ func TestOrchestrateDynamicCAUnreachableFailsClosed(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Fail-closed: unreachable CA means provider is excluded.
-	if len(resp.Response) != 0 {
-		t.Errorf("expected 0 results when CA unreachable (fail-closed), got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected 0 results when CA unreachable (fail-closed), got %d", len(resp.Results))
 	}
 }
 
@@ -280,12 +282,12 @@ func TestOrchestrateIdentityVerifiedNameUsedForCACheck(t *testing.T) {
 
 	ca := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			ConsumerSystemName string `json:"consumerSystemName"`
+			Consumer string `json:"consumer"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
-		authorized := req.ConsumerSystemName == "consumer-app"
+		authorized := req.Consumer == "consumer-app"
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]bool{"authorized": authorized})
+		json.NewEncoder(w).Encode(authorized)
 	}))
 	defer ca.Close()
 
@@ -300,8 +302,8 @@ func TestOrchestrateIdentityVerifiedNameUsedForCACheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Response) != 1 {
-		t.Errorf("expected 1 result (verified name used for CA), got %d", len(resp.Response))
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result (verified name used for CA), got %d", len(resp.Results))
 	}
 }
 
@@ -315,8 +317,8 @@ func TestOrchestrateIdentityDisabledNoTokenNeeded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Response) != 1 {
-		t.Errorf("expected 1 result when identity check disabled, got %d", len(resp.Response))
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result when identity check disabled, got %d", len(resp.Results))
 	}
 }
 
@@ -383,7 +385,30 @@ func TestOrchestrateCAMalformedJSONExcludesProvider(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Fail-closed: malformed CA response means provider is excluded.
-	if len(resp.Response) != 0 {
-		t.Errorf("expected 0 results when CA returns malformed JSON (fail-closed), got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected 0 results when CA returns malformed JSON (fail-closed), got %d", len(resp.Results))
+	}
+}
+
+// ─── Cycle 17.3 — DynamicOrch calls AH5 lookup endpoint ─────────────────────
+
+func TestDynamicOrchCallsAH5LookupEndpoint(t *testing.T) {
+	called := false
+	fakeSR := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/serviceregistry/service-discovery/lookup" {
+			called = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"entries": []any{}, "count": 0})
+	}))
+	defer fakeSR.Close()
+
+	orch := service.NewDynamicOrchestrator(fakeSR.URL, "", "", false, false)
+	orch.Orchestrate(orchmodel.OrchestrationRequest{
+		RequesterSystem:  orchmodel.System{SystemName: "C"},
+		RequestedService: orchmodel.ServiceRequirement{ServiceDefinition: "temp"},
+	}, "")
+	if !called {
+		t.Error("DynamicOrchestrator did not call AH5 lookup endpoint")
 	}
 }

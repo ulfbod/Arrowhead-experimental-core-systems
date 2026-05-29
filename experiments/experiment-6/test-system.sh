@@ -271,7 +271,7 @@ assert_json_gt "analytics-consumer msgCount > 0" "msgCount" 0 "$stats"
 echo
 echo "=== 9. Revocation sync-delay: rest-consumer denied after SYNC_INTERVAL ==="
 
-lookup=$(http_body http://localhost:8082/authorization/lookup)
+lookup=$(http_body http://localhost:8082/consumerauthorization/authorization/lookup)
 rc_grant_id=$(echo "$lookup" \
   | grep -oE '"id":[0-9]+[^}]*"consumerSystemName":"rest-consumer"' \
   | grep -oE '"id":[0-9]+' | grep -oE '[0-9]+' | head -1)
@@ -287,7 +287,7 @@ else
     -d '{"consumer":"rest-consumer","service":"telemetry-rest"}')
   assert_json_value "rest-consumer → Permit before revocation" "decision" "Permit" "$permit_before"
 
-  revoke_code=$(http_code -X DELETE "http://localhost:8082/authorization/revoke/$rc_grant_id")
+  revoke_code=$(http_code -X DELETE "http://localhost:8082/consumerauthorization/authorization/revoke/$rc_grant_id")
   check_eq "revoke rest-consumer grant → 200" "200" "$revoke_code"
 
   echo "  waiting 30 s for policy-sync cycle to propagate revocation..."
@@ -303,7 +303,7 @@ else
     http://localhost:9093/telemetry/latest)
   check_eq "rest-consumer REST request → 403 after revocation" "403" "$http_code_after"
 
-  regrant=$(http_body -X POST http://localhost:8082/authorization/grant \
+  regrant=$(http_body -X POST http://localhost:8082/consumerauthorization/authorization/grant \
     -H 'Content-Type: application/json' \
     -d '{"consumerSystemName":"rest-consumer","providerSystemName":"data-provider","serviceDefinition":"telemetry-rest"}')
   if [[ "$regrant" == *'"id":'* ]] || [[ "$regrant" == *"already exists"* ]]; then

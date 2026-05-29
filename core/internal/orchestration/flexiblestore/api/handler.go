@@ -19,10 +19,10 @@ type Handler struct {
 func NewHandler(orch *service.FlexibleStoreOrchestrator) http.Handler {
 	h := &Handler{orch: orch}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/orchestration/flexiblestore", h.handleOrchestrate)
-	mux.HandleFunc("/orchestration/flexiblestore/rules", h.handleRules)
-	mux.HandleFunc("/orchestration/flexiblestore/rules/", h.handleRuleByID)
-	mux.HandleFunc("/orchestration/flexiblestore/health", h.handleHealth)
+	mux.HandleFunc("/serviceorchestration/orchestration/pull", h.handleOrchestrate)
+	mux.HandleFunc("/serviceorchestration/orchestration/flexiblestore/rules", h.handleRules)
+	mux.HandleFunc("/serviceorchestration/orchestration/flexiblestore/rules/", h.handleRuleByID)
+	mux.HandleFunc("/serviceorchestration/orchestration/pull/health", h.handleHealth)
 	mux.HandleFunc("/health", h.handleHealth)
 	return mux
 }
@@ -75,7 +75,7 @@ func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
 		return
 	}
-	idStr := strings.TrimPrefix(r.URL.Path, "/orchestration/flexiblestore/rules/")
+	idStr := strings.TrimPrefix(r.URL.Path, "/serviceorchestration/orchestration/flexiblestore/rules/")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid rule id")
@@ -99,5 +99,29 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+	exType := errTypeForStatus(status)
+	type errBody struct {
+		ErrorMessage  string `json:"errorMessage"`
+		ErrorCode     int    `json:"errorCode"`
+		ExceptionType string `json:"exceptionType"`
+		Origin        string `json:"origin"`
+	}
+	writeJSON(w, status, errBody{ErrorMessage: msg, ErrorCode: status, ExceptionType: exType, Origin: "serviceorchestration.orchestration.flexiblestore"})
+}
+
+func errTypeForStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest, http.StatusMethodNotAllowed:
+		return "INVALID_PARAMETER"
+	case http.StatusUnauthorized:
+		return "AUTH"
+	case http.StatusForbidden:
+		return "FORBIDDEN"
+	case http.StatusNotFound:
+		return "DATA_NOT_FOUND"
+	case http.StatusLocked:
+		return "LOCKED"
+	default:
+		return "INTERNAL_SERVER_ERROR"
+	}
 }

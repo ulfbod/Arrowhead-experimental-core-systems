@@ -30,9 +30,9 @@ graph TD
         RA["rest-authz :9093\n─────────────\nHTTP reverse proxy PEP\nX-Consumer-Name header\nAuthorizes via AuthzForce"]
     end
 
-    TAH -->|"GET /authorization/lookup\n[live per request]"| CA_ext["ConsumerAuth :8082\n(core)"]
-    TAS -->|"GET /authorization/lookup\n[every SYNC_INTERVAL]"| CA_ext
-    PS  -->|"GET /authorization/lookup\n[every SYNC_INTERVAL]"| CA_ext
+    TAH -->|"GET /consumerauthorization/authorization/lookup\n[live per request]"| CA_ext["ConsumerAuth :8082\n(core)"]
+    TAS -->|"GET /consumerauthorization/authorization/lookup\n[every SYNC_INTERVAL]"| CA_ext
+    PS  -->|"GET /consumerauthorization/authorization/lookup\n[every SYNC_INTERVAL]"| CA_ext
 
     TAX -->|"POST /pdp"| AZS
     KA  -->|"POST /pdp"| AZS
@@ -65,7 +65,7 @@ graph LR
     PUB["robot-fleet\n(AMQP)"]
 
     RMQ -->|"POST /auth/user\nPOST /auth/vhost\nPOST /auth/resource\nPOST /auth/topic\n(every operation)"| TAH
-    TAH -->|"GET /authorization/lookup\n[Bearer token]"| CA
+    TAH -->|"GET /consumerauthorization/authorization/lookup\n[Bearer token]"| CA
     CON -->|"AMQP connect + subscribe"| RMQ
     PUB -->|"AMQP publish"| RMQ
 ```
@@ -96,7 +96,7 @@ graph TD
     KFK_CON["analytics-consumer\n(SSE)"]
     PUB["robot-fleet\n(dual publish)"]
 
-    PS  -->|"GET /authorization/lookup\n[every 30 s]"| CA
+    PS  -->|"GET /consumerauthorization/authorization/lookup\n[every 30 s]"| CA
     PS  -->|"PUT PolicySet\n(XACML 3.0)"| AZ
 
     RMQ -->|"POST /auth/*\n(every operation)"| TAX
@@ -134,7 +134,7 @@ graph TD
     KFK["Kafka :9092"]
     DP["data-provider :9094\n─────────────\nKafka consumer + REST API\n(upstream of rest-authz)"]
 
-    PS  -->|"GET /authorization/lookup"| CA
+    PS  -->|"GET /consumerauthorization/authorization/lookup"| CA
     PS  -->|"PUT PolicySet (XACML 3.0)"| AZ
 
     RMQ -->|"POST /auth/*\n(every operation)"| TAX
@@ -168,7 +168,7 @@ sequenceDiagram
     TAH->>Cache: get rules
     alt cache miss
         Cache-->>TAH: miss
-        TAH->>CA: GET /authorization/lookup [Bearer]
+        TAH->>CA: GET /consumerauthorization/authorization/lookup [Bearer]
         CA-->>TAH: [{consumer, provider, service}, ...]
         TAH->>Cache: set rules (TTL)
     else cache hit
@@ -198,7 +198,7 @@ sequenceDiagram
     participant AZ as authzforce-server
 
     loop every SYNC_INTERVAL
-        PS->>CA: GET /authorization/lookup [Bearer]
+        PS->>CA: GET /consumerauthorization/authorization/lookup [Bearer]
         CA-->>PS: [{consumer, provider, service}, ...]
         PS->>PS: BuildPolicy(grants) → XACML PolicySet XML
         PS->>AZ: PUT /domains/{id}/pap/policies

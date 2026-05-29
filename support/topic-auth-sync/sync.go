@@ -101,10 +101,10 @@ func (s *syncer) sync() error {
 	return nil
 }
 
-// fetchRules calls GET {consumerAuthURL}/authorization/lookup and returns the rules.
+// fetchRules calls GET {consumerAuthURL}/consumerauthorization/authorization/lookup and returns the rules.
 // If an authToken is set (Phase 2), it is attached as a Bearer header.
 func (s *syncer) fetchRules() ([]AuthRule, error) {
-	req, err := http.NewRequest(http.MethodGet, s.cfg.consumerAuthURL+"/authorization/lookup", nil)
+	req, err := http.NewRequest(http.MethodGet, s.cfg.consumerAuthURL+"/consumerauthorization/authorization/lookup", nil)
 	if err != nil {
 		return nil, err
 	}

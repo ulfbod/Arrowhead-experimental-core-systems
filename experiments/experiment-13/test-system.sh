@@ -172,21 +172,21 @@ assert_json_value "GET /status → status=UP" "status"  "UP" "$orch_status"
 assert_json_field "GET /status → xacml"    "xacml"    "$orch_status"
 assert_json_field "GET /status → domainID" "domainID" "$orch_status"
 
-check_eq "GET /orchestration/dynamic → 405" "405" \
-  "$(http_code http://localhost:8993/orchestration/dynamic)"
+check_eq "GET /serviceorchestration/orchestration/pull → 405" "405" \
+  "$(http_code http://localhost:8993/serviceorchestration/orchestration/pull)"
 
 check_eq "POST missing requester → 400" "400" \
-  "$(http_code -X POST http://localhost:8993/orchestration/dynamic \
+  "$(http_code -X POST http://localhost:8993/serviceorchestration/orchestration/pull \
     -H 'Content-Type: application/json' \
     -d '{"requesterSystem":{"systemName":""},"requestedService":{"serviceDefinition":"telemetry"}}')"
 
-orch_unauth=$(http_body -X POST http://localhost:8993/orchestration/dynamic \
+orch_unauth=$(http_body -X POST http://localhost:8993/serviceorchestration/orchestration/pull \
   -H 'Content-Type: application/json' \
   -d '{"requesterSystem":{"systemName":"unauthorized","address":"1.1.1.1","port":8000},"requestedService":{"serviceDefinition":"telemetry"}}')
 assert_json_field "Unauthorized consumer → response field" "response" "$orch_unauth"
 assert_contains   "Unauthorized consumer → empty"         '"response":[]' "$(echo "$orch_unauth" | tr -d ' \n')"
 
-orch_sp1=$(http_body -X POST http://localhost:8993/orchestration/dynamic \
+orch_sp1=$(http_body -X POST http://localhost:8993/serviceorchestration/orchestration/pull \
   -H 'Content-Type: application/json' \
   -d '{"requesterSystem":{"systemName":"service-partner-1","address":"1.1.1.1","port":8000},"requestedService":{"serviceDefinition":"telemetry-rest"}}')
 assert_json_field "service-partner-1 telemetry-rest → response field" "response" "$orch_sp1"

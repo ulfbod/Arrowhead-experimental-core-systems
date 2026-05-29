@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"arrowhead/core/internal/orchestration/dynamic/api"
@@ -24,55 +25,54 @@ func newTestHandlerWithIdentity(srURL, caURL, authSysURL string, checkAuth, chec
 
 func fakeSR(providers ...string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		type sys struct {
-			SystemName string `json:"systemName"`
-			Address    string `json:"address"`
-			Port       int    `json:"port"`
+		type prov struct {
+			Name string `json:"name"`
+		}
+		type iface struct {
+			TemplateName string `json:"templateName"`
 		}
 		type inst struct {
-			ServiceDefinition string   `json:"serviceDefinition"`
-			ProviderSystem    sys      `json:"providerSystem"`
-			ServiceUri        string   `json:"serviceUri"`
-			Interfaces        []string `json:"interfaces"`
-			Version           int      `json:"version"`
+			InstanceID            string `json:"instanceId"`
+			Provider              prov   `json:"provider"`
+			ServiceDefinitionName string `json:"serviceDefinitionName"`
+			Interfaces            []iface `json:"interfaces"`
 		}
 		type resp struct {
-			ServiceQueryData []inst `json:"serviceQueryData"`
-			UnfilteredHits   int    `json:"unfilteredHits"`
+			Entries []inst `json:"entries"`
+			Count   int    `json:"count"`
 		}
 		var instances []inst
-		for i, p := range providers {
+		for _, p := range providers {
 			instances = append(instances, inst{
-				ServiceDefinition: "temperature-service",
-				ProviderSystem:    sys{SystemName: p, Address: "10.0.0.1", Port: 9000 + i},
-				ServiceUri:        "/temperature",
-				Interfaces:        []string{"HTTP"},
-				Version:           1,
+				InstanceID:            p + "|temperature-service|1",
+				Provider:              prov{Name: p},
+				ServiceDefinitionName: "temperature-service",
+				Interfaces:            []iface{{TemplateName: "HTTP"}},
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp{ServiceQueryData: instances, UnfilteredHits: len(instances)})
+		json.NewEncoder(w).Encode(resp{Entries: instances, Count: len(instances)})
 	}))
 }
 
 func fakeCA(authorized bool) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]bool{"authorized": authorized})
+		json.NewEncoder(w).Encode(authorized)
 	}))
 }
 
 func fakeAuthSys(valid bool, systemName string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"valid": valid, "systemName": systemName})
+		json.NewEncoder(w).Encode(map[string]any{"verified": valid, "systemName": systemName})
 	}))
 }
 
 func postOrchestrate(t *testing.T, h http.Handler, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	data, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/orchestration/dynamic", bytes.NewReader(data))
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/pull", bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -82,7 +82,7 @@ func postOrchestrate(t *testing.T, h http.Handler, body any) *httptest.ResponseR
 func postOrchestrateWithToken(t *testing.T, h http.Handler, body any, token string) *httptest.ResponseRecorder {
 	t.Helper()
 	data, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/orchestration/dynamic", bytes.NewReader(data))
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/pull", bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -90,6 +90,23 @@ func postOrchestrateWithToken(t *testing.T, h http.Handler, body any, token stri
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	return w
+}
+
+// ---- ErrorResponse shape ----
+
+func TestDynOrchBadBodyReturnsExceptionType(t *testing.T) {
+	h := newTestHandler("", "", false)
+	w := postOrchestrate(t, h, map[string]any{})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	var body struct {
+		ExceptionType string `json:"exceptionType"`
+	}
+	json.NewDecoder(w.Body).Decode(&body)
+	if body.ExceptionType == "" {
+		t.Errorf("exceptionType is empty — response: %s", w.Body.String())
+	}
 }
 
 var validBody = map[string]any{
@@ -110,11 +127,11 @@ func TestHandlerOrchestrateMatchNoAuth(t *testing.T) {
 	}
 	var resp orchmodel.OrchestrationResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if len(resp.Response) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(resp.Response))
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
 	}
-	if resp.Response[0].Provider.SystemName != "sensor-1" {
-		t.Errorf("expected sensor-1, got %q", resp.Response[0].Provider.SystemName)
+	if resp.Results[0].ProviderName != "sensor-1" {
+		t.Errorf("expected sensor-1, got %q", resp.Results[0].ProviderName)
 	}
 }
 
@@ -131,8 +148,8 @@ func TestHandlerOrchestrateNoMatchEmpty(t *testing.T) {
 	}
 	var resp orchmodel.OrchestrationResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if len(resp.Response) != 0 {
-		t.Errorf("expected empty response, got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected empty response, got %d", len(resp.Results))
 	}
 }
 
@@ -146,8 +163,8 @@ func TestHandlerOrchestrateWithAuthAllDenied(t *testing.T) {
 	w := postOrchestrate(t, h, validBody)
 	var resp orchmodel.OrchestrationResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if len(resp.Response) != 0 {
-		t.Errorf("expected 0 results (all denied), got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected 0 results (all denied), got %d", len(resp.Results))
 	}
 }
 
@@ -155,7 +172,7 @@ func TestHandlerOrchestrateInvalidJSON(t *testing.T) {
 	sr := fakeSR()
 	defer sr.Close()
 	h := newTestHandler(sr.URL, "", false)
-	req := httptest.NewRequest(http.MethodPost, "/orchestration/dynamic", bytes.NewBufferString("{bad"))
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/pull", bytes.NewBufferString("{bad"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -168,7 +185,7 @@ func TestHandlerOrchestrateWrongMethod(t *testing.T) {
 	sr := fakeSR()
 	defer sr.Close()
 	h := newTestHandler(sr.URL, "", false)
-	req := httptest.NewRequest(http.MethodGet, "/orchestration/dynamic", nil)
+	req := httptest.NewRequest(http.MethodGet, "/serviceorchestration/orchestration/pull", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
@@ -180,7 +197,7 @@ func TestHandlerHealth(t *testing.T) {
 	sr := fakeSR()
 	defer sr.Close()
 	h := newTestHandler(sr.URL, "", false)
-	for _, path := range []string{"/health", "/orchestration/dynamic/health"} {
+	for _, path := range []string{"/health", "/serviceorchestration/orchestration/pull/health"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
@@ -232,8 +249,8 @@ func TestHandlerOrchestrateIdentityValidToken200(t *testing.T) {
 	}
 	var resp orchmodel.OrchestrationResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if len(resp.Response) != 1 {
-		t.Errorf("expected 1 result, got %d", len(resp.Response))
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result, got %d", len(resp.Results))
 	}
 }
 
@@ -267,12 +284,12 @@ func TestHandlerOrchestrateIdentityTokenOverridesSelfReportedName(t *testing.T) 
 
 	ca := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			ConsumerSystemName string `json:"consumerSystemName"`
+			Consumer string `json:"consumer"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
-		authorized := req.ConsumerSystemName == "real-consumer"
+		authorized := req.Consumer == "real-consumer"
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]bool{"authorized": authorized})
+		json.NewEncoder(w).Encode(authorized)
 	}))
 	defer ca.Close()
 
@@ -288,7 +305,384 @@ func TestHandlerOrchestrateIdentityTokenOverridesSelfReportedName(t *testing.T) 
 	}
 	var resp orchmodel.OrchestrationResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if len(resp.Response) != 1 {
-		t.Errorf("expected 1 result (verified name used), got %d", len(resp.Response))
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result (verified name used), got %d", len(resp.Results))
+	}
+}
+
+// ---- TDD 8.1 — path migration ----
+
+func newDynamicOrchTestServer() *httptest.Server {
+	sr := fakeSR("sensor-1", "sensor-2")
+	orch := dynservice.NewDynamicOrchestrator(sr.URL, "", "", false, false)
+	return httptest.NewServer(api.NewHandler(orch))
+}
+
+func TestDynamicOrchNewPath(t *testing.T) {
+	srv := newDynamicOrchTestServer()
+	defer srv.Close()
+	body := `{"requesterSystem":{"systemName":"C","address":"h","port":1},
+              "requestedService":{"serviceDefinition":"svc"},
+              "orchestrationFlags":{}}`
+	resp, err := http.Post(srv.URL+"/serviceorchestration/orchestration/pull",
+		"application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestDynamicOrchOldPathReturns404(t *testing.T) {
+	srv := newDynamicOrchTestServer()
+	defer srv.Close()
+	resp, err := http.Post(srv.URL+"/orchestration/dynamic",
+		"application/json", strings.NewReader(`{"requesterSystem":{"systemName":"C","address":"h","port":1},"requestedService":{"serviceDefinition":"svc"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("old path: expected 404, got %d", resp.StatusCode)
+	}
+}
+
+// ---- TDD 8.2 — orchestrationFlags ----
+
+func TestOrchestrationFlagsMATCHMAKING(t *testing.T) {
+	sr := fakeSR("sensor-1", "sensor-2")
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+
+	body := map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "C", "address": "h", "port": 1},
+		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+		"orchestrationFlags": map[string]any{"MATCHMAKING": true},
+	}
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/pull", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp orchmodel.OrchestrationResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Results) != 1 {
+		t.Errorf("MATCHMAKING: expected exactly 1 result, got %d", len(resp.Results))
+	}
+}
+
+func TestOrchestrationFlagsONLY_PREFERRED(t *testing.T) {
+	sr := fakeSR("sensor-1", "sensor-2")
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+
+	body := map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "C", "address": "h", "port": 1},
+		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+		"orchestrationFlags": map[string]any{"ONLY_PREFERRED": true},
+		"preferredProviders": []map[string]any{
+			{"systemName": "sensor-1", "address": "10.0.0.1", "port": 9000},
+		},
+	}
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/pull", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp orchmodel.OrchestrationResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Results) != 1 {
+		t.Errorf("ONLY_PREFERRED: expected 1 result (sensor-1 only), got %d", len(resp.Results))
+	}
+	if len(resp.Results) == 1 && resp.Results[0].ProviderName != "sensor-1" {
+		t.Errorf("ONLY_PREFERRED: expected sensor-1, got %s", resp.Results[0].ProviderName)
+	}
+}
+
+// ---- Step 18.2: Lock management ----
+
+func postJSON(t *testing.T, h http.Handler, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestLockCreate(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/lock/create", map[string]any{
+		"owner":              "consumer-app",
+		"serviceInstanceId":  "inst-1",
+		"orchestrationJobId": "00000000-0000-0000-0000-000000000001",
+		"temporary":          true,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestLockQueryExcludesExpired(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	// Create a lock that expires immediately.
+	postJSON(t, h, "/serviceorchestration/orchestration/mgmt/lock/create", map[string]any{
+		"owner": "expired-owner", "serviceInstanceId": "i", "orchestrationJobId": "oid",
+		"expiresAt": "2000-01-01T00:00:00Z", // past
+	})
+	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/lock/query", map[string]any{})
+	var resp struct{ Count int `json:"count"` }
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Count != 0 {
+		t.Errorf("count = %d, want 0 (expired lock excluded)", resp.Count)
+	}
+}
+
+func TestLockQueryIncludesActive(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	postJSON(t, h, "/serviceorchestration/orchestration/mgmt/lock/create", map[string]any{
+		"owner": "active-owner", "serviceInstanceId": "i", "orchestrationJobId": "oid",
+	})
+	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/lock/query", map[string]any{})
+	var resp struct{ Count int `json:"count"` }
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Count != 1 {
+		t.Errorf("count = %d, want 1", resp.Count)
+	}
+}
+
+func TestLockRemoveByOwner(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	postJSON(t, h, "/serviceorchestration/orchestration/mgmt/lock/create", map[string]any{
+		"owner": "to-remove", "serviceInstanceId": "i", "orchestrationJobId": "oid",
+	})
+	// Remove by owner
+	req := httptest.NewRequest(http.MethodDelete,
+		"/serviceorchestration/orchestration/mgmt/lock/remove/to-remove", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", w.Code)
+	}
+	// Verify gone
+	w2 := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/lock/query", map[string]any{})
+	var resp struct{ Count int `json:"count"` }
+	json.NewDecoder(w2.Body).Decode(&resp)
+	if resp.Count != 0 {
+		t.Errorf("count = %d after remove, want 0", resp.Count)
+	}
+}
+
+// ---- Step 18.3: Orchestration history ----
+
+func TestHistoryRecordedOnPull(t *testing.T) {
+	sr := fakeSR("sensor-1")
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	// Issue a pull request.
+	postJSON(t, h, "/serviceorchestration/orchestration/pull", map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "C", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	})
+	// Query history.
+	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/history/query", map[string]any{})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct{ Count int `json:"count"` }
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Count < 1 {
+		t.Error("history count = 0 after pull")
+	}
+}
+
+// ---- Step 19.1: Subscribe / Unsubscribe ----
+
+var validSubscribeBody = map[string]any{
+	"ownerSystemName":  "consumer-app",
+	"targetSystemName": "consumer-app",
+	"orchestrationRequest": map[string]any{
+		"requesterSystem":    map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
+		"serviceRequirement": map[string]any{"serviceDefinition": "temperature-service"},
+	},
+}
+
+func TestSubscribeReturnsUUID(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSubscribeBody)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct{ ID string `json:"id"` }
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.ID) != 36 {
+		t.Errorf("id = %q, not a UUID", resp.ID)
+	}
+}
+
+func TestSubscribeDuplicateReturns200(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSubscribeBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSubscribeBody)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 on duplicate subscribe, got %d", w.Code)
+	}
+}
+
+func TestUnsubscribeNotFound204(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	req := httptest.NewRequest(http.MethodDelete,
+		"/serviceorchestration/orchestration/unsubscribe/no-such-id", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", w.Code)
+	}
+}
+
+func TestUnsubscribeFound200(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	sw := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSubscribeBody)
+	var sub struct{ ID string `json:"id"` }
+	json.NewDecoder(sw.Body).Decode(&sub)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/serviceorchestration/orchestration/unsubscribe/"+sub.ID, nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 on found unsubscribe, got %d", w.Code)
+	}
+}
+
+// ---- Step 19.2: Push management endpoints ----
+
+func TestPushMgmtSubscribeAndQuery(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	postJSON(t, h, "/serviceorchestration/orchestration/subscribe", map[string]any{
+		"ownerSystemName": "C", "targetSystemName": "C",
+		"orchestrationRequest": map[string]any{
+			"requesterSystem":    map[string]any{"systemName": "C", "address": "localhost", "port": 0},
+			"serviceRequirement": map[string]any{"serviceDefinition": "svc"},
+		},
+	})
+	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/push/query", map[string]any{})
+	if w.Code != http.StatusOK {
+		t.Fatalf("push/query: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct{ Count int `json:"count"` }
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Count < 1 {
+		t.Error("push/query count = 0 after subscribe")
+	}
+}
+
+func TestPushMgmtSubscribeCreates201(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/push/subscribe", map[string]any{
+		"ownerSystemName": "op", "targetSystemName": "C",
+		"orchestrationRequest": map[string]any{
+			"requesterSystem":    map[string]any{"systemName": "C", "address": "localhost", "port": 0},
+			"serviceRequirement": map[string]any{"serviceDefinition": "svc"},
+		},
+	})
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected 201, got %d", w.Code)
+	}
+}
+
+func TestPushMgmtUnsubscribe(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	sw := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSubscribeBody)
+	var sub struct{ ID string `json:"id"` }
+	json.NewDecoder(sw.Body).Decode(&sub)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/serviceorchestration/orchestration/mgmt/push/unsubscribe?ids="+sub.ID, nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", w.Code)
+	}
+	// Confirm gone
+	qw := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/push/query", map[string]any{})
+	var resp struct{ Count int `json:"count"` }
+	json.NewDecoder(qw.Body).Decode(&resp)
+	if resp.Count != 0 {
+		t.Errorf("count = %d after unsubscribe, want 0", resp.Count)
+	}
+}
+
+// ---- Step 19.3: Trigger records PENDING history entry ----
+
+func TestTriggerCreatesPendingHistoryEntry(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	// Subscribe first to get a valid subscriptionId.
+	sw := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", map[string]any{
+		"ownerSystemName": "C", "targetSystemName": "C",
+		"orchestrationRequest": map[string]any{
+			"requesterSystem":    map[string]any{"systemName": "C", "address": "localhost", "port": 0},
+			"serviceRequirement": map[string]any{"serviceDefinition": "svc"},
+		},
+	})
+	var sub struct{ ID string `json:"id"` }
+	json.NewDecoder(sw.Body).Decode(&sub)
+
+	// Trigger.
+	tw := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/push/trigger",
+		map[string]any{"subscriptionId": sub.ID})
+	if tw.Code != http.StatusOK {
+		t.Fatalf("trigger: expected 200, got %d: %s", tw.Code, tw.Body.String())
+	}
+	// Check history.
+	hw := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/history/query", map[string]any{})
+	var histResp struct{ Count int `json:"count"` }
+	json.NewDecoder(hw.Body).Decode(&histResp)
+	if histResp.Count < 1 {
+		t.Error("trigger did not create history entry")
+	}
+}
+
+func TestTriggerNotFoundReturns404(t *testing.T) {
+	sr := fakeSR()
+	defer sr.Close()
+	h := newTestHandler(sr.URL, "", false)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/push/trigger",
+		map[string]any{"subscriptionId": "no-such-id"})
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for unknown subscription, got %d", w.Code)
 	}
 }

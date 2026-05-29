@@ -59,61 +59,67 @@ export async function lookupRules(consumer = '', provider = '', service = ''): P
   if (consumer) params.set('consumer', consumer)
   if (provider) params.set('provider', provider)
   if (service)  params.set('service', service)
-  return get(`/authorization/lookup${params.size ? '?' + params : ''}`)
+  return get(`/consumerauthorization/authorization/lookup${params.size ? '?' + params : ''}`)
 }
 
 export async function grantRule(body: { consumerSystemName: string; providerSystemName: string; serviceDefinition: string }): Promise<AuthRule> {
-  return post('/authorization/grant', body)
+  return post('/consumerauthorization/authorization/grant', body)
 }
 
 export async function revokeRule(id: number): Promise<void> {
-  return del(`/authorization/revoke/${id}`)
+  return del(`/consumerauthorization/authorization/revoke/${id}`)
 }
 
 export async function verifyAuthorization(body: { consumerSystemName: string; providerSystemName: string; serviceDefinition: string }): Promise<VerifyResponse> {
-  return post('/authorization/verify', body)
+  return post('/consumerauthorization/authorization/verify', body)
 }
 
 // ── DynamicOrchestration ──────────────────────────────────────────────────────
 
 export async function orchestrateDynamic(req: OrchestrationRequest): Promise<OrchestrationResponse> {
-  return post('/orchestration/dynamic', req)
+  return post('/serviceorchestration/orchestration/pull', req)
 }
 
 // ── SimpleStoreOrchestration ──────────────────────────────────────────────────
 
 export async function orchestrateSimpleStore(req: OrchestrationRequest): Promise<OrchestrationResponse> {
-  return post('/orchestration/simplestore', req)
+  // /simplestore-pull is a dev-proxy virtual path that rewrites to the simplestore backend
+  return post('/simplestore-pull', req)
 }
 
 export async function listSimpleStoreRules(): Promise<RulesResponse> {
-  return get('/orchestration/simplestore/rules')
+  return post('/serviceorchestration/orchestration/mgmt/simple-store/query', {})
 }
 
 export async function createSimpleStoreRule(body: object): Promise<StoreRule> {
-  return post('/orchestration/simplestore/rules', body)
+  return post('/serviceorchestration/orchestration/mgmt/simple-store/create', body)
 }
 
-export async function deleteSimpleStoreRule(id: number): Promise<void> {
-  return del(`/orchestration/simplestore/rules/${id}`)
+export async function deleteSimpleStoreRule(id: string): Promise<void> {
+  return del(`/serviceorchestration/orchestration/simplestore/rules/${id}`)
+}
+
+export async function modifySimpleStorePriorities(priorities: Record<string, number>): Promise<RulesResponse> {
+  return post('/serviceorchestration/orchestration/mgmt/simple-store/modify-priorities', { priorities })
 }
 
 // ── FlexibleStoreOrchestration ────────────────────────────────────────────────
 
 export async function orchestrateFlexibleStore(req: OrchestrationRequest): Promise<OrchestrationResponse> {
-  return post('/orchestration/flexiblestore', req)
+  // /flexiblestore-pull is a dev-proxy virtual path that rewrites to the flexiblestore backend
+  return post('/flexiblestore-pull', req)
 }
 
 export async function listFlexibleStoreRules(): Promise<RulesResponse> {
-  return get('/orchestration/flexiblestore/rules')
+  return get('/serviceorchestration/orchestration/flexiblestore/rules')
 }
 
 export async function createFlexibleStoreRule(body: object): Promise<FlexibleRule> {
-  return post('/orchestration/flexiblestore/rules', body)
+  return post('/serviceorchestration/orchestration/flexiblestore/rules', body)
 }
 
 export async function deleteFlexibleStoreRule(id: number): Promise<void> {
-  return del(`/orchestration/flexiblestore/rules/${id}`)
+  return del(`/serviceorchestration/orchestration/flexiblestore/rules/${id}`)
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────

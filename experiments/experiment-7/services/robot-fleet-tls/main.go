@@ -77,7 +77,7 @@ type authLoginRequest struct {
 type authLoginResponse struct {
 	Token      string    `json:"token"`
 	SystemName string    `json:"systemName"`
-	ExpiresAt  time.Time `json:"expiresAt"`
+	ExpirationTime time.Time `json:"expirationTime"`
 }
 
 func envOr(key, def string) string {
@@ -447,7 +447,10 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		fleetMu.RLock()
-		cfg := fleet.Config()
+		var cfg FleetConfig
+		if fleet != nil {
+			cfg = fleet.Config()
+		}
 		fleetMu.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(cfg)
@@ -477,7 +480,10 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 func handleStats(w http.ResponseWriter, _ *http.Request) {
 	fleetMu.RLock()
-	stats := fleet.Stats()
+	var stats FleetStats
+	if fleet != nil {
+		stats = fleet.Stats()
+	}
 	fleetMu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)

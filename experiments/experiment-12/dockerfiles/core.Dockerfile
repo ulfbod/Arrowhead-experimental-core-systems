@@ -2,7 +2,7 @@
 # Reuses the core module directly.
 # Build context: repo root (ArrowheadCore/core/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 ARG CMD
 WORKDIR /src
 COPY . .

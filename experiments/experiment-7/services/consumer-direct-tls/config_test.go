@@ -17,7 +17,7 @@ func TestRequireHTTPS(t *testing.T) {
 		wantErr bool
 	}{
 		{"https URL accepted", "AUTH_URL", "https://authentication:8481", false},
-		{"https URL with path accepted", "ORCHESTRATION_URL", "https://dynamicorch:8483/orchestration/dynamic", false},
+		{"https URL with path accepted", "ORCHESTRATION_URL", "https://dynamicorch:8483/serviceorchestration/orchestration/pull", false},
 		{"empty URL accepted (optional field)", "SR_URL", "", false},
 		{"http URL rejected", "AUTH_URL", "http://authentication:8081", true},
 		{"http URL rejected for orchestration", "ORCHESTRATION_URL", "http://dynamicorch:8083", true},

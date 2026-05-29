@@ -48,19 +48,17 @@ func (o *SimpleStoreOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest
 			continue
 		}
 		results = append(results, orchmodel.OrchestrationResult{
-			Provider: rule.Provider,
-			Service: orchmodel.ServiceInfo{
-				ServiceDefinition: rule.ServiceDefinition,
-				ServiceUri:        rule.ServiceUri,
-				Interfaces:        rule.Interfaces,
-				Metadata:          rule.Metadata,
-			},
+			ProviderName:      rule.Provider.SystemName,
+			ServiceDefinition: rule.ServiceDefinition,
+			ServiceUri:        rule.ServiceUri,
+			Interfaces:        rule.Interfaces,
+			Metadata:          rule.Metadata,
 		})
 	}
 	if results == nil {
 		results = []orchmodel.OrchestrationResult{}
 	}
-	return orchmodel.OrchestrationResponse{Response: results}, nil
+	return orchmodel.OrchestrationResponse{Results: results}, nil
 }
 
 // CreateRule validates and stores a new orchestration rule.
@@ -86,17 +84,26 @@ func (o *SimpleStoreOrchestrator) CreateRule(req model.CreateRuleRequest) (model
 		Provider:           req.Provider,
 		ServiceUri:         req.ServiceUri,
 		Interfaces:         req.Interfaces,
+		Priority:           req.Priority,
 		Metadata:           req.Metadata,
 	}
 	return o.repo.Save(rule), nil
 }
 
-// DeleteRule removes a rule by ID.
-func (o *SimpleStoreOrchestrator) DeleteRule(id int64) error {
+// DeleteRule removes a rule by UUID.
+func (o *SimpleStoreOrchestrator) DeleteRule(id string) error {
 	if !o.repo.Delete(id) {
 		return ErrRuleNotFound
 	}
 	return nil
+}
+
+// ModifyPriorities updates the priority of each rule in the map.
+// Unknown IDs are silently skipped.
+func (o *SimpleStoreOrchestrator) ModifyPriorities(req model.ModifyPrioritiesRequest) {
+	for id, priority := range req.Priorities {
+		o.repo.UpdatePriority(id, priority)
+	}
 }
 
 // ListRules returns all stored rules.
@@ -105,5 +112,5 @@ func (o *SimpleStoreOrchestrator) ListRules() model.RulesResponse {
 	if all == nil {
 		all = []model.StoreRule{}
 	}
-	return model.RulesResponse{Rules: all, Count: len(all)}
+	return model.RulesResponse{Rules: all, Count: len(all), TotalCount: len(all)}
 }

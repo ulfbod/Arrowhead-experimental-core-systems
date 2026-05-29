@@ -12,6 +12,57 @@
 // DO NOT MODIFY FOR EXPERIMENTS.
 package model
 
+import "encoding/json"
+
+// ─── Metadata operators ───────────────────────────────────────────────────────
+
+// MetadataOp names the comparison operator for a MetadataRequirement.
+type MetadataOp string
+
+// Supported metadata operators (AH5 spec, G16).
+const (
+	OpEqualsTo              MetadataOp = "EQUALS_TO"
+	OpNotEqualsTo           MetadataOp = "NOT_EQUALS_TO"
+	OpLessThanOrEqualsTo    MetadataOp = "LESS_THAN_OR_EQUALS_TO"
+	OpGreaterThanOrEqualsTo MetadataOp = "GREATER_THAN_OR_EQUALS_TO"
+	OpContains              MetadataOp = "CONTAINS"
+	OpNotContains           MetadataOp = "NOT_CONTAINS"
+)
+
+// MetadataRequirement is a single metadata filter predicate.
+// Two wire forms are accepted:
+//
+//	structured: {"op":"CONTAINS","value":"world"}
+//	shorthand:  "prod"   (treated as EQUALS_TO "prod")
+//	            true     (treated as EQUALS_TO true)
+type MetadataRequirement struct {
+	Op    MetadataOp  `json:"op,omitempty"`
+	Value interface{} `json:"value,omitempty"`
+}
+
+type metadataRequirementWire struct {
+	Op    MetadataOp  `json:"op"`
+	Value interface{} `json:"value"`
+}
+
+// UnmarshalJSON handles both the structured object form and the bare shorthand form.
+func (m *MetadataRequirement) UnmarshalJSON(data []byte) error {
+	var wire metadataRequirementWire
+	if err := json.Unmarshal(data, &wire); err == nil && wire.Op != "" {
+		m.Op = wire.Op
+		m.Value = wire.Value
+		return nil
+	}
+	// Shorthand: bare string, number, or bool → implicit EQUALS_TO
+	var v interface{}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	m.Op = OpEqualsTo
+	m.Value = v
+	return nil
+}
+
 // Address is a network endpoint descriptor used in AH5 system and device models.
 type Address struct {
 	Type    string `json:"type"`
@@ -56,12 +107,74 @@ type InterfaceTemplate struct {
 	UpdatedAt            string            `json:"updatedAt"`
 }
 
+// SecurityPolicy enumerates the allowed values for InterfaceInstance.Policy.
+type SecurityPolicy string
+
+const (
+	PolicyNone                  SecurityPolicy = "NONE"
+	PolicyCertAuth              SecurityPolicy = "CERT_AUTH"
+	PolicyTimeLimitedTokenAuth  SecurityPolicy = "TIME_LIMITED_TOKEN_AUTH"
+	PolicyUsageLimitedTokenAuth SecurityPolicy = "USAGE_LIMITED_TOKEN_AUTH"
+	PolicyBase64TokenAuth       SecurityPolicy = "BASE64_SELF_CONTAINED_TOKEN_AUTH"
+	PolicyJwtSha256Auth         SecurityPolicy = "RSA_SHA256_JSON_WEB_TOKEN_AUTH"
+	PolicyJwtSha512Auth         SecurityPolicy = "RSA_SHA512_JSON_WEB_TOKEN_AUTH"
+)
+
+// validSecurityPolicies is the set of accepted SecurityPolicy values.
+var validSecurityPolicies = map[string]bool{
+	string(PolicyNone):                  true,
+	string(PolicyCertAuth):              true,
+	string(PolicyTimeLimitedTokenAuth):  true,
+	string(PolicyUsageLimitedTokenAuth): true,
+	string(PolicyBase64TokenAuth):       true,
+	string(PolicyJwtSha256Auth):         true,
+	string(PolicyJwtSha512Auth):         true,
+}
+
+// IsValidSecurityPolicy returns true if the value is a known SecurityPolicy.
+func IsValidSecurityPolicy(s string) bool {
+	return validSecurityPolicies[s]
+}
+
 // InterfaceInstance is a concrete interface binding on a service instance.
+// It accepts two JSON wire formats:
+//
+//	Structured: {"templateName":"http-json","protocol":"http","policy":"NONE","properties":{...}}
+//	Flat string: "HTTP-INSECURE-JSON"  → treated as {templateName, protocol:"http", policy:"NONE"}
 type InterfaceInstance struct {
 	TemplateName string            `json:"templateName"`
 	Protocol     string            `json:"protocol,omitempty"`
 	Policy       string            `json:"policy,omitempty"`
 	Properties   map[string]string `json:"properties,omitempty"`
+}
+
+type interfaceInstanceWire struct {
+	TemplateName string            `json:"templateName"`
+	Protocol     string            `json:"protocol"`
+	Policy       string            `json:"policy"`
+	Properties   map[string]string `json:"properties"`
+}
+
+// UnmarshalJSON handles both the structured object form and the bare flat-string form.
+func (i *InterfaceInstance) UnmarshalJSON(data []byte) error {
+	// Try structured object first.
+	var wire interfaceInstanceWire
+	if err := json.Unmarshal(data, &wire); err == nil && len(data) > 0 && data[0] == '{' {
+		i.TemplateName = wire.TemplateName
+		i.Protocol = wire.Protocol
+		i.Policy = wire.Policy
+		i.Properties = wire.Properties
+		return nil
+	}
+	// Try bare string (flat backward-compat format).
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	i.TemplateName = s
+	i.Protocol = "http"
+	i.Policy = string(PolicyNone)
+	return nil
 }
 
 // AH5ServiceInstance is an AH5-style service instance (as opposed to the
@@ -91,15 +204,17 @@ type DeviceRegistrationRequest struct {
 // DeviceLookupRequest is the body for
 // POST /serviceregistry/device-discovery/lookup.
 type DeviceLookupRequest struct {
-	DeviceNames []string `json:"deviceNames,omitempty"`
-	Addresses   []string `json:"addresses,omitempty"`
-	AddressType string   `json:"addressType,omitempty"`
+	DeviceNames          []string                       `json:"deviceNames,omitempty"`
+	Addresses            []string                       `json:"addresses,omitempty"`
+	AddressType          string                         `json:"addressType,omitempty"`
+	MetadataRequirements map[string]MetadataRequirement `json:"metadataRequirements,omitempty"`
 }
 
 // DeviceLookupResponse is returned by device discovery lookup.
 type DeviceLookupResponse struct {
-	Entries []*Device `json:"entries"`
-	Count   int       `json:"count"`
+	Entries    []*Device `json:"entries"`
+	Count      int       `json:"count"`
+	TotalCount int       `json:"totalCount"`
 }
 
 // ─── System Discovery ────────────────────────────────────────────────────────
@@ -121,17 +236,19 @@ type SystemRegistrationRequest struct {
 // SystemLookupRequest is the body for
 // POST /serviceregistry/system-discovery/lookup.
 type SystemLookupRequest struct {
-	SystemNames []string `json:"systemNames,omitempty"`
-	Addresses   []string `json:"addresses,omitempty"`
-	AddressType string   `json:"addressType,omitempty"`
-	Versions    []string `json:"versions,omitempty"`
-	DeviceNames []string `json:"deviceNames,omitempty"`
+	SystemNames          []string                       `json:"systemNames,omitempty"`
+	Addresses            []string                       `json:"addresses,omitempty"`
+	AddressType          string                         `json:"addressType,omitempty"`
+	Versions             []string                       `json:"versions,omitempty"`
+	DeviceNames          []string                       `json:"deviceNames,omitempty"`
+	MetadataRequirements map[string]MetadataRequirement `json:"metadataRequirements,omitempty"`
 }
 
 // SystemLookupResponse is returned by system discovery lookup.
 type SystemLookupResponse struct {
-	Entries []*AH5System `json:"entries"`
-	Count   int          `json:"count"`
+	Entries    []*AH5System `json:"entries"`
+	Count      int          `json:"count"`
+	TotalCount int          `json:"totalCount"`
 }
 
 // ─── Service Discovery ───────────────────────────────────────────────────────
@@ -153,17 +270,20 @@ type ServiceRegistrationRequest struct {
 // ServiceLookupRequest is the body for
 // POST /serviceregistry/service-discovery/lookup.
 type ServiceLookupRequest struct {
-	InstanceIDs            []string `json:"instanceIds,omitempty"`
-	ProviderNames          []string `json:"providerNames,omitempty"`
-	ServiceDefinitionNames []string `json:"serviceDefinitionNames,omitempty"`
-	Versions               []string `json:"versions,omitempty"`
-	InterfaceTemplateNames []string `json:"interfaceTemplateNames,omitempty"`
+	InstanceIDs            []string                       `json:"instanceIds,omitempty"`
+	ProviderNames          []string                       `json:"providerNames,omitempty"`
+	ServiceDefinitionNames []string                       `json:"serviceDefinitionNames,omitempty"`
+	Versions               []string                       `json:"versions,omitempty"`
+	InterfaceTemplateNames []string                       `json:"interfaceTemplateNames,omitempty"`
+	AlivesAt               string                         `json:"alivesAt,omitempty"`
+	MetadataRequirements   map[string]MetadataRequirement `json:"metadataRequirements,omitempty"`
 }
 
 // ServiceLookupResponse is returned by service discovery lookup.
 type ServiceLookupResponse struct {
-	Entries []*AH5ServiceInstance `json:"entries"`
-	Count   int                   `json:"count"`
+	Entries    []*AH5ServiceInstance `json:"entries"`
+	Count      int                   `json:"count"`
+	TotalCount int                   `json:"totalCount"`
 }
 
 // ─── Management — Devices ────────────────────────────────────────────────────
@@ -176,8 +296,9 @@ type DeviceListRequest struct {
 
 // DeviceListResponse is returned by device management endpoints.
 type DeviceListResponse struct {
-	Devices []*Device `json:"devices"`
-	Count   int       `json:"count"`
+	Devices    []*Device `json:"devices"`
+	Count      int       `json:"count"`
+	TotalCount int       `json:"totalCount"`
 }
 
 // ─── Management — Systems ────────────────────────────────────────────────────
@@ -190,8 +311,9 @@ type SystemListRequest struct {
 
 // SystemListResponse is returned by system management endpoints.
 type SystemListResponse struct {
-	Systems []*AH5System `json:"systems"`
-	Count   int          `json:"count"`
+	Systems    []*AH5System `json:"systems"`
+	Count      int          `json:"count"`
+	TotalCount int          `json:"totalCount"`
 }
 
 // ─── Management — Service Definitions ───────────────────────────────────────
@@ -206,6 +328,7 @@ type ServiceDefinitionListRequest struct {
 type ServiceDefinitionListResponse struct {
 	ServiceDefinitions []*ServiceDefinition `json:"serviceDefinitions"`
 	Count              int                  `json:"count"`
+	TotalCount         int                  `json:"totalCount"`
 }
 
 // ─── Management — Service Instances ─────────────────────────────────────────
@@ -242,8 +365,9 @@ type ServiceUpdateListRequest struct {
 
 // ServiceListResponse is returned by service instance management endpoints.
 type ServiceListResponse struct {
-	Instances []*AH5ServiceInstance `json:"instances"`
-	Count     int                   `json:"count"`
+	Instances  []*AH5ServiceInstance `json:"instances"`
+	Count      int                   `json:"count"`
+	TotalCount int                   `json:"totalCount"`
 }
 
 // ─── Management — Interface Templates ───────────────────────────────────────
@@ -258,4 +382,5 @@ type InterfaceTemplateListRequest struct {
 type InterfaceTemplateListResponse struct {
 	InterfaceTemplates []*InterfaceTemplate `json:"interfaceTemplates"`
 	Count              int                  `json:"count"`
+	TotalCount         int                  `json:"totalCount"`
 }

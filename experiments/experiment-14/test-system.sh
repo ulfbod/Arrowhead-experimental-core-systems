@@ -233,13 +233,13 @@ orch_status=$(http_body http://localhost:9093/status)
 assert_json_field "GET /status → status"   "status"   "$orch_status"
 assert_json_value "GET /status → status=UP" "status"  "UP" "$orch_status"
 
-orch_unauth=$(http_body -X POST http://localhost:9093/orchestration/dynamic \
+orch_unauth=$(http_body -X POST http://localhost:9093/serviceorchestration/orchestration/pull \
   -H 'Content-Type: application/json' \
   -d '{"requesterSystem":{"systemName":"unauthorized","address":"1.1.1.1","port":8000},"requestedService":{"serviceDefinition":"telemetry"}}')
 assert_json_field "Unauthorized consumer → response field" "response" "$orch_unauth"
 assert_contains   "Unauthorized consumer → empty"         '"response":[]' "$(echo "$orch_unauth" | tr -d ' \n')"
 
-orch_sp1=$(http_body -X POST http://localhost:9093/orchestration/dynamic \
+orch_sp1=$(http_body -X POST http://localhost:9093/serviceorchestration/orchestration/pull \
   -H 'Content-Type: application/json' \
   -d '{"requesterSystem":{"systemName":"service-partner-1","address":"1.1.1.1","port":8000},"requestedService":{"serviceDefinition":"telemetry-rest"}}')
 assert_json_field "service-partner-1 telemetry-rest → response field" "response" "$orch_sp1"

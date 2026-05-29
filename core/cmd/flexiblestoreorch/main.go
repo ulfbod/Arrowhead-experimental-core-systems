@@ -4,9 +4,11 @@ package main
 
 import (
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
+	"arrowhead/core/internal/generalmgmt"
 	fsapi "arrowhead/core/internal/orchestration/flexiblestore/api"
 	fsrepo "arrowhead/core/internal/orchestration/flexiblestore/repository"
 	fssvc "arrowhead/core/internal/orchestration/flexiblestore/service"
@@ -18,10 +20,31 @@ func main() {
 		port = "8085"
 	}
 
-	repo := fsrepo.NewMemoryRepository()
-	orch := fssvc.NewFlexibleStoreOrchestrator(repo)
-	handler := fsapi.NewHandler(orch)
+	buf := generalmgmt.NewLogBuffer(1000)
+	slog.SetDefault(slog.New(generalmgmt.NewSlogHandler(buf)))
 
-	log.Printf("[FlexibleStoreOrchestration] Listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, handler))
+	var repo fsrepo.Repository
+	if dbPath := os.Getenv("DB_PATH"); dbPath != "" {
+		sqliteRepo, err := fsrepo.NewSQLiteRepository(dbPath)
+		if err != nil {
+			log.Fatalf("[FlexibleStoreOrchestration] open database: %v", err)
+		}
+		repo = sqliteRepo
+	} else {
+		repo = fsrepo.NewMemoryRepository()
+	}
+	orch := fssvc.NewFlexibleStoreOrchestrator(repo)
+	sysHandler := fsapi.NewHandler(orch)
+
+	mgmtHandler := generalmgmt.NewHandler(buf, "serviceorchestration/orchestration", map[string]string{
+		"PORT":    port,
+		"DB_PATH": os.Getenv("DB_PATH"),
+	})
+
+	root := http.NewServeMux()
+	root.Handle("/serviceorchestration/orchestration/general/", mgmtHandler)
+	root.Handle("/", sysHandler)
+
+	slog.Info("Listening", "system", "FlexibleStoreOrchestration", "port", port)
+	log.Fatal(http.ListenAndServe(":"+port, root))
 }

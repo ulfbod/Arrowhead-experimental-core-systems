@@ -13,7 +13,7 @@ type Grant struct {
 	ServiceDefinition  string `json:"serviceDefinition"`
 }
 
-// LookupResponse is the ConsumerAuthorization /authorization/lookup response.
+// LookupResponse is the ConsumerAuthorization /consumerauthorization/authorization/lookup response.
 type LookupResponse struct {
 	Rules []Grant `json:"rules"`
 	Count int     `json:"count"`

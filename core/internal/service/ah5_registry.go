@@ -5,16 +5,20 @@ package service
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"arrowhead/core/internal/model"
 	"arrowhead/core/internal/repository"
 )
 
-// AH5 validation errors.
+// AH5 validation and operation errors.
 var (
 	ErrMissingDeviceName            = errors.New("device name is required")
 	ErrAH5SystemNameRequired         = errors.New("system name is required")
+	ErrLocked                       = errors.New("entity has dependents and cannot be deleted")
 	ErrMissingServiceSystemName     = errors.New("systemName is required")
 	ErrMissingServiceDefinitionName = errors.New("serviceDefinitionName is required")
 	ErrDeviceAlreadyExists          = errors.New("device already exists")
@@ -29,11 +33,11 @@ var (
 
 // AH5RegistryService implements the AH5 discovery and management business logic.
 type AH5RegistryService struct {
-	store *repository.AH5Store
+	store repository.AH5StoreInterface
 }
 
 // NewAH5RegistryService returns a new AH5RegistryService backed by the given store.
-func NewAH5RegistryService(store *repository.AH5Store) *AH5RegistryService {
+func NewAH5RegistryService(store repository.AH5StoreInterface) *AH5RegistryService {
 	return &AH5RegistryService{store: store}
 }
 
@@ -69,6 +73,9 @@ func (s *AH5RegistryService) LookupDevices(req model.DeviceLookupRequest) model.
 		if req.AddressType != "" && !deviceHasAddressType(d, req.AddressType) {
 			continue
 		}
+		if len(req.MetadataRequirements) > 0 && !matchesMetadata(d.Metadata, req.MetadataRequirements) {
+			continue
+		}
 		matched = append(matched, d)
 	}
 	if matched == nil {
@@ -77,9 +84,13 @@ func (s *AH5RegistryService) LookupDevices(req model.DeviceLookupRequest) model.
 	return model.DeviceLookupResponse{Entries: matched, Count: len(matched)}
 }
 
-// RevokeDevice removes the named device. Returns false if not found.
-func (s *AH5RegistryService) RevokeDevice(name string) bool {
-	return s.store.DeleteDevice(name)
+// RevokeDevice removes the named device. Returns (false, nil) if not found,
+// (false, ErrLocked) if a system still references this device.
+func (s *AH5RegistryService) RevokeDevice(name string) (bool, error) {
+	if s.store.HasDependentSystems(name) {
+		return false, ErrLocked
+	}
+	return s.store.DeleteDevice(name), nil
 }
 
 // ─── System Discovery ─────────────────────────────────────────────────────────
@@ -89,6 +100,7 @@ func (s *AH5RegistryService) RegisterSystem(req model.SystemRegistrationRequest)
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, false, ErrAH5SystemNameRequired
 	}
+	req.Version = normaliseVersion(req.Version)
 	sys, created := s.store.SaveSystem(&req)
 	return sys, created, nil
 }
@@ -128,6 +140,9 @@ func (s *AH5RegistryService) LookupSystems(req model.SystemLookupRequest) model.
 		if req.AddressType != "" && !systemHasAddressType(sys, req.AddressType) {
 			continue
 		}
+		if len(req.MetadataRequirements) > 0 && !matchesMetadata(sys.Metadata, req.MetadataRequirements) {
+			continue
+		}
 		matched = append(matched, sys)
 	}
 	if matched == nil {
@@ -151,6 +166,7 @@ func (s *AH5RegistryService) RegisterService(req model.ServiceRegistrationReques
 	if strings.TrimSpace(req.ServiceDefinitionName) == "" {
 		return nil, false, ErrMissingServiceDefinitionName
 	}
+	req.Version = normaliseVersion(req.Version)
 	inst, created := s.store.SaveServiceInstance(&req)
 	return inst, created, nil
 }
@@ -193,7 +209,27 @@ func (s *AH5RegistryService) LookupServices(req model.ServiceLookupRequest) mode
 		if len(tmplSet) > 0 && !instanceHasTemplates(inst, tmplSet) {
 			continue
 		}
+		if len(req.MetadataRequirements) > 0 && !matchesMetadata(inst.Metadata, req.MetadataRequirements) {
+			continue
+		}
 		matched = append(matched, inst)
+	}
+	if req.AlivesAt != "" {
+		alivesAt, err := time.Parse(time.RFC3339, req.AlivesAt)
+		if err == nil {
+			var alive []*model.AH5ServiceInstance
+			for _, inst := range matched {
+				if inst.ExpiresAt == "" {
+					alive = append(alive, inst)
+					continue
+				}
+				exp, perr := time.Parse(time.RFC3339, inst.ExpiresAt)
+				if perr != nil || !exp.Before(alivesAt) {
+					alive = append(alive, inst)
+				}
+			}
+			matched = alive
+		}
 	}
 	if matched == nil {
 		matched = []*model.AH5ServiceInstance{}
@@ -413,6 +449,18 @@ func (s *AH5RegistryService) RemoveServiceInstances(ids []string) {
 	s.store.DeleteServiceInstances(ids)
 }
 
+// ─── Version helpers ──────────────────────────────────────────────────────────
+
+// normaliseVersion returns "1.0.0" when v is empty or whitespace-only.
+// Used in RegisterService and RegisterSystem (discovery endpoints only).
+// Management endpoints (CreateServiceInstances, UpdateServiceInstances) do NOT normalise.
+func normaliseVersion(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "1.0.0"
+	}
+	return v
+}
+
 // ─── Filter helpers ───────────────────────────────────────────────────────────
 
 func toSet(items []string) map[string]struct{} {
@@ -469,4 +517,53 @@ func instanceHasTemplates(inst *model.AH5ServiceInstance, tmplSet map[string]str
 		}
 	}
 	return false
+}
+
+// matchesMetadata returns true if all requirements in reqs are satisfied by
+// the metadata map m.  An empty reqs map matches everything.
+func matchesMetadata(m map[string]string, reqs map[string]model.MetadataRequirement) bool {
+	for key, req := range reqs {
+		actual, exists := m[key]
+		if !exists {
+			return false
+		}
+		op := req.Op
+		if op == "" {
+			op = model.OpEqualsTo
+		}
+		valStr := fmt.Sprintf("%v", req.Value)
+		switch op {
+		case model.OpEqualsTo:
+			if actual != valStr {
+				return false
+			}
+		case model.OpNotEqualsTo:
+			if actual == valStr {
+				return false
+			}
+		case model.OpContains:
+			if !strings.Contains(actual, valStr) {
+				return false
+			}
+		case model.OpNotContains:
+			if strings.Contains(actual, valStr) {
+				return false
+			}
+		case model.OpLessThanOrEqualsTo:
+			a, err1 := strconv.ParseFloat(actual, 64)
+			v, err2 := strconv.ParseFloat(valStr, 64)
+			if err1 != nil || err2 != nil || a > v {
+				return false
+			}
+		case model.OpGreaterThanOrEqualsTo:
+			a, err1 := strconv.ParseFloat(actual, 64)
+			v, err2 := strconv.ParseFloat(valStr, 64)
+			if err1 != nil || err2 != nil || a < v {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }

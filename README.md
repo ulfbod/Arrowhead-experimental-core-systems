@@ -18,7 +18,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full structural overview.
 | FlexibleStoreOrchestration | 8085 | `cmd/flexiblestoreorch` |
 | CertificateAuthority | 8086 | `cmd/ca` *(extension, not in AH5 spec)* |
 
-All systems are in-memory, stateless across restarts, and independently runnable.
+All systems default to in-memory storage. Set `DB_PATH` to a file path for SQLite-backed persistence across restarts (see [Configuration](#configuration)).
 
 ---
 
@@ -91,7 +91,7 @@ curl -s -X POST http://localhost:8080/serviceregistry/register \
 ### 2. Grant authorization
 
 ```bash
-curl -s -X POST http://localhost:8082/authorization/grant \
+curl -s -X POST http://localhost:8082/consumerauthorization/authorization/grant \
   -H 'Content-Type: application/json' \
   -d '{
     "consumerSystemName": "consumer-app",
@@ -105,37 +105,70 @@ curl -s -X POST http://localhost:8082/authorization/grant \
 ```bash
 ENABLE_AUTH=true go run ./cmd/dynamicorch &
 
-curl -s -X POST http://localhost:8083/orchestration/dynamic \
+curl -s -X POST http://localhost:8083/serviceorchestration/orchestration/pull \
   -H 'Content-Type: application/json' \
   -d '{
-    "requesterSystem":  { "systemName": "consumer-app", "address": "localhost", "port": 0 },
-    "requestedService": { "serviceDefinition": "temperature-service" }
+    "requesterSystem":   { "systemName": "consumer-app", "address": "localhost", "port": 0 },
+    "requestedService":  { "serviceDefinition": "temperature-service" },
+    "orchestrationFlags": {}
   }'
 ```
 
 ### 4. Revoke authorization
 
 ```bash
-curl -s -X DELETE http://localhost:8082/authorization/revoke/1
+curl -s -X DELETE http://localhost:8082/consumerauthorization/authorization/revoke/1
 ```
 
 ---
 
 ## Configuration
 
-Each binary reads configuration from environment variables:
+Each binary reads configuration from environment variables.
+
+### Listen ports and persistence
 
 | Variable | System | Default | Description |
 |---|---|---|---|
-| `PORT` | all | (see table above) | Listening port |
-| `TOKEN_DURATION_SECONDS` | Authentication | `3600` | Token lifetime |
-| `SERVICE_REGISTRY_URL` | DynamicOrchestration | `http://localhost:8080` | SR base URL |
-| `CONSUMER_AUTH_URL` | DynamicOrchestration | `http://localhost:8082` | ConsumerAuth base URL |
-| `AUTH_SYSTEM_URL` | DynamicOrchestration | `http://localhost:8081` | Authentication system base URL |
-| `ENABLE_AUTH` | DynamicOrchestration | `false` | Filter providers via ConsumerAuthorization |
-| `ENABLE_IDENTITY_CHECK` | DynamicOrchestration | `false` | Require a valid Bearer token; use verified identity for auth checks |
+| `PORT` | all | 8080–8086 (see table above) | HTTP listen port |
+| `DB_PATH` | all | *(unset)* | Storage backend: unset = in-memory, `:memory:` = SQLite in-memory, file path = SQLite file-backed persistence |
 
-`ENABLE_IDENTITY_CHECK` connects the Authentication and DynamicOrchestration systems: consumers must log in first, then present their token when orchestrating. The verified `systemName` from the token replaces the self-reported value in the request body, preventing impersonation. See `core/GAP_ANALYSIS.md` (D8) for full design rationale.
+The ServiceRegistry creates **two** SQLite files when `DB_PATH` is set: the given path (legacy registrations) and `<DB_PATH>.ah5` (AH5 device/system/service discovery records).
+
+### Mutual TLS (optional)
+
+All systems except the CA support an optional HTTPS listener alongside the plain HTTP one:
+
+| Variable | Default | Description |
+|---|---|---|
+| `TLS_PORT` | *(unset)* | When set, starts an HTTPS listener on this port |
+| `TLS_CERT_FILE` | *(required with TLS_PORT)* | PEM certificate file |
+| `TLS_KEY_FILE` | *(required with TLS_PORT)* | PEM private key file |
+| `TLS_CA_FILE` | *(optional)* | PEM CA certificate; when set, enforces mutual TLS (`RequireAndVerifyClientCert`) |
+
+### DynamicOrchestration
+
+| Variable | Default | Description |
+|---|---|---|
+| `SERVICE_REGISTRY_URL` | `http://localhost:8080` | ServiceRegistry base URL |
+| `CONSUMER_AUTH_URL` | `http://localhost:8082` | ConsumerAuthorization base URL |
+| `AUTH_SYSTEM_URL` | `http://localhost:8081` | Authentication system base URL |
+| `ENABLE_AUTH` | `false` | Filter providers via ConsumerAuthorization |
+| `ENABLE_IDENTITY_CHECK` | `false` | Require a valid Bearer token; use verified identity for auth checks |
+
+`ENABLE_IDENTITY_CHECK` connects Authentication and DynamicOrchestration: consumers must log in first and present their token when orchestrating. The verified `systemName` from the token replaces the self-reported value in the request body, preventing impersonation. See `core/GAP_ANALYSIS.md` (D8) for full design rationale.
+
+### Authentication
+
+| Variable | Default | Description |
+|---|---|---|
+| `TOKEN_DURATION_SECONDS` | `3600` | Token lifetime |
+
+### Deployment note — multi-host and DHCP environments
+
+The defaults for `SERVICE_REGISTRY_URL`, `CONSUMER_AUTH_URL`, and `AUTH_SYSTEM_URL` all point to `localhost`. These work for a single-machine development setup where all binaries run on the same host. In any other deployment — multiple VMs, containers on separate hosts, or a DHCP network — **all three must be set explicitly** to the address where each system is reachable.
+
+There are no hardcoded IP addresses in the source code. Every network address is read from an environment variable at startup.
 
 ---
 

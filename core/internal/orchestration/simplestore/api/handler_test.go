@@ -38,6 +38,23 @@ func getReq(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorde
 	return w
 }
 
+// ---- ErrorResponse shape ----
+
+func TestSimpleStoreRulesMissingFieldReturnsExceptionType(t *testing.T) {
+	h := newTestHandler()
+	w := postJSON(t, h, "/serviceorchestration/orchestration/simplestore/rules", map[string]any{})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	var body struct {
+		ExceptionType string `json:"exceptionType"`
+	}
+	json.NewDecoder(w.Body).Decode(&body)
+	if body.ExceptionType == "" {
+		t.Errorf("exceptionType is empty — response: %s", w.Body.String())
+	}
+}
+
 var validRuleBody = map[string]any{
 	"consumerSystemName": "consumer-app",
 	"serviceDefinition":  "temperature-service",
@@ -55,9 +72,10 @@ var validOrchestrateBody = map[string]any{
 	"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
 }
 
-func createRuleAndGetID(t *testing.T, h http.Handler) int64 {
+// createRuleAndGetID creates a rule via the legacy path and returns its UUID.
+func createRuleAndGetID(t *testing.T, h http.Handler) string {
 	t.Helper()
-	w := postJSON(t, h, "/orchestration/simplestore/rules", validRuleBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/simplestore/rules", validRuleBody)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create rule failed: %d %s", w.Code, w.Body.String())
 	}
@@ -66,18 +84,21 @@ func createRuleAndGetID(t *testing.T, h http.Handler) int64 {
 	return rule.ID
 }
 
-// ---- Rules CRUD ----
+// ---- Legacy rules CRUD ----
 
 func TestHandlerCreateRuleValid(t *testing.T) {
 	h := newTestHandler()
-	w := postJSON(t, h, "/orchestration/simplestore/rules", validRuleBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/simplestore/rules", validRuleBody)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var rule model.StoreRule
 	json.NewDecoder(w.Body).Decode(&rule)
-	if rule.ID == 0 {
-		t.Error("expected non-zero ID")
+	if rule.ID == "" {
+		t.Error("expected non-empty UUID ID")
+	}
+	if len(rule.ID) != 36 {
+		t.Errorf("id len = %d, want 36 (UUID)", len(rule.ID))
 	}
 }
 
@@ -93,7 +114,7 @@ func TestHandlerCreateRuleValidation(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			w := postJSON(t, newTestHandler(), "/orchestration/simplestore/rules", tc.body)
+			w := postJSON(t, newTestHandler(), "/serviceorchestration/orchestration/simplestore/rules", tc.body)
 			if w.Code != http.StatusBadRequest {
 				t.Errorf("expected 400, got %d", w.Code)
 			}
@@ -103,7 +124,7 @@ func TestHandlerCreateRuleValidation(t *testing.T) {
 
 func TestHandlerListRulesEmpty(t *testing.T) {
 	h := newTestHandler()
-	w := getReq(t, h, "/orchestration/simplestore/rules")
+	w := getReq(t, h, "/serviceorchestration/orchestration/simplestore/rules")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -117,7 +138,7 @@ func TestHandlerListRulesEmpty(t *testing.T) {
 func TestHandlerListRulesWithEntries(t *testing.T) {
 	h := newTestHandler()
 	createRuleAndGetID(t, h)
-	w := getReq(t, h, "/orchestration/simplestore/rules")
+	w := getReq(t, h, "/serviceorchestration/orchestration/simplestore/rules")
 	var resp model.RulesResponse
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp.Count != 1 {
@@ -128,17 +149,17 @@ func TestHandlerListRulesWithEntries(t *testing.T) {
 func TestHandlerDeleteRuleValid(t *testing.T) {
 	h := newTestHandler()
 	id := createRuleAndGetID(t, h)
-	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/orchestration/simplestore/rules/%d", id), nil)
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/serviceorchestration/orchestration/simplestore/rules/%s", id), nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", w.Code)
 	}
 }
 
 func TestHandlerDeleteRuleNotFound(t *testing.T) {
 	h := newTestHandler()
-	req := httptest.NewRequest(http.MethodDelete, "/orchestration/simplestore/rules/999", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/serviceorchestration/orchestration/simplestore/rules/00000000-0000-0000-0000-000000000000", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -148,11 +169,12 @@ func TestHandlerDeleteRuleNotFound(t *testing.T) {
 
 func TestHandlerDeleteRuleInvalidID(t *testing.T) {
 	h := newTestHandler()
-	req := httptest.NewRequest(http.MethodDelete, "/orchestration/simplestore/rules/abc", nil)
+	// "nonexistent-id" is a valid non-empty string but does not exist → 404
+	req := httptest.NewRequest(http.MethodDelete, "/serviceorchestration/orchestration/simplestore/rules/nonexistent-id", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
 	}
 }
 
@@ -161,36 +183,36 @@ func TestHandlerDeleteRuleInvalidID(t *testing.T) {
 func TestHandlerOrchestrateMatch(t *testing.T) {
 	h := newTestHandler()
 	createRuleAndGetID(t, h)
-	w := postJSON(t, h, "/orchestration/simplestore", validOrchestrateBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/pull", validOrchestrateBody)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	var resp orchmodel.OrchestrationResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if len(resp.Response) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(resp.Response))
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
 	}
-	if resp.Response[0].Provider.SystemName != "sensor-1" {
-		t.Errorf("unexpected provider: %q", resp.Response[0].Provider.SystemName)
+	if resp.Results[0].ProviderName != "sensor-1" {
+		t.Errorf("unexpected provider: %q", resp.Results[0].ProviderName)
 	}
 }
 
 func TestHandlerOrchestrateNoMatch(t *testing.T) {
 	h := newTestHandler()
-	w := postJSON(t, h, "/orchestration/simplestore", validOrchestrateBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/pull", validOrchestrateBody)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	var resp orchmodel.OrchestrationResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if len(resp.Response) != 0 {
-		t.Errorf("expected empty response, got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected empty response, got %d", len(resp.Results))
 	}
 }
 
 func TestHandlerOrchestrateInvalidJSON(t *testing.T) {
 	h := newTestHandler()
-	req := httptest.NewRequest(http.MethodPost, "/orchestration/simplestore", bytes.NewBufferString("{bad"))
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/pull", bytes.NewBufferString("{bad"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -201,7 +223,7 @@ func TestHandlerOrchestrateInvalidJSON(t *testing.T) {
 
 func TestHandlerOrchestrateWrongMethod(t *testing.T) {
 	h := newTestHandler()
-	req := httptest.NewRequest(http.MethodGet, "/orchestration/simplestore", nil)
+	req := httptest.NewRequest(http.MethodGet, "/serviceorchestration/orchestration/pull", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
@@ -213,10 +235,132 @@ func TestHandlerOrchestrateWrongMethod(t *testing.T) {
 
 func TestHandlerHealth(t *testing.T) {
 	h := newTestHandler()
-	for _, path := range []string{"/health", "/orchestration/simplestore/health"} {
+	for _, path := range []string{"/health", "/serviceorchestration/orchestration/pull/health"} {
 		w := getReq(t, h, path)
 		if w.Code != http.StatusOK {
 			t.Errorf("%s: expected 200, got %d", path, w.Code)
 		}
+	}
+}
+
+// ---- New AH5 mgmt endpoints (Step 18.1) ----
+
+func TestSimpleStoreMgmtCreate(t *testing.T) {
+	h := newTestHandler()
+	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/simple-store/create", validRuleBody)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.ID == "" {
+		t.Error("id is empty — expected UUID")
+	}
+	if len(resp.ID) != 36 {
+		t.Errorf("id len = %d, want 36 (UUID)", len(resp.ID))
+	}
+}
+
+func TestSimpleStoreMgmtQuery(t *testing.T) {
+	h := newTestHandler()
+	postJSON(t, h, "/serviceorchestration/orchestration/mgmt/simple-store/create", validRuleBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/simple-store/query", map[string]any{})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Count int `json:"count"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Count < 1 {
+		t.Error("count = 0 after create")
+	}
+}
+
+func TestSimpleStoreMgmtModifyPriorities(t *testing.T) {
+	h := newTestHandler()
+	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/simple-store/create", validRuleBody)
+	var created model.StoreRule
+	json.NewDecoder(w.Body).Decode(&created)
+
+	w2 := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/simple-store/modify-priorities", map[string]any{
+		"priorities": map[string]int{created.ID: 5},
+	})
+	if w2.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	var resp model.RulesResponse
+	json.NewDecoder(w2.Body).Decode(&resp)
+	if len(resp.Rules) != 1 || resp.Rules[0].Priority != 5 {
+		t.Errorf("priority not updated: %+v", resp.Rules)
+	}
+}
+
+func TestSimpleStoreMgmtCreateValidation(t *testing.T) {
+	h := newTestHandler()
+	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/simple-store/create", map[string]any{})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing fields, got %d", w.Code)
+	}
+}
+
+// ---- Step 19.1: Subscribe / Unsubscribe ----
+
+var validSSSubscribeBody = map[string]any{
+	"ownerSystemName":  "consumer-app",
+	"targetSystemName": "consumer-app",
+	"orchestrationRequest": map[string]any{
+		"requesterSystem":    map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
+		"serviceRequirement": map[string]any{"serviceDefinition": "temperature-service"},
+	},
+}
+
+func TestSimpleStoreSubscribeReturnsUUID(t *testing.T) {
+	h := newTestHandler()
+	w := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSSSubscribeBody)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct{ ID string `json:"id"` }
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.ID) != 36 {
+		t.Errorf("id = %q, not a UUID", resp.ID)
+	}
+}
+
+func TestSimpleStoreSubscribeDuplicateReturns200(t *testing.T) {
+	h := newTestHandler()
+	postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSSSubscribeBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSSSubscribeBody)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 on duplicate subscribe, got %d", w.Code)
+	}
+}
+
+func TestSimpleStoreUnsubscribeFound200(t *testing.T) {
+	h := newTestHandler()
+	sw := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSSSubscribeBody)
+	var sub struct{ ID string `json:"id"` }
+	json.NewDecoder(sw.Body).Decode(&sub)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/serviceorchestration/orchestration/unsubscribe/"+sub.ID, nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 on found unsubscribe, got %d", w.Code)
+	}
+}
+
+func TestSimpleStoreUnsubscribeNotFound204(t *testing.T) {
+	h := newTestHandler()
+	req := httptest.NewRequest(http.MethodDelete,
+		"/serviceorchestration/orchestration/unsubscribe/no-such-id", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", w.Code)
 	}
 }

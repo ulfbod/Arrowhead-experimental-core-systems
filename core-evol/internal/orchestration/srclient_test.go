@@ -103,7 +103,7 @@ func (e *errOrchestrator) Orchestrate(_ OrchestrationRequest) (OrchestrationResp
 func TestHandler_InternalError_Returns500(t *testing.T) {
 	h := NewHandler(&errOrchestrator{})
 	body := `{"requesterSystem":{"systemName":"c1"},"requestedService":{"serviceDefinition":"svc"}}`
-	req := httptest.NewRequest(http.MethodPost, "/orchestration/dynamic", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/pull", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)

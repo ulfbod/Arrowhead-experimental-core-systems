@@ -2,42 +2,55 @@ package repository
 
 import (
 	"sync"
-	"sync/atomic"
+
+	"github.com/google/uuid"
 
 	"arrowhead/core/internal/orchestration/simplestore/model"
 )
 
 type Repository interface {
 	Save(rule model.StoreRule) model.StoreRule
-	Delete(id int64) bool
+	Delete(id string) bool
+	UpdatePriority(id string, priority int) bool
 	All() []model.StoreRule
 }
 
 type MemoryRepository struct {
-	mu      sync.RWMutex
-	rules   map[int64]model.StoreRule
-	counter int64
+	mu    sync.RWMutex
+	rules map[string]model.StoreRule
 }
 
 func NewMemoryRepository() *MemoryRepository {
-	return &MemoryRepository{rules: make(map[int64]model.StoreRule)}
+	return &MemoryRepository{rules: make(map[string]model.StoreRule)}
 }
 
 func (r *MemoryRepository) Save(rule model.StoreRule) model.StoreRule {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	rule.ID = atomic.AddInt64(&r.counter, 1)
+	rule.ID = uuid.NewString()
 	r.rules[rule.ID] = rule
 	return rule
 }
 
-func (r *MemoryRepository) Delete(id int64) bool {
+func (r *MemoryRepository) Delete(id string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.rules[id]; !ok {
 		return false
 	}
 	delete(r.rules, id)
+	return true
+}
+
+func (r *MemoryRepository) UpdatePriority(id string, priority int) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rule, ok := r.rules[id]
+	if !ok {
+		return false
+	}
+	rule.Priority = priority
+	r.rules[id] = rule
 	return true
 }
 

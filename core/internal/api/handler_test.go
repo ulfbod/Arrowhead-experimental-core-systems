@@ -62,6 +62,27 @@ var fullRegisterBody = map[string]any{
 	"secure":     "NOT_SECURE",
 }
 
+// ---- ErrorResponse shape ----
+
+func TestHandlerRegisterMissingFieldReturnsExceptionType(t *testing.T) {
+	h := newTestHandler()
+	w := postJSON(t, h, "/serviceregistry/register", map[string]any{
+		"serviceDefinition": "",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	var body struct {
+		ExceptionType string `json:"exceptionType"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("response is not JSON: %v — body: %s", err, w.Body.String())
+	}
+	if body.ExceptionType != "INVALID_PARAMETER" {
+		t.Errorf("exceptionType = %q, want INVALID_PARAMETER", body.ExceptionType)
+	}
+}
+
 // ---- Register ----
 
 func TestHandlerRegisterValid(t *testing.T) {

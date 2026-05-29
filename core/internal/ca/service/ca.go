@@ -2,7 +2,8 @@
 //
 // The CA generates a self-signed ECDSA P-256 root certificate at startup and
 // uses it to sign leaf certificates for systems that request onboarding.
-// All state is in-memory (see GAP_ANALYSIS.md G5).
+// Revocation state and the next-serial counter are persisted via the ca/repository
+// interface (G5 resolved in Step 9).
 package service
 
 import (
@@ -16,10 +17,10 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"arrowhead/core/internal/ca/model"
+	carepo "arrowhead/core/internal/ca/repository"
 )
 
 var (
@@ -28,32 +29,26 @@ var (
 	ErrCertNotIssuedByCA  = errors.New("certificate was not issued by this CA")
 )
 
-// revokedEntry records when a certificate serial was revoked.
-type revokedEntry struct {
-	serial     *big.Int
-	revokedAt  time.Time
-	systemName string
-}
-
 // CAService manages a self-signed CA and issues leaf certificates.
 type CAService struct {
-	caKey      *ecdsa.PrivateKey
-	caCert     *x509.Certificate
-	caCertPEM  []byte
-	certDur    time.Duration
-	mu         sync.Mutex
-	nextSerial atomic.Int64
-
-	// revocation: protected by revokedMu
-	revokedMu   sync.RWMutex
-	revokedList []revokedEntry      // ordered by revocation time
-	revokedSet  map[string]struct{} // serial.String() → revoked; fast membership test
+	caKey     *ecdsa.PrivateKey
+	caCert    *x509.Certificate
+	caCertPEM []byte
+	certDur   time.Duration
+	mu        sync.Mutex
+	repo      carepo.Repository
 }
 
-// NewCAService initialises the CA by generating a self-signed root certificate.
+// NewCAService initialises the CA with an in-memory repository.
 // certDuration is the default lifetime of issued leaf certificates;
 // pass a negative value in tests to produce immediately-expired certificates.
 func NewCAService(certDuration time.Duration) (*CAService, error) {
+	return NewCAServiceWithRepo(certDuration, carepo.NewMemoryRepository())
+}
+
+// NewCAServiceWithRepo initialises the CA with the provided repository for
+// persistent revocation and serial tracking.
+func NewCAServiceWithRepo(certDuration time.Duration, repo carepo.Repository) (*CAService, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -82,15 +77,13 @@ func NewCAService(certDuration time.Duration) (*CAService, error) {
 	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 
-	svc := &CAService{
-		caKey:      key,
-		caCert:     cert,
-		caCertPEM:  certPEM,
-		certDur:    certDuration,
-		revokedSet: make(map[string]struct{}),
-	}
-	svc.nextSerial.Store(2) // 1 is the CA itself
-	return svc, nil
+	return &CAService{
+		caKey:     key,
+		caCert:    cert,
+		caCertPEM: certPEM,
+		certDur:   certDuration,
+		repo:      repo,
+	}, nil
 }
 
 // Issue generates a new leaf certificate for the given system and returns the
@@ -110,7 +103,7 @@ func (s *CAService) Issue(req model.IssueRequest) (*model.IssuedCert, error) {
 		return nil, err
 	}
 
-	serial := s.nextSerial.Add(1)
+	serial := s.repo.IncrementSerial()
 	now := time.Now()
 
 	// Build the Subject CN and DNS SANs.
@@ -189,10 +182,7 @@ func (s *CAService) VerifyCert(certPEM string) (systemName string, valid bool, r
 	}
 
 	// Check revocation after chain verification.
-	s.revokedMu.RLock()
-	_, revoked := s.revokedSet[cert.SerialNumber.String()]
-	s.revokedMu.RUnlock()
-	if revoked {
+	if s.repo.IsRevoked(cert.SerialNumber.String()) {
 		return cert.Subject.CommonName, false, "certificate has been revoked"
 	}
 
@@ -222,18 +212,7 @@ func (s *CAService) Revoke(certPEM string) (*model.RevokeResponse, error) {
 	}
 
 	now := time.Now()
-	key := cert.SerialNumber.String()
-
-	s.revokedMu.Lock()
-	if _, already := s.revokedSet[key]; !already {
-		s.revokedSet[key] = struct{}{}
-		s.revokedList = append(s.revokedList, revokedEntry{
-			serial:     cert.SerialNumber,
-			revokedAt:  now,
-			systemName: cert.Subject.CommonName,
-		})
-	}
-	s.revokedMu.Unlock()
+	s.repo.AddRevocation(cert.SerialNumber.String(), cert.Subject.CommonName, now)
 
 	return &model.RevokeResponse{
 		SystemName: cert.Subject.CommonName,
@@ -244,15 +223,16 @@ func (s *CAService) Revoke(certPEM string) (*model.RevokeResponse, error) {
 // CRL generates and returns a PEM-encoded Certificate Revocation List signed by
 // this CA. The CRL is generated fresh on each call; it is valid for 24 hours.
 func (s *CAService) CRL() ([]byte, error) {
-	s.revokedMu.RLock()
-	entries := make([]x509.RevocationListEntry, len(s.revokedList))
-	for i, e := range s.revokedList {
+	revs := s.repo.AllRevocations()
+	entries := make([]x509.RevocationListEntry, len(revs))
+	for i, e := range revs {
+		sn := new(big.Int)
+		sn.SetString(e.Serial, 10)
 		entries[i] = x509.RevocationListEntry{
-			SerialNumber:   e.serial,
-			RevocationTime: e.revokedAt,
+			SerialNumber:   sn,
+			RevocationTime: e.RevokedAt,
 		}
 	}
-	s.revokedMu.RUnlock()
 
 	template := &x509.RevocationList{
 		Number:                    big.NewInt(time.Now().Unix()),

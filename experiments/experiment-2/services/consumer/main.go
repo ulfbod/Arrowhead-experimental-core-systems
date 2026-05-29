@@ -88,7 +88,7 @@ func orchestrate(orchURL, consumerName string) (string, error) {
 		},
 	})
 
-	resp, err := http.Post(orchURL+"/orchestration/dynamic", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(orchURL+"/serviceorchestration/orchestration/pull", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("POST orchestration: %w", err)
 	}

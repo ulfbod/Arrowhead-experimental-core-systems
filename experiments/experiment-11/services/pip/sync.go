@@ -11,7 +11,7 @@ import (
 // Returns an error if the HTTP call fails or the response is not 200.
 func fetchAndUpdate(caURL string, store *GrantStore) error {
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(caURL + "/authorization/lookup")
+	resp, err := client.Get(caURL + "/consumerauthorization/authorization/lookup")
 	if err != nil {
 		return fmt.Errorf("GET ConsumerAuth: %w", err)
 	}

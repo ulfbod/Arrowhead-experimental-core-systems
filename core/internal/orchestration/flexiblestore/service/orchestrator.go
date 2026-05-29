@@ -71,16 +71,14 @@ func (o *FlexibleStoreOrchestrator) Orchestrate(req orchmodel.OrchestrationReque
 	results := make([]orchmodel.OrchestrationResult, 0, len(matched))
 	for _, rule := range matched {
 		results = append(results, orchmodel.OrchestrationResult{
-			Provider: rule.Provider,
-			Service: orchmodel.ServiceInfo{
-				ServiceDefinition: rule.ServiceDefinition,
-				ServiceUri:        rule.ServiceUri,
-				Interfaces:        rule.Interfaces,
-			},
-			Priority: rule.Priority,
+			ProviderName:      rule.Provider.SystemName,
+			ServiceDefinition: rule.ServiceDefinition,
+			ServiceUri:        rule.ServiceUri,
+			Interfaces:        rule.Interfaces,
+			Priority:          rule.Priority,
 		})
 	}
-	return orchmodel.OrchestrationResponse{Response: results}, nil
+	return orchmodel.OrchestrationResponse{Results: results}, nil
 }
 
 // CreateRule validates and stores a flexible orchestration rule.

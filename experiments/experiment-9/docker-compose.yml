@@ -145,10 +145,12 @@ services:
       TLS_CERT_FILE: "/certs/serviceregistry.crt"
       TLS_KEY_FILE:  "/certs/serviceregistry.key"
       TLS_CA_FILE:   "/certs/ca.crt"
+      DB_PATH: "/data/serviceregistry.db"
     ports:
       - "8590:8490"
     volumes:
       - certs:/certs:ro
+      - serviceregistry-data:/data
     depends_on:
       cert-provisioner:
         condition: service_completed_successfully
@@ -170,10 +172,12 @@ services:
       TLS_CERT_FILE: "/certs/authentication.crt"
       TLS_KEY_FILE:  "/certs/authentication.key"
       TLS_CA_FILE:   "/certs/ca.crt"
+      DB_PATH: "/data/authentication.db"
     ports:
       - "8591:8491"
     volumes:
       - certs:/certs:ro
+      - authentication-data:/data
     depends_on:
       cert-provisioner:
         condition: service_completed_successfully
@@ -195,10 +199,12 @@ services:
       TLS_CERT_FILE: "/certs/consumerauth.crt"
       TLS_KEY_FILE:  "/certs/consumerauth.key"
       TLS_CA_FILE:   "/certs/ca.crt"
+      DB_PATH: "/data/consumerauth.db"
     ports:
       - "8592:8492"
     volumes:
       - certs:/certs:ro
+      - consumerauth-data:/data
     depends_on:
       cert-provisioner:
         condition: service_completed_successfully
@@ -254,16 +260,26 @@ services:
     depends_on:
       consumerauth:
         condition: service_healthy
+      authentication:
+        condition: service_healthy
     restart: "no"
     command:
       - sh
       - -c
       - |-
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"portal-cloud-ml","providerSystemName":"robot-fleet-site-1","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"service-partner-1","providerSystemName":"portal-cloud-ml","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"service-partner-2","providerSystemName":"portal-cloud-ml","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"test-probe","providerSystemName":"portal-cloud-ml","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' -d '{"consumerSystemName":"test-probe","providerSystemName":"robot-fleet-site-1","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists'
+        # Register robot-fleet system identities so they can log in to the Authentication service.
+        curl -s -X POST http://authentication:8081/authentication/mgmt/identities \
+          -H 'Content-Type: application/json' \
+          -d '{"authenticationMethod":"PASSWORD","identities":[{"systemName":"robot-fleet-site-1","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-2","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-3","credentials":{"password":"fleet-secret"}}]}' \
+          | grep -q '"identities"' &&
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant \
+          -H 'Content-Type: application/json' \
+          -d '{"provider":"robot-fleet-site-1","targetType":"SERVICE_DEF","target":"telemetry","defaultPolicy":{"policyType":"WHITELIST","policyList":["portal-cloud-ml","test-probe"]}}' \
+          | grep -qE '"instanceId":|already exists' &&
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant \
+          -H 'Content-Type: application/json' \
+          -d '{"provider":"portal-cloud-ml","targetType":"SERVICE_DEF","target":"telemetry-rest","defaultPolicy":{"policyType":"WHITELIST","policyList":["service-partner-1","service-partner-2","test-probe"]}}' \
+          | grep -qE '"instanceId":|already exists'
 
   # ── Policy Engine ─────────────────────────────────────────────────────────────
 
@@ -604,3 +620,6 @@ services:
 
 volumes:
   certs:
+  serviceregistry-data:
+  authentication-data:
+  consumerauth-data:

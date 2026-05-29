@@ -260,7 +260,9 @@
       "Read(//opt/**)",
       "Bash(GOWORK=off go test ./...)",
       "Bash(GOWORK=off go test ./... -v)",
-      "Bash(docker pull:*)"
+      "Bash(docker pull:*)",
+      "Bash(sort -t/ -k5)",
+      "Bash(sort -t/ -k1)"
     ]
   }
 }

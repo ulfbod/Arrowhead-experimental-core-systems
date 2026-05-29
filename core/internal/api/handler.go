@@ -114,5 +114,5 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+	WriteErrorResponse(w, status, msg, "", "serviceregistry")
 }

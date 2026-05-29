@@ -12,11 +12,19 @@ export default defineConfig({
       '/serviceregistry':                 'http://localhost:8080',
       '/health':                          'http://localhost:8080',
       '/authentication':                  'http://localhost:8081',
-      '/authorization':                   'http://localhost:8082',
-      '/orchestration/flexiblestore':     'http://localhost:8085',
-      '/orchestration/simplestore':       'http://localhost:8084',
-      '/orchestration/dynamic':           'http://localhost:8083',
-      '/orchestration':                   'http://localhost:8083',
+      '/consumerauthorization':            'http://localhost:8082',
+      '/serviceorchestration/orchestration/flexiblestore': 'http://localhost:8085',
+      '/serviceorchestration/orchestration/simplestore':   'http://localhost:8084',
+      '/serviceorchestration/orchestration/pull':          'http://localhost:8083',
+      // Virtual dev-proxy paths for pull orchestration to non-dynamic backends
+      '/simplestore-pull': {
+        target: 'http://localhost:8084',
+        rewrite: (_path: string) => '/serviceorchestration/orchestration/pull',
+      },
+      '/flexiblestore-pull': {
+        target: 'http://localhost:8085',
+        rewrite: (_path: string) => '/serviceorchestration/orchestration/pull',
+      },
     },
   },
   build: {

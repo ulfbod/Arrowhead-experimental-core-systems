@@ -35,8 +35,8 @@ func TestCreateRuleValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if rule.ID == 0 {
-		t.Error("expected non-zero ID")
+	if rule.ID == "" {
+		t.Error("expected non-empty UUID ID")
 	}
 	if rule.ConsumerSystemName != "consumer-app" {
 		t.Errorf("ConsumerSystemName = %q", rule.ConsumerSystemName)
@@ -83,7 +83,7 @@ func TestDeleteRuleValid(t *testing.T) {
 
 func TestDeleteRuleNotFound(t *testing.T) {
 	orch := newOrchestrator()
-	if err := orch.DeleteRule(999); err == nil {
+	if err := orch.DeleteRule("00000000-0000-0000-0000-000000000000"); err == nil {
 		t.Fatal("expected error for nonexistent rule")
 	}
 }
@@ -147,14 +147,14 @@ func TestOrchestrateMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Response) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(resp.Response))
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
 	}
-	if resp.Response[0].Provider.SystemName != "sensor-1" {
-		t.Errorf("provider = %q", resp.Response[0].Provider.SystemName)
+	if resp.Results[0].ProviderName != "sensor-1" {
+		t.Errorf("provider = %q", resp.Results[0].ProviderName)
 	}
-	if resp.Response[0].Service.ServiceUri != "/temperature" {
-		t.Errorf("serviceUri = %q", resp.Response[0].Service.ServiceUri)
+	if resp.Results[0].ServiceUri != "/temperature" {
+		t.Errorf("serviceUri = %q", resp.Results[0].ServiceUri)
 	}
 }
 
@@ -169,8 +169,8 @@ func TestOrchestrateNoMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Response) != 0 {
-		t.Errorf("expected empty response, got %d", len(resp.Response))
+	if len(resp.Results) != 0 {
+		t.Errorf("expected empty response, got %d", len(resp.Results))
 	}
 }
 
@@ -182,7 +182,7 @@ func TestOrchestrateWrongConsumer(t *testing.T) {
 		RequesterSystem:  orchmodel.System{SystemName: "wrong-consumer"},
 		RequestedService: orchmodel.ServiceFilter{ServiceDefinition: "temperature-service"},
 	})
-	if len(resp.Response) != 0 {
+	if len(resp.Results) != 0 {
 		t.Error("expected no match for wrong consumer")
 	}
 }
@@ -199,7 +199,7 @@ func TestOrchestrateMultipleRulesReturnsAll(t *testing.T) {
 		RequesterSystem:  orchmodel.System{SystemName: "consumer-app"},
 		RequestedService: orchmodel.ServiceFilter{ServiceDefinition: "temperature-service"},
 	})
-	if len(resp.Response) != 2 {
-		t.Errorf("expected 2 results, got %d", len(resp.Response))
+	if len(resp.Results) != 2 {
+		t.Errorf("expected 2 results, got %d", len(resp.Results))
 	}
 }

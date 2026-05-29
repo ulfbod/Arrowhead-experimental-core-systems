@@ -115,7 +115,7 @@ export function ConfigView() {
           <NumberInput min={500} value={draft.polling.healthIntervalMs}
             onChange={v => updatePolling('healthIntervalMs', v)} />
         </Field>
-        <Field label="Grants (ms)" hint="ConsumerAuth /authorization/lookup poll rate">
+        <Field label="Grants (ms)" hint="ConsumerAuth /consumerauthorization/authorization/lookup poll rate">
           <NumberInput min={1000} value={draft.polling.grantsIntervalMs}
             onChange={v => updatePolling('grantsIntervalMs', v)} />
         </Field>

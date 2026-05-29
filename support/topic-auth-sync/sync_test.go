@@ -35,14 +35,14 @@ func (m *mockRMQ) saw(method, path string) bool {
 	return false
 }
 
-// mockConsumerAuth serves the /authorization/lookup endpoint.
+// mockConsumerAuth serves the /consumerauthorization/authorization/lookup endpoint.
 type mockConsumerAuth struct {
 	rules      []AuthRule
 	statusCode int
 }
 
 func (m *mockConsumerAuth) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/authorization/lookup" {
+	if r.URL.Path != "/consumerauthorization/authorization/lookup" {
 		http.NotFound(w, r)
 		return
 	}

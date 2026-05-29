@@ -14,12 +14,21 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
 	"arrowhead/core/internal/model"
 	"arrowhead/core/internal/service"
 )
+
+// pageReqOrZero returns the dereferenced PageRequest, or a zero value if p is nil.
+func pageReqOrZero(p *model.PageRequest) model.PageRequest {
+	if p == nil {
+		return model.PageRequest{}
+	}
+	return *p
+}
 
 // AH5Handler wires HTTP routes to AH5RegistryService.
 type AH5Handler struct {
@@ -83,6 +92,10 @@ func (h *AH5Handler) handleDeviceRegister(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	if msg := validateDeviceName(req.Name); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
 	dev, created, err := h.svc.RegisterDevice(req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -101,12 +114,17 @@ func (h *AH5Handler) handleDeviceLookup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	var req model.DeviceLookupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var raw struct {
+		model.DeviceLookupRequest
+		Pagination *model.PageRequest `json:"pagination"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.svc.LookupDevices(req))
+	full := h.svc.LookupDevices(raw.DeviceLookupRequest)
+	page, total := model.Paginate(full.Entries, pageReqOrZero(raw.Pagination), func(d *model.Device) string { return d.Name })
+	writeJSON(w, http.StatusOK, model.DeviceLookupResponse{Entries: page, Count: len(page), TotalCount: total})
 }
 
 // DELETE /serviceregistry/device-discovery/revoke/{name}
@@ -120,7 +138,12 @@ func (h *AH5Handler) handleDeviceRevoke(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "device name required in path")
 		return
 	}
-	if h.svc.RevokeDevice(name) {
+	ok, err := h.svc.RevokeDevice(name)
+	if errors.Is(err, service.ErrLocked) {
+		writeError(w, http.StatusLocked, err.Error())
+		return
+	}
+	if ok {
 		w.WriteHeader(http.StatusOK)
 	} else {
 		w.WriteHeader(http.StatusNoContent)
@@ -138,6 +161,10 @@ func (h *AH5Handler) handleSystemRegister(w http.ResponseWriter, r *http.Request
 	var req model.SystemRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if msg := validateSystemName(req.Name); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	sys, created, err := h.svc.RegisterSystem(req)
@@ -158,12 +185,17 @@ func (h *AH5Handler) handleSystemLookup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	var req model.SystemLookupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var raw struct {
+		model.SystemLookupRequest
+		Pagination *model.PageRequest `json:"pagination"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.svc.LookupSystems(req))
+	full := h.svc.LookupSystems(raw.SystemLookupRequest)
+	page, total := model.Paginate(full.Entries, pageReqOrZero(raw.Pagination), func(s *model.AH5System) string { return s.Name })
+	writeJSON(w, http.StatusOK, model.SystemLookupResponse{Entries: page, Count: len(page), TotalCount: total})
 }
 
 // DELETE /serviceregistry/system-discovery/revoke?name={name}
@@ -200,6 +232,18 @@ func (h *AH5Handler) handleServiceRegister(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	if msg := validateSystemName(req.SystemName); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+	if msg := validateServiceDefinitionName(req.ServiceDefinitionName); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+	if msg := validateInterfaces(req.Interfaces); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
 	inst, created, err := h.svc.RegisterService(req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -213,17 +257,27 @@ func (h *AH5Handler) handleServiceRegister(w http.ResponseWriter, r *http.Reques
 }
 
 // POST /serviceregistry/service-discovery/lookup
+// Requires at least one of: instanceIds, providerNames, serviceDefinitionNames.
 func (h *AH5Handler) handleServiceLookup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	var req model.ServiceLookupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var raw struct {
+		model.ServiceLookupRequest
+		Pagination *model.PageRequest `json:"pagination"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.svc.LookupServices(req))
+	if !hasServiceLookupFilter(raw.ServiceLookupRequest) {
+		writeError(w, http.StatusBadRequest, "at least one of instanceIds, providerNames, serviceDefinitionNames must be provided")
+		return
+	}
+	full := h.svc.LookupServices(raw.ServiceLookupRequest)
+	page, total := model.Paginate(full.Entries, pageReqOrZero(raw.Pagination), func(si *model.AH5ServiceInstance) string { return si.InstanceID })
+	writeJSON(w, http.StatusOK, model.ServiceLookupResponse{Entries: page, Count: len(page), TotalCount: total})
 }
 
 // DELETE /serviceregistry/service-discovery/revoke/{instanceId}
@@ -252,12 +306,17 @@ func (h *AH5Handler) handleMgmtDevicesQuery(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	var req model.DeviceLookupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var raw struct {
+		model.DeviceLookupRequest
+		Pagination *model.PageRequest `json:"pagination"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.svc.QueryDevices(req))
+	full := h.svc.QueryDevices(raw.DeviceLookupRequest)
+	page, total := model.Paginate(full.Devices, pageReqOrZero(raw.Pagination), func(d *model.Device) string { return d.Name })
+	writeJSON(w, http.StatusOK, model.DeviceListResponse{Devices: page, Count: len(page), TotalCount: total})
 }
 
 // POST /serviceregistry/mgmt/devices — create
@@ -306,12 +365,17 @@ func (h *AH5Handler) handleMgmtSystemsQuery(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	var req model.SystemLookupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var raw struct {
+		model.SystemLookupRequest
+		Pagination *model.PageRequest `json:"pagination"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.svc.QuerySystems(req))
+	full := h.svc.QuerySystems(raw.SystemLookupRequest)
+	page, total := model.Paginate(full.Systems, pageReqOrZero(raw.Pagination), func(s *model.AH5System) string { return s.Name })
+	writeJSON(w, http.StatusOK, model.SystemListResponse{Systems: page, Count: len(page), TotalCount: total})
 }
 
 // POST /serviceregistry/mgmt/systems — create
@@ -360,8 +424,16 @@ func (h *AH5Handler) handleMgmtServiceDefsQuery(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	// No filter supported at this time — return all.
-	writeJSON(w, http.StatusOK, h.svc.QueryServiceDefinitions())
+	var raw struct {
+		Pagination *model.PageRequest `json:"pagination"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	full := h.svc.QueryServiceDefinitions()
+	page, total := model.Paginate(full.ServiceDefinitions, pageReqOrZero(raw.Pagination), func(sd *model.ServiceDefinition) string { return sd.Name })
+	writeJSON(w, http.StatusOK, model.ServiceDefinitionListResponse{ServiceDefinitions: page, Count: len(page), TotalCount: total})
 }
 
 // POST /serviceregistry/mgmt/service-definitions — create
@@ -397,12 +469,17 @@ func (h *AH5Handler) handleMgmtServiceInstancesQuery(w http.ResponseWriter, r *h
 		writeError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	var req model.ServiceLookupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var raw struct {
+		model.ServiceLookupRequest
+		Pagination *model.PageRequest `json:"pagination"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.svc.QueryServiceInstances(req))
+	full := h.svc.QueryServiceInstances(raw.ServiceLookupRequest)
+	page, total := model.Paginate(full.Instances, pageReqOrZero(raw.Pagination), func(si *model.AH5ServiceInstance) string { return si.InstanceID })
+	writeJSON(w, http.StatusOK, model.ServiceListResponse{Instances: page, Count: len(page), TotalCount: total})
 }
 
 // POST   /serviceregistry/mgmt/service-instances — create
@@ -451,7 +528,16 @@ func (h *AH5Handler) handleMgmtInterfaceTemplatesQuery(w http.ResponseWriter, r 
 		writeError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.svc.QueryInterfaceTemplates())
+	var raw struct {
+		Pagination *model.PageRequest `json:"pagination"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	full := h.svc.QueryInterfaceTemplates()
+	page, total := model.Paginate(full.InterfaceTemplates, pageReqOrZero(raw.Pagination), func(it *model.InterfaceTemplate) string { return it.Name })
+	writeJSON(w, http.StatusOK, model.InterfaceTemplateListResponse{InterfaceTemplates: page, Count: len(page), TotalCount: total})
 }
 
 // POST   /serviceregistry/mgmt/interface-templates — create
@@ -463,6 +549,14 @@ func (h *AH5Handler) handleMgmtInterfaceTemplates(w http.ResponseWriter, r *http
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON")
 			return
+		}
+		for _, tmpl := range req.InterfaceTemplates {
+			if tmpl != nil {
+				if msg := validateInterfaceTemplateName(tmpl.Name); msg != "" {
+					writeError(w, http.StatusBadRequest, msg)
+					return
+				}
+			}
 		}
 		resp, err := h.svc.CreateInterfaceTemplates(req)
 		if err != nil {

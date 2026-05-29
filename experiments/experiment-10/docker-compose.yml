@@ -302,11 +302,18 @@ services:
         condition: service_healthy
       pip:
         condition: service_healthy
+      authentication:
+        condition: service_healthy
     restart: "no"
     command:
       - sh
       - -c
       - |-
+        # Register robot-fleet system identities so they can log in to the Authentication service.
+        curl -s -X POST http://authentication:8081/authentication/mgmt/identities \
+          -H 'Content-Type: application/json' \
+          -d '{"authenticationMethod":"PASSWORD","identities":[{"systemName":"robot-fleet-site-1","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-2","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-3","credentials":{"password":"fleet-secret"}}]}' \
+          | grep -q '"identities"' &&
         # XACML policies via PAP (access-control source of truth)
         curl -s -X POST http://pap:9305/policies -H 'Content-Type: application/json' \
           -d '{"subject":"portal-cloud-ml","resource":"telemetry","action":"consume","effect":"Permit"}' | grep -q '"id"' &&
@@ -326,11 +333,11 @@ services:
         curl -s -X POST http://pip:9306/subjects -H 'Content-Type: application/json' \
           -d '{"name":"service-partner-2","certLevel":"sy","valid":true}' | grep -q '"name"' &&
         # Arrowhead orchestration grants via ConsumerAuth (for DynamicOrch)
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' \
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' \
           -d '{"consumerSystemName":"portal-cloud-ml","providerSystemName":"robot-fleet-site-1","serviceDefinition":"telemetry"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' \
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' \
           -d '{"consumerSystemName":"service-partner-1","providerSystemName":"portal-cloud-ml","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists' &&
-        curl -s -X POST http://consumerauth:8082/authorization/grant -H 'Content-Type: application/json' \
+        curl -s -X POST http://consumerauth:8082/consumerauthorization/authorization/grant -H 'Content-Type: application/json' \
           -d '{"consumerSystemName":"service-partner-2","providerSystemName":"portal-cloud-ml","serviceDefinition":"telemetry-rest"}' | grep -qE '"id":|already exists'
 
   # ── AMQP Enforcement ─────────────────────────────────────────────────────────

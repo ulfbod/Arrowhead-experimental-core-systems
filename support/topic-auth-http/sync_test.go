@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// mockCA serves /authorization/lookup with a fixed rule set.
+// mockCA serves /consumerauthorization/authorization/lookup with a fixed rule set.
 type mockCA struct {
 	rules      []AuthRule
 	statusCode int
@@ -16,7 +16,7 @@ type mockCA struct {
 
 func (m *mockCA) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/authorization/lookup", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/consumerauthorization/authorization/lookup", func(w http.ResponseWriter, r *http.Request) {
 		if m.statusCode != 0 {
 			w.WriteHeader(m.statusCode)
 			return

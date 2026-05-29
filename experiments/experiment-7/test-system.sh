@@ -299,7 +299,7 @@ else
     --cert "$SHARED_PROBE_CRT" --key "$SHARED_PROBE_KEY" \
     --cacert "$SHARED_CA_FILE" \
     --resolve "consumerauth:8482:127.0.0.1" \
-    https://consumerauth:8482/authorization/lookup)
+    https://consumerauth:8482/consumerauthorization/authorization/lookup)
   cc_grant_id=$(echo "$lookup" \
     | grep -oE '"id":[0-9]+[^}]*"consumerSystemName":"cert-consumer"' \
     | grep -oE '"id":[0-9]+' | grep -oE '[0-9]+' | head -1)
@@ -320,7 +320,7 @@ else
       --cert "$SHARED_PROBE_CRT" --key "$SHARED_PROBE_KEY" \
       --cacert "$SHARED_CA_FILE" \
       --resolve "consumerauth:8482:127.0.0.1" \
-      "https://consumerauth:8482/authorization/revoke/$cc_grant_id"; echo -n "")
+      "https://consumerauth:8482/consumerauthorization/authorization/revoke/$cc_grant_id"; echo -n "")
     check_eq "revoke cert-consumer grant via TLS port 8482 → 200" "200" "$revoke_code"
 
     echo "  waiting 30 s for policy-sync cycle to propagate revocation..."
@@ -337,7 +337,7 @@ else
       --cert "$SHARED_PROBE_CRT" --key "$SHARED_PROBE_KEY" \
       --cacert "$SHARED_CA_FILE" \
       --resolve "consumerauth:8482:127.0.0.1" \
-      https://consumerauth:8482/authorization/grant \
+      https://consumerauth:8482/consumerauthorization/authorization/grant \
       -H 'Content-Type: application/json' \
       -d '{"consumerSystemName":"cert-consumer","providerSystemName":"data-provider-tls","serviceDefinition":"telemetry-rest"}')
     if [[ "$regrant" == *'"id":'* ]] || [[ "$regrant" == *"already exists"* ]]; then
