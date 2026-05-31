@@ -3296,6 +3296,108 @@ The canonical tidy command for a Go version bump covers all four module groups:
 
 ---
 
+## EXP-041 — `setup` container fails after PascalCase validation added to Authentication (experiment-13, 2026-05-31)
+
+### Symptom
+
+`docker compose up` starts cleanly, but the `setup` container exits with code 1
+within ~0.2 seconds. All downstream services that depend on `setup:
+condition: service_completed_successfully` fail to start.
+
+```
+experiment-13-setup-1 exited with code 1
+```
+
+`docker logs experiment-13-setup-1` produces no output because `curl` was invoked
+with `-s` (silent). Adding `-v` to the curl call reveals:
+
+```
+< HTTP/1.1 400 Bad Request
+{"error":"invalid systemName 'robot-fleet-site-1': must be PascalCase (^[A-Z][A-Za-z0-9]{0,62}$)"}
+```
+
+The `grep -q '"identities"'` check on the response body fails, and the `&&`-chained
+shell script exits 1 immediately.
+
+### Root Cause
+
+Phase 4 conformance work (Step 47, G52) added `ValidatePascalCase` enforcement to
+`POST /authentication/mgmt/identities`. The regex `^[A-Z][A-Za-z0-9]{0,62}$`
+rejects names that:
+
+- Start with a lowercase letter (`robot-` → lowercase 'r')
+- Contain hyphens (`-` is not in `[A-Za-z0-9]`)
+
+The experiment-13 `setup` command registered identities `robot-fleet-site-1`,
+`robot-fleet-site-2`, `robot-fleet-site-3` — all of which violate both rules.
+
+This is a late-binding failure: the Authentication service accepted these names
+before G52 was implemented, so no previous test run caught the incompatibility.
+The `setup` container runs once at stack start, so there is no crash loop — only
+a silent exit-1 followed by a cascade of unhealthy downstream services.
+
+### Fix
+
+Rename all three system names to PascalCase throughout `experiment-13/docker-compose.yml`:
+
+| Old name | New name |
+|---|---|
+| `robot-fleet-site-1` | `RobotFleetSite1` |
+| `robot-fleet-site-2` | `RobotFleetSite2` |
+| `robot-fleet-site-3` | `RobotFleetSite3` |
+
+Affected locations in docker-compose.yml:
+
+1. **`setup` identity registration body** — `systemName` values in the JSON payload
+2. **PAP policy `provider` fields** — orchestrate-action policies that target a
+   specific provider system (the provider identity is matched against the cert CN,
+   which comes from `SYSTEM_NAME`)
+3. **`robot-fleet-site-N` service `SYSTEM_NAME` env var** — used for Authentication
+   login and CA certificate issuance; the issued cert CN becomes the AMQP/Kafka
+   principal identity
+4. **`robot-fleet-site-N` service `AMQP_URL` env var** — username in the AMQPS URL
+   must match the cert CN that RabbitMQ receives via `rabbitmq_auth_mechanism_ssl`
+
+The Docker Compose service names (`robot-fleet-site-1`, `robot-fleet-site-2`,
+`robot-fleet-site-3`) are kept unchanged — Docker network hostnames are not subject
+to the Authentication PascalCase constraint.
+
+### Guidance for Future Iterations
+
+**When core validation rules are added or tightened, audit every experiment's
+`setup` container and every service's `SYSTEM_NAME` env var.**
+
+The Authentication service is the single point of identity registration for all
+experiment services. Any tightening of its validation rules (PascalCase, length
+limits, character set) silently breaks existing experiments' setup scripts.
+
+Specific checks before shipping a conformance step that changes identity validation:
+
+1. **Search all docker-compose.yml files for identity registration calls:**
+   ```bash
+   grep -rn "authentication/mgmt/identities" experiments/
+   ```
+   For each match, verify the `systemName` values pass the new validation regex.
+
+2. **Search all docker-compose.yml files for `SYSTEM_NAME` env vars:**
+   ```bash
+   grep -rn "SYSTEM_NAME:" experiments/
+   ```
+   Each value must satisfy the same PascalCase rule as the registered identity.
+
+3. **Check that PAP policy subjects and providers are consistent** with the updated
+   system names — they are matched against cert CNs derived from `SYSTEM_NAME`.
+
+4. **Diagnose `setup` container failures with `-v` curl output**, not with `docker logs`
+   alone — the `-s` flag suppresses the response body that reveals the actual 400 error.
+   Add `-v` temporarily or strip `-s` when debugging:
+   ```bash
+   docker compose run --rm setup sh -c \
+     'curl -v -X POST http://authentication:8081/authentication/mgmt/identities ...'
+   ```
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -3356,3 +3458,4 @@ Use this before marking an experiment implementation complete:
 - [ ] Handlers that dereference a lazily-initialised global (e.g. `fleet *Fleet` assigned only after all connections succeed) must nil-check it inside the `mu.RLock()` / `mu.Lock()` block — a nil method call panics before the deferred unlock, permanently leaking the lock and eventually deadlocking all later callers (EXP-035)
 - [ ] When the minimum Go version in any workspace `go.mod` is raised, update **all** `*.Dockerfile` files across all experiments — not just `core.Dockerfile`. Run `grep -rn "golang:1\." experiments/*/dockerfiles/*.Dockerfile | grep -v "golang:$(grep '^go ' core/go.mod | awk '{print $2}')-alpine"` to detect any Dockerfile below the required version. A single `find experiments/ -name "*.Dockerfile" | xargs sed -i 's/golang:OLD/golang:NEW/g'` fixes the whole repo in one pass (EXP-038)
 - [ ] After any Go toolchain version bump, re-run `go mod tidy` in **every** module — `core/`, `core-evol/`, all experiment services, all support packages — and then `go work sync`. Missing any module leaves its `go.sum` without the `/go.mod h1:` entries the new toolchain requires, causing Docker build failures. Commit all updated `go.sum` files together with the `go.mod` and Dockerfile changes (EXP-039, EXP-040)
+- [ ] After any conformance step that tightens identity validation in Authentication (PascalCase, length, character set), run `grep -rn "authentication/mgmt/identities" experiments/` and `grep -rn "SYSTEM_NAME:" experiments/` — every `systemName` registered by a `setup` container and every `SYSTEM_NAME` env var must satisfy the new rule. Diagnose `setup` exit-1 failures by temporarily removing `curl -s` to see the 400 error body; `-s` suppresses the response that reveals the validation message (EXP-041)

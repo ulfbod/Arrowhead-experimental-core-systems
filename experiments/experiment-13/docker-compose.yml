@@ -47,9 +47,9 @@
 #   portal-cloud-ml HTTP:         http://localhost:9607
 #   service-partner-1 health:     http://localhost:9611
 #   service-partner-2 health:     http://localhost:9612
-#   robot-fleet-site-1 control:   http://localhost:9616
-#   robot-fleet-site-2 control:   http://localhost:9617
-#   robot-fleet-site-3 control:   http://localhost:9618
+#   RobotFleetSite1 control:      http://localhost:9616
+#   RobotFleetSite2 control:      http://localhost:9617
+#   RobotFleetSite3 control:      http://localhost:9618
 #   RabbitMQ management:          http://localhost:16079
 #   Kafdrop (Kafka UI):           http://localhost:9013
 #   Dashboard (monitoring):       http://localhost:3013
@@ -364,17 +364,18 @@ services:
       - -c
       - |-
         # Register robot-fleet system identities so they can log in to the Authentication service.
+        # systemName must be PascalCase (enforced by Authentication since Phase 4 / G52).
         curl -s -X POST http://authentication:8081/authentication/mgmt/identities \
           -H 'Content-Type: application/json' \
-          -d '{"authenticationMethod":"PASSWORD","identities":[{"systemName":"robot-fleet-site-1","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-2","credentials":{"password":"fleet-secret"}},{"systemName":"robot-fleet-site-3","credentials":{"password":"fleet-secret"}}]}' \
+          -d '{"authenticationMethod":"PASSWORD","identities":[{"systemName":"RobotFleetSite1","credentials":{"password":"fleet-secret"}},{"systemName":"RobotFleetSite2","credentials":{"password":"fleet-secret"}},{"systemName":"RobotFleetSite3","credentials":{"password":"fleet-secret"}}]}' \
           | grep -q '"identities"' &&
         # Per-provider orchestration policies (action=orchestrate)
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
-          -d '{"subject":"portal-cloud-ml","resource":"telemetry","provider":"robot-fleet-site-1","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
+          -d '{"subject":"portal-cloud-ml","resource":"telemetry","provider":"RobotFleetSite1","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
-          -d '{"subject":"portal-cloud-ml","resource":"telemetry","provider":"robot-fleet-site-2","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
+          -d '{"subject":"portal-cloud-ml","resource":"telemetry","provider":"RobotFleetSite2","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
-          -d '{"subject":"portal-cloud-ml","resource":"telemetry","provider":"robot-fleet-site-3","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
+          -d '{"subject":"portal-cloud-ml","resource":"telemetry","provider":"RobotFleetSite3","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
           -d '{"subject":"service-partner-1","resource":"telemetry-rest","provider":"portal-cloud-ml","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
@@ -382,7 +383,7 @@ services:
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
           -d '{"subject":"test-probe","resource":"telemetry-rest","provider":"portal-cloud-ml","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
-          -d '{"subject":"test-probe","resource":"telemetry","provider":"robot-fleet-site-1","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
+          -d '{"subject":"test-probe","resource":"telemetry","provider":"RobotFleetSite1","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
         # Service-level enforcement policies (action=consume)
         # Note: PAP policies use XACML TargetMatch on resource+action.
         # cert-level conditions are evaluated by AuthzForce from PIP-enriched XACML attributes.
@@ -541,7 +542,7 @@ services:
     ports:
       - "9616:9003"
     environment:
-      AMQP_URL: "amqps://robot-fleet-site-1:fleet-secret@rabbitmq:5671/"
+      AMQP_URL: "amqps://RobotFleetSite1:fleet-secret@rabbitmq:5671/"
       KAFKA_BROKERS: "kafka:9092"
       KAFKA_TOPIC: "arrowhead.telemetry"
       INITIAL_ROBOT_COUNT: "2"
@@ -550,7 +551,7 @@ services:
       NETWORK_PRESET: "5g_good"
       FLEET_PORT: "9003"
       SR_URL: "https://serviceregistry:8490"
-      SYSTEM_NAME: "robot-fleet-site-1"
+      SYSTEM_NAME: "RobotFleetSite1"
       SYSTEM_CREDENTIALS: "fleet-secret"
       AUTH_URL: "https://authentication:8491"
       CA_URL: "http://profile-ca:8087"
@@ -582,7 +583,7 @@ services:
     ports:
       - "9617:9003"
     environment:
-      AMQP_URL: "amqps://robot-fleet-site-2:fleet-secret@rabbitmq:5671/"
+      AMQP_URL: "amqps://RobotFleetSite2:fleet-secret@rabbitmq:5671/"
       KAFKA_BROKERS: "kafka:9092"
       KAFKA_TOPIC: "arrowhead.telemetry"
       INITIAL_ROBOT_COUNT: "2"
@@ -591,7 +592,7 @@ services:
       NETWORK_PRESET: "5g_good"
       FLEET_PORT: "9003"
       SR_URL: "https://serviceregistry:8490"
-      SYSTEM_NAME: "robot-fleet-site-2"
+      SYSTEM_NAME: "RobotFleetSite2"
       SYSTEM_CREDENTIALS: "fleet-secret"
       AUTH_URL: "https://authentication:8491"
       CA_URL: "http://profile-ca:8087"
@@ -623,7 +624,7 @@ services:
     ports:
       - "9618:9003"
     environment:
-      AMQP_URL: "amqps://robot-fleet-site-3:fleet-secret@rabbitmq:5671/"
+      AMQP_URL: "amqps://RobotFleetSite3:fleet-secret@rabbitmq:5671/"
       KAFKA_BROKERS: "kafka:9092"
       KAFKA_TOPIC: "arrowhead.telemetry"
       INITIAL_ROBOT_COUNT: "2"
@@ -632,7 +633,7 @@ services:
       NETWORK_PRESET: "5g_good"
       FLEET_PORT: "9003"
       SR_URL: "https://serviceregistry:8490"
-      SYSTEM_NAME: "robot-fleet-site-3"
+      SYSTEM_NAME: "RobotFleetSite3"
       SYSTEM_CREDENTIALS: "fleet-secret"
       AUTH_URL: "https://authentication:8491"
       CA_URL: "http://profile-ca:8087"
