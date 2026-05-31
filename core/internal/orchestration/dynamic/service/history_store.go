@@ -19,10 +19,49 @@ type HistoryEntry struct {
 	FinishedAt        *time.Time `json:"finishedAt,omitempty"`
 }
 
+// HistoryQueryFilter holds optional filter parameters for history queries.
+// Empty fields are ignored (no filter for that field).
+type HistoryQueryFilter struct {
+	// RequesterSystemName filters by exact match on RequesterSystem. Empty = no filter.
+	RequesterSystemName string
+	// ServiceDefinition filters by exact match on ServiceDefinition. Empty = no filter.
+	ServiceDefinition string
+	// Status filters by exact match on Status (DONE, ERROR, etc.). Empty = no filter.
+	Status string
+	// From is an inclusive RFC3339 lower bound on CreatedAt. Empty = no lower bound.
+	From string
+	// To is an inclusive RFC3339 upper bound on CreatedAt. Empty = no upper bound.
+	To string
+}
+
 // HistoryQueryResponse is returned by POST mgmt/history/query.
 type HistoryQueryResponse struct {
 	Entries []HistoryEntry `json:"entries"`
 	Count   int            `json:"count"`
+}
+
+// HistoryStore is the exported handle for a history store (used by tests).
+// Internal code uses the unexported historyStore directly.
+type HistoryStore struct {
+	s *historyStore
+}
+
+// NewHistoryStoreForTest creates an exported HistoryStore for use in tests.
+func NewHistoryStoreForTest() *HistoryStore {
+	return &HistoryStore{s: newHistoryStore()}
+}
+
+// AddEntry adds a history entry to the test store.
+func (h *HistoryStore) AddEntry(e HistoryEntry) {
+	if e.ID == "" {
+		e.ID = uuid.NewString()
+	}
+	h.s.add(e)
+}
+
+// Query applies the filter and returns matching entries.
+func (h *HistoryStore) Query(f HistoryQueryFilter) HistoryQueryResponse {
+	return h.s.query(f)
 }
 
 type historyStore struct {
@@ -56,11 +95,39 @@ func (s *historyStore) updateStatus(id, status string) {
 	}
 }
 
-func (s *historyStore) query() HistoryQueryResponse {
+// query returns entries matching the given filter. Empty fields = no filter.
+func (s *historyStore) query(f HistoryQueryFilter) HistoryQueryResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]HistoryEntry, len(s.entries))
-	copy(out, s.entries)
+
+	// Parse time bounds once.
+	var fromT, toT time.Time
+	if f.From != "" {
+		fromT, _ = time.Parse(time.RFC3339, f.From)
+	}
+	if f.To != "" {
+		toT, _ = time.Parse(time.RFC3339, f.To)
+	}
+
+	out := make([]HistoryEntry, 0, len(s.entries))
+	for _, e := range s.entries {
+		if f.RequesterSystemName != "" && e.RequesterSystem != f.RequesterSystemName {
+			continue
+		}
+		if f.ServiceDefinition != "" && e.ServiceDefinition != f.ServiceDefinition {
+			continue
+		}
+		if f.Status != "" && e.Status != f.Status {
+			continue
+		}
+		if !fromT.IsZero() && e.CreatedAt.Before(fromT) {
+			continue
+		}
+		if !toT.IsZero() && e.CreatedAt.After(toT) {
+			continue
+		}
+		out = append(out, e)
+	}
 	return HistoryQueryResponse{Entries: out, Count: len(out)}
 }
 

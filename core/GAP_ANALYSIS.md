@@ -16,10 +16,9 @@ Documentation sources (reviewed May 2026 — full site traversal):
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/communication_profiles/
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/general_management/
 
-**Implementation status (as of May 2026):** Phases 1, 2, and 3 complete (Steps 1–39, E1–E5). Phases 4 and 5 planned.
-Resolved: G2, G3, G5, G7, G8, G10, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G23, G24, G25, G26, G27, G28, G29, G30, G34, G35, G36, G37, G38, G39, G40, G41, G42, G43.
-Partial: G4 (mTLS experiment-7 only; default transport is plain HTTP), G6 (optional coupling via ENABLE_IDENTITY_CHECK; ConsumerAuth does not require a prior Authentication token), G23 (JWT variants still 501), G25 (ONLY_EXCLUSIVE stub; ALLOW_TRANSLATION wired but protocol-level translation not implemented), G26 (manual push trigger only; no provider-change auto-polling), G34 (plain MQTT adapter only; MQTTS unimplemented).
-Open (Phase 4): G44, G45, G46, G48, G49, G50, G51, G52.
+**Implementation status (as of May 2026):** Phases 1, 2, 3, and 4 complete (Steps 1–49, E1–E5).
+Resolved: G2, G3, G5, G7, G8, G10, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G23, G24, G25, G26, G27, G28, G29, G30, G34, G35, G36, G37, G38, G39, G40, G41, G42, G43, G44, G45, G46, G48, G49, G50, G51, G52.
+Partial: G4 (mTLS experiment-7 only; default transport is plain HTTP), G6 (optional coupling via ENABLE_IDENTITY_CHECK; ConsumerAuth does not require a prior Authentication token), G23 (JWT variants still 501), G26 (manual push trigger only; no provider-change auto-polling), G34 (plain MQTT adapter only; MQTTS unimplemented).
 Open (Phase 5): G4 (completion), G6 (completion), G23 (JWT completion), G34 (MQTTS), G47, G53.
 Design decisions (not conformance gaps): G1 (FlexibleStore — no spec), G9 (CA — intentional extension).
 
@@ -398,6 +397,10 @@ return `501 Not Implemented` in both DynamicOrchestration and SimpleStoreOrchest
 The error is detected before any SR query so no work is wasted. FlexibleStore does not
 expose `OrchestrationFlags` in its request model and is unaffected.
 
+**ONLY_EXCLUSIVE (resolved in Steps 43 and 48):** `ONLY_EXCLUSIVE` is now fully implemented. In DynamicOrchestration (Step 43), the `LockChecker` interface is wired into the orchestrator and providers with an active (non-expired) lock entry are excluded when the flag is true. In SimpleStoreOrchestration (Step 48), `ONLY_EXCLUSIVE` returns `501 Not Implemented` — consistent with intercloud flag behavior, since SimpleStore has no lock store.
+
+**Status: Resolved in Steps 43 and 48** (G25 fully closed; G48 also closed by Step 43).
+
 ---
 
 ### G26 — Subscription and push orchestration model — **Resolved (Step 31)**
@@ -668,7 +671,7 @@ AH5 management surfaces for devices, systems, service definitions, and interface
 
 **Impact (Endpoint%):** Four missing endpoints out of roughly 22 defined management endpoints.
 
-**Status:** Open (Phase 4)
+**Status: Resolved in Step 40** — `PUT /serviceregistry/mgmt/service-definitions` and `PUT /serviceregistry/mgmt/interface-templates` are now implemented. The `UpdateServiceDefinitions` and `UpdateInterfaceTemplates` methods were added to the `AH5StoreInterface`, `AH5Store` (memory), and `SQLiteRepository`. Service errors map to 404 via the `statusFor` function. PUT dispatching added to `handleMgmtServiceDefs` and `handleMgmtInterfaceTemplates` in `ah5_handler.go`.
 
 ---
 
@@ -678,7 +681,7 @@ AH5 management surfaces for devices, systems, service definitions, and interface
 
 **Impact (Model%, Behavior%):** Clients registering with an invalid or misspelled security policy receive 201 with corrupted data. Downstream consumers trusting the stored `policy` may apply the wrong access model.
 
-**Status:** Open (Phase 4)
+**Status: Resolved in Step 41** — `handleServiceRegister` in `ah5_handler.go` now validates each `InterfaceInstance.Policy` against the `SecurityPolicy` enum (`NONE`, `CERT_AUTH`, `TIME_LIMITED_TOKEN_AUTH`, `USAGE_LIMITED_TOKEN_AUTH`, `BASE64_SELF_CONTAINED_TOKEN_AUTH`). An unknown value returns 400. An absent/empty policy defaults to `NONE`. The `IsValidSecurityPolicy` function lives in `internal/model/ah5_types.go`.
 
 ---
 
@@ -690,7 +693,7 @@ AH5 management surfaces for devices, systems, service definitions, and interface
 
 **Impact (Behavior%):** Providers that rely on per-scope access control (e.g., read vs. write scope) cannot enforce scoped policies through ConsumerAuthorization. All verifications reduce to the default policy regardless of the scope field.
 
-**Status:** Open (Phase 4)
+**Status: Resolved in Step 42** — Audit confirmed the scoped-policy lookup was already implemented in `consumerauth/service/auth.go:Verify`: when `req.Scope` is non-empty and a matching entry exists in `p.ScopedPolicies`, that scoped policy is evaluated instead of the default. Tests `TestVerifyScopedPolicyOverridesDefault`, `TestVerifyEmptyScopeFallsBackToDefault`, and `TestVerifyUnknownScopeFallsBackToDefault` confirm correct behavior.
 
 ---
 
@@ -720,7 +723,7 @@ All three return `501 Not Implemented` from `GenerateAuthToken`. The `/authoriza
 
 **Impact (Behavior%):** Consumers that request exclusive access receive non-exclusive results; lock store is populated for successful requests but not used as an exclusion filter.
 
-**Status:** Open (Phase 4)
+**Status: Resolved in Step 43** — See G25 update. The `LockChecker` interface (`IsLocked(providerName string) bool`) is implemented on `*LockStore`. `NopLockChecker{}` is provided for test isolation. `SetLockChecker` is called from `DynamicOrchHandler` after construction. The filter runs after the preferred-provider filter in `Orchestrate()`.
 
 ---
 
@@ -730,7 +733,7 @@ All three return `501 Not Implemented` from `GenerateAuthToken`. The `/authoriza
 
 **Impact (Behavior%):** In any non-trivial deployment the history accumulates unboundedly and every query returns the full set. Sysops cannot query history for a specific consumer or time window.
 
-**Status:** Open (Phase 4)
+**Status: Resolved in Step 44** — `HistoryQueryFilter` struct added to `history_store.go` with fields `RequesterSystemName`, `ServiceDefinition`, `Status`, `From` (RFC3339), `To` (RFC3339). All filters are AND-applied; empty/absent fields are no-ops. `QueryHistory` on `DynamicOrchestrator` accepts the filter. The handler decodes filter fields from the POST body. A dedicated `history_store_test.go` with four filter tests is provided.
 
 ---
 
@@ -740,7 +743,7 @@ All three return `501 Not Implemented` from `GenerateAuthToken`. The `/authoriza
 
 **Impact (Behavior%):** Long-running deployments accumulate stale entries. Operators using mgmt queries to audit the blacklist see historically expired records alongside active ones, increasing noise and making accurate auditing harder.
 
-**Status:** Open (Phase 4)
+**Status: Resolved in Step 45** — `DeleteExpired(before time.Time) int` added to the `Repository` interface and both `MemoryRepository` and `SQLiteRepository`. `BlacklistService.PurgeExpired()` calls it with `time.Now()`. `cmd/blacklist/main.go` starts a background goroutine driven by `BLACKLIST_PURGE_INTERVAL_SECONDS` (default `3600`; set to `0` to disable). Only hard-deletes entries with a non-zero, past `expiresAt`; soft-inactive entries are unaffected.
 
 ---
 
@@ -750,7 +753,7 @@ All three return `501 Not Implemented` from `GenerateAuthToken`. The `/authoriza
 
 **Impact (Endpoint%):** Operators must delete and recreate rules to change any field other than priority. This is inconvenient and loses the stable rule UUID, potentially breaking external references.
 
-**Status:** Open (Phase 4)
+**Status: Resolved in Step 46** — `PUT /serviceorchestration/orchestration/simplestore/rules/{id}` is now implemented. The `Update(rule model.StoreRule)` method was added to the `Repository` interface and both `MemoryRepository` and `SQLiteRepository`. `SimpleStoreOrchestrator.UpdateRule` applies the same field validation as `CreateRule` and preserves the rule UUID. Returns 404 for unknown IDs.
 
 ---
 
@@ -760,7 +763,7 @@ All three return `501 Not Implemented` from `GenerateAuthToken`. The `/authoriza
 
 **Impact (Behavior%):** Identity records can be created with system names that would be rejected by the ServiceRegistry, creating a latent inconsistency between the two systems. A system that cannot register in the SR can still obtain tokens from the Authentication system.
 
-**Status:** Open (Phase 4)
+**Status: Resolved in Step 47** — `mgmtIdentitiesCreate` in `authentication/api/handler.go` now validates each `systemName` against `^[A-Z][A-Za-z0-9]{0,62}$` (PascalCase) before creating any identity. An invalid name in a batch returns 400 and rejects the whole batch atomically. The `ValidatePascalCase` helper lives in `core/internal/httputil/respond.go` (shared across systems). Existing tests updated to use PascalCase names.
 
 ---
 

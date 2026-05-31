@@ -35,6 +35,10 @@ func (o *SimpleStoreOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest
 	if req.OrchestrationFlags.AllowIntercloud || req.OrchestrationFlags.OnlyIntercloud {
 		return orchmodel.OrchestrationResponse{}, orchmodel.ErrInterclouNotSupported
 	}
+	// SimpleStore has no lock store; ONLY_EXCLUSIVE is semantically unsupported (G25 residual).
+	if req.OrchestrationFlags.OnlyExclusive {
+		return orchmodel.OrchestrationResponse{}, orchmodel.ErrOnlyExclusiveNotSupported
+	}
 	if req.RequesterSystem.SystemName == "" {
 		return orchmodel.OrchestrationResponse{}, errors.New("requesterSystem.systemName is required")
 	}
@@ -92,6 +96,41 @@ func (o *SimpleStoreOrchestrator) CreateRule(req model.CreateRuleRequest) (model
 		Metadata:           req.Metadata,
 	}
 	return o.repo.Save(rule), nil
+}
+
+// UpdateRule replaces all fields of an existing rule (identified by id),
+// preserving the rule UUID. Applies the same field validation as CreateRule.
+func (o *SimpleStoreOrchestrator) UpdateRule(id string, req model.CreateRuleRequest) (model.StoreRule, error) {
+	if strings.TrimSpace(req.ConsumerSystemName) == "" {
+		return model.StoreRule{}, ErrMissingConsumer
+	}
+	if strings.TrimSpace(req.ServiceDefinition) == "" {
+		return model.StoreRule{}, ErrMissingService
+	}
+	if strings.TrimSpace(req.Provider.SystemName) == "" {
+		return model.StoreRule{}, ErrMissingProvider
+	}
+	if strings.TrimSpace(req.ServiceUri) == "" {
+		return model.StoreRule{}, ErrMissingServiceUri
+	}
+	if len(req.Interfaces) == 0 {
+		return model.StoreRule{}, ErrMissingInterfaces
+	}
+	rule := model.StoreRule{
+		ID:                 id,
+		ConsumerSystemName: req.ConsumerSystemName,
+		ServiceDefinition:  req.ServiceDefinition,
+		Provider:           req.Provider,
+		ServiceUri:         req.ServiceUri,
+		Interfaces:         req.Interfaces,
+		Priority:           req.Priority,
+		Metadata:           req.Metadata,
+	}
+	updated, ok := o.repo.Update(rule)
+	if !ok {
+		return model.StoreRule{}, ErrRuleNotFound
+	}
+	return updated, nil
 }
 
 // DeleteRule removes a rule by UUID.

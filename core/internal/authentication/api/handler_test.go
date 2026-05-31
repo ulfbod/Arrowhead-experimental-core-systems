@@ -422,7 +422,7 @@ func TestMgmtCreateIdentities201(t *testing.T) {
 	w := postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
 		"authenticationMethod": "PASSWORD",
 		"identities": []map[string]any{
-			{"systemName": "robot-1", "credentials": map[string]string{"password": "secret"}, "sysop": false},
+			{"systemName": "Robot1", "credentials": map[string]string{"password": "secret"}, "sysop": false},
 		},
 	})
 	if w.Code != http.StatusCreated {
@@ -442,7 +442,7 @@ func TestMgmtQueryIdentities200(t *testing.T) {
 	postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
 		"authenticationMethod": "PASSWORD",
 		"identities": []map[string]any{
-			{"systemName": "q-sys", "credentials": map[string]string{"password": "pw"}},
+			{"systemName": "Qsys", "credentials": map[string]string{"password": "pw"}},
 		},
 	})
 	w := postJSON(t, h, "/authentication/mgmt/identities/query", map[string]any{})
@@ -465,11 +465,11 @@ func TestLoginWrongPassword401(t *testing.T) {
 	postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
 		"authenticationMethod": "PASSWORD",
 		"identities": []map[string]any{
-			{"systemName": "guarded", "credentials": map[string]string{"password": "correct"}},
+			{"systemName": "Guarded", "credentials": map[string]string{"password": "correct"}},
 		},
 	})
 	w := postJSON(t, h, "/authentication/identity/login", map[string]any{
-		"systemName":  "guarded",
+		"systemName":  "Guarded",
 		"credentials": map[string]string{"password": "wrong"},
 	})
 	if w.Code != http.StatusUnauthorized {
@@ -528,11 +528,11 @@ func TestLoginMissingPasswordFieldReturns400(t *testing.T) {
 	postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
 		"authenticationMethod": "PASSWORD",
 		"identities": []map[string]any{
-			{"systemName": "test", "credentials": map[string]string{"password": "correct"}},
+			{"systemName": "TestSys", "credentials": map[string]string{"password": "correct"}},
 		},
 	})
 	w := postJSON(t, h, "/authentication/identity/login", map[string]any{
-		"systemName":  "test",
+		"systemName":  "TestSys",
 		"credentials": map[string]string{"token": "x"}, // wrong key, no "password"
 	})
 	if w.Code != http.StatusBadRequest {
@@ -547,12 +547,12 @@ func TestLoginNonObjectCredentialsReturns400(t *testing.T) {
 	postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
 		"authenticationMethod": "PASSWORD",
 		"identities": []map[string]any{
-			{"systemName": "test2", "credentials": map[string]string{"password": "secret"}},
+			{"systemName": "Test2sys", "credentials": map[string]string{"password": "secret"}},
 		},
 	})
 	// Send credentials as a plain string (not an object).
 	req := httptest.NewRequest(http.MethodPost, "/authentication/identity/login",
-		strings.NewReader(`{"systemName":"test2","credentials":"plainstring"}`))
+		strings.NewReader(`{"systemName":"Test2sys","credentials":"plainstring"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -568,11 +568,11 @@ func TestLoginNullCredentialsReturns400(t *testing.T) {
 	postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
 		"authenticationMethod": "PASSWORD",
 		"identities": []map[string]any{
-			{"systemName": "test3", "credentials": map[string]string{"password": "pw"}},
+			{"systemName": "Test3sys", "credentials": map[string]string{"password": "pw"}},
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/authentication/identity/login",
-		strings.NewReader(`{"systemName":"test3","credentials":null}`))
+		strings.NewReader(`{"systemName":"Test3sys","credentials":null}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -588,11 +588,11 @@ func TestLoginValidCredentialsObjectSucceeds(t *testing.T) {
 	postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
 		"authenticationMethod": "PASSWORD",
 		"identities": []map[string]any{
-			{"systemName": "test4", "credentials": map[string]string{"password": "correct"}},
+			{"systemName": "Test4sys", "credentials": map[string]string{"password": "correct"}},
 		},
 	})
 	w := postJSON(t, h, "/authentication/identity/login", map[string]any{
-		"systemName":  "test4",
+		"systemName":  "Test4sys",
 		"credentials": map[string]string{"password": "correct"},
 	})
 	if w.Code != http.StatusCreated {
@@ -612,7 +612,7 @@ func newTestHandlerWithIdentities() http.Handler {
 func TestIdentitiesQueryPaginationPageSize(t *testing.T) {
 	h := newTestHandlerWithIdentities()
 	// Create 3 identities via bcrypt — use short password for speed.
-	for _, name := range []string{"sys-a", "sys-b", "sys-c"} {
+	for _, name := range []string{"SysA", "SysB", "SysC"} {
 		w := postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
 			"authenticationMethod": "PASSWORD",
 			"identities":           []map[string]any{{"systemName": name, "credentials": map[string]string{"password": "pw"}}},
@@ -645,7 +645,7 @@ func TestIdentitiesQueryPaginationPageSize(t *testing.T) {
 
 func TestIdentitiesQueryNoPaginationReturnsAll(t *testing.T) {
 	h := newTestHandlerWithIdentities()
-	for _, name := range []string{"x1", "x2", "x3"} {
+	for _, name := range []string{"X1sys", "X2sys", "X3sys"} {
 		postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
 			"authenticationMethod": "PASSWORD",
 			"identities":           []map[string]any{{"systemName": name, "credentials": map[string]string{"password": "pw"}}},
@@ -662,5 +662,78 @@ func TestIdentitiesQueryNoPaginationReturnsAll(t *testing.T) {
 	}
 	if resp.TotalCount < 3 {
 		t.Errorf("no pagination: want totalCount>=3, got %d", resp.TotalCount)
+	}
+}
+
+// ─── Step 47 — Authentication identity PascalCase naming convention (G52) ────
+
+func TestAuthMgmtIdentitiesCreateValidName(t *testing.T) {
+	h := newTestHandlerWithIdentities()
+	w := postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
+		"authenticationMethod": "PASSWORD",
+		"identities": []map[string]any{
+			{"systemName": "MySystem", "credentials": map[string]string{"password": "pw"}},
+		},
+	})
+	if w.Code != http.StatusCreated {
+		t.Errorf("valid PascalCase name: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuthMgmtIdentitiesCreateInvalidName(t *testing.T) {
+	tests := []struct {
+		name       string
+		systemName string
+	}{
+		{"lowercase start", "mySystem"},
+		{"empty", ""},
+		{"with space", "my system"},
+		{"all lowercase", "mysystem"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTestHandlerWithIdentities()
+			w := postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
+				"authenticationMethod": "PASSWORD",
+				"identities": []map[string]any{
+					{"systemName": tc.systemName, "credentials": map[string]string{"password": "pw"}},
+				},
+			})
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("invalid name %q: want 400, got %d: %s", tc.systemName, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestAuthMgmtIdentitiesCreateBatchAtomicRejection(t *testing.T) {
+	h := newTestHandlerWithIdentities()
+	// Record baseline count (includes the bootstrapped Sysop identity).
+	wBaseline := postJSON(t, h, "/authentication/mgmt/identities/query", map[string]any{})
+	var baseResp struct {
+		Identities []any `json:"identities"`
+	}
+	json.NewDecoder(wBaseline.Body).Decode(&baseResp) //nolint:errcheck
+	baseline := len(baseResp.Identities)
+
+	// Batch: one valid, one invalid — entire batch must be rejected.
+	w := postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
+		"authenticationMethod": "PASSWORD",
+		"identities": []map[string]any{
+			{"systemName": "ValidSystem", "credentials": map[string]string{"password": "pw"}},
+			{"systemName": "invalid", "credentials": map[string]string{"password": "pw"}},
+		},
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("batch atomic rejection: want 400, got %d: %s", w.Code, w.Body.String())
+	}
+	// Verify no new identities were created (count must equal baseline).
+	wQuery := postJSON(t, h, "/authentication/mgmt/identities/query", map[string]any{})
+	var afterResp struct {
+		Identities []any `json:"identities"`
+	}
+	json.NewDecoder(wQuery.Body).Decode(&afterResp) //nolint:errcheck
+	if len(afterResp.Identities) != baseline {
+		t.Errorf("batch atomic rejection: expected %d identities (baseline) after failed batch, got %d", baseline, len(afterResp.Identities))
 	}
 }

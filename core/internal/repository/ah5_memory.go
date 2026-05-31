@@ -272,6 +272,27 @@ func (s *AH5Store) CreateServiceDefinitions(names []string) ([]*model.ServiceDef
 	return out, ""
 }
 
+// UpdateServiceDefinitions updates existing service definitions (by name key).
+// Returns the updated definitions and true. Returns nil, false if any name is not found.
+func (s *AH5Store) UpdateServiceDefinitions(names []string) ([]*model.ServiceDefinition, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Validate all exist first (atomic: fail if any is unknown).
+	for _, name := range names {
+		if _, ok := s.serviceDefinitions[name]; !ok {
+			return nil, false
+		}
+	}
+	out := make([]*model.ServiceDefinition, 0, len(names))
+	t := ah5Now()
+	for _, name := range names {
+		def := s.serviceDefinitions[name]
+		def.UpdatedAt = t
+		out = append(out, def)
+	}
+	return out, true
+}
+
 // AllServiceDefinitions returns all stored service definitions.
 func (s *AH5Store) AllServiceDefinitions() []*model.ServiceDefinition {
 	s.mu.RLock()
@@ -318,6 +339,29 @@ func (s *AH5Store) CreateInterfaceTemplates(templates []*model.InterfaceTemplate
 		out = append(out, stored)
 	}
 	return out, ""
+}
+
+// UpdateInterfaceTemplates updates existing interface templates (by name key).
+// Returns the updated templates and true. Returns nil, false if any name is not found.
+func (s *AH5Store) UpdateInterfaceTemplates(templates []*model.InterfaceTemplate) ([]*model.InterfaceTemplate, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Validate all exist first.
+	for _, tmpl := range templates {
+		if _, ok := s.interfaceTemplates[tmpl.Name]; !ok {
+			return nil, false
+		}
+	}
+	t := ah5Now()
+	out := make([]*model.InterfaceTemplate, 0, len(templates))
+	for _, tmpl := range templates {
+		stored := s.interfaceTemplates[tmpl.Name]
+		stored.Protocol = tmpl.Protocol
+		stored.PropertyRequirements = tmpl.PropertyRequirements
+		stored.UpdatedAt = t
+		out = append(out, stored)
+	}
+	return out, true
 }
 
 // AllInterfaceTemplates returns all stored interface templates.

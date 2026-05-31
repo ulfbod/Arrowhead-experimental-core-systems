@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	blapi "arrowhead/core/internal/blacklist/api"
 	blrepo "arrowhead/core/internal/blacklist/repository"
@@ -46,6 +48,28 @@ func main() {
 	root := http.NewServeMux()
 	root.Handle("/blacklist/general/", mgmtHandler)
 	root.Handle("/", sysHandler)
+
+	// Start background purge goroutine (G50).
+	// BLACKLIST_PURGE_INTERVAL_SECONDS=0 disables auto-purge; default 3600.
+	purgeIntervalStr := os.Getenv("BLACKLIST_PURGE_INTERVAL_SECONDS")
+	purgeInterval := 3600
+	if purgeIntervalStr != "" {
+		if v, err := strconv.Atoi(purgeIntervalStr); err == nil {
+			purgeInterval = v
+		}
+	}
+	if purgeInterval > 0 {
+		go func() {
+			ticker := time.NewTicker(time.Duration(purgeInterval) * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				n := svc.PurgeExpired()
+				if n > 0 {
+					slog.Info("Purged expired blacklist entries", "count", n)
+				}
+			}
+		}()
+	}
 
 	slog.Info("Listening", "system", "Blacklist", "port", port)
 	log.Fatal(http.ListenAndServe(":"+port, root))

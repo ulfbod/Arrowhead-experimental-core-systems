@@ -93,8 +93,15 @@ func NewAH5Handler(svc *service.AH5RegistryService, authURL, mgmtAuthURL, regist
 
 // statusFor maps sentinel errors to HTTP status codes for this handler.
 func (h *AH5Handler) statusFor(err error) int {
-	if errors.Is(err, service.ErrLocked) {
+	switch {
+	case errors.Is(err, service.ErrLocked):
 		return http.StatusLocked
+	case errors.Is(err, service.ErrDeviceNotFound),
+		errors.Is(err, service.ErrSystemNotFound),
+		errors.Is(err, service.ErrServiceDefNotFound),
+		errors.Is(err, service.ErrInterfaceTemplateNotFound),
+		errors.Is(err, service.ErrServiceInstanceNotFound):
+		return http.StatusNotFound
 	}
 	return http.StatusBadRequest
 }
@@ -543,6 +550,7 @@ func (h *AH5Handler) handleMgmtServiceDefsQuery(w http.ResponseWriter, r *http.R
 }
 
 // POST /serviceregistry/mgmt/service-definitions — create
+// PUT  /serviceregistry/mgmt/service-definitions — update
 // DELETE /serviceregistry/mgmt/service-definitions?names=... — remove
 func (h *AH5Handler) handleMgmtServiceDefs(w http.ResponseWriter, r *http.Request) {
 	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
@@ -561,12 +569,24 @@ func (h *AH5Handler) handleMgmtServiceDefs(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		httputil.WriteJSON(w, http.StatusCreated, resp, srOrigin)
+	case http.MethodPut:
+		var req model.ServiceDefinitionListRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
+			return
+		}
+		resp, err := h.svc.UpdateServiceDefinitions(req)
+		if err != nil {
+			httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, resp, srOrigin)
 	case http.MethodDelete:
 		names := r.URL.Query()["names"]
 		h.svc.RemoveServiceDefinitions(names)
 		w.WriteHeader(http.StatusOK)
 	default:
-		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST or DELETE required", srOrigin)
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST, PUT, or DELETE required", srOrigin)
 	}
 }
 
@@ -659,6 +679,7 @@ func (h *AH5Handler) handleMgmtInterfaceTemplatesQuery(w http.ResponseWriter, r 
 }
 
 // POST   /serviceregistry/mgmt/interface-templates — create
+// PUT    /serviceregistry/mgmt/interface-templates — update
 // DELETE /serviceregistry/mgmt/interface-templates?names=... — remove
 func (h *AH5Handler) handleMgmtInterfaceTemplates(w http.ResponseWriter, r *http.Request) {
 	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
@@ -685,11 +706,23 @@ func (h *AH5Handler) handleMgmtInterfaceTemplates(w http.ResponseWriter, r *http
 			return
 		}
 		httputil.WriteJSON(w, http.StatusCreated, resp, srOrigin)
+	case http.MethodPut:
+		var req model.InterfaceTemplateListRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
+			return
+		}
+		resp, err := h.svc.UpdateInterfaceTemplates(req)
+		if err != nil {
+			httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, resp, srOrigin)
 	case http.MethodDelete:
 		names := r.URL.Query()["names"]
 		h.svc.RemoveInterfaceTemplates(names)
 		w.WriteHeader(http.StatusOK)
 	default:
-		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST or DELETE required", srOrigin)
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST, PUT, or DELETE required", srOrigin)
 	}
 }

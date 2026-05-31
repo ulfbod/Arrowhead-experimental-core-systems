@@ -1,8 +1,8 @@
 # AH5 Conformance Update Plan
 
-**Status:** Complete — implemented May 2026 (commit 26d741b)  
+**Status:** Phases 1–4 complete (Steps 1–49, E1–E5); Phase 5 planned (Steps 50–56)  
 **Scope:** `core/`, `core-evol/`, all active experiments  
-**Source of truth for gaps:** `core/GAP_ANALYSIS.md` (gaps G1–G43)  
+**Source of truth for gaps:** `core/GAP_ANALYSIS.md` (gaps G1–G53)  
 **Source of truth for API spec:** `core/SPEC.md` and `core/GAP_ANALYSIS.md`  
 **Conformance assessment:** `CONFORMANCE.md`
 
@@ -6706,4 +6706,831 @@ Run after all Phase 3 steps are complete (Steps 33–38):
 | `bash core/test-system.sh` | All Phase 3 |
 | `cd core-evol && go build ./... && go test -race ./...` | 38 |
 | `go build ./...` (workspace root) | All Phase 3 |
+
+---
+
+## Phase 4 — Behavioral completeness (Steps 40–49)
+
+**Goal:** Close model-correctness and missing-CRUD gaps identified in the Phase 4/5 audit.
+No new external dependencies. All packages use only the Go standard library and already-imported
+modules. Each step is independent of the others except where noted.
+
+**Order:** Step 40 first (SR PUT endpoints — unblocks management tooling). Steps 41–47 are
+independent of each other. Step 42 (G46) requires no code change — tests only. Step 43 (G48)
+must complete before Step 48 (G25 residual), since Step 48 adds the SimpleStore 501 that
+parallels the DynamicOrch behavior added in Step 43. Step 49 is the documentation sweep.
+
+---
+
+## Step 40 — ServiceRegistry PUT operations for service definitions and interface templates (G44)
+
+**Gap addressed:**
+- **G44** — `PUT /serviceregistry/mgmt/service-definitions` and `PUT /serviceregistry/mgmt/interface-templates` are missing. The equivalent PUT endpoints for devices (`handleMgmtDevices`) and systems (`handleMgmtSystems`) are already implemented and follow the same pattern. Service instances also have PUT via `handleMgmtServiceInstances`.
+
+**Why first:** Low effort — the handler and service patterns are already established. Unblocks management tooling for any client that needs to rename or update interface definitions.
+
+**Prerequisites:** Pre-flight check passes. `core/CLAUDE.md` read before starting.
+
+**Files to modify (core/):**
+- `core/internal/api/ah5_handler.go` — add `http.MethodPut` case to `handleMgmtServiceDefs`; add `http.MethodPut` case to `handleMgmtInterfaceTemplates`
+- `core/internal/service/ah5_registry.go` — add `UpdateServiceDefinitions(req model.ServiceDefinitionListRequest) (model.ServiceDefinitionListResponse, error)` and `UpdateInterfaceTemplates(req model.InterfaceTemplateListRequest) (model.InterfaceTemplateListResponse, error)` methods
+- `core/internal/repository/` (memory store) — add `UpdateServiceDefinitions` and `UpdateInterfaceTemplates` methods
+- `core/internal/repository/` (SQLite store, if present) — add corresponding methods
+- `core/internal/api/ah5_handler_test.go` — add PUT tests for both resources
+
+**Endpoints added:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `PUT` | `/serviceregistry/mgmt/service-definitions` | Update service definition name/metadata |
+| `PUT` | `/serviceregistry/mgmt/interface-templates` | Update interface template properties |
+
+---
+
+### TDD cycle 40.1 — PUT service-definitions updates existing entry
+
+**Test:** `TestMgmtServiceDefinitionsPutUpdatesEntry`
+
+Create a service definition via POST. PUT with updated metadata. Assert response 200 and updated fields. Query via the mgmt/query endpoint and assert the stored record reflects the change.
+
+**Expected failure before implementation:** 405 Method Not Allowed from the `default` case.
+
+---
+
+### TDD cycle 40.2 — PUT service-definitions with unknown name returns 404
+
+**Test:** `TestMgmtServiceDefinitionsPutUnknownReturns404`
+
+PUT with a `name` that does not exist in the store → assert 404 Not Found.
+
+---
+
+### TDD cycle 40.3 — PUT interface-templates updates existing entry
+
+**Test:** `TestMgmtInterfaceTemplatesPutUpdatesEntry`
+
+Create via POST. PUT with updated properties. Assert 200 and updated fields. Query and assert persisted changes.
+
+**Expected failure before implementation:** 405 Method Not Allowed.
+
+---
+
+### TDD cycle 40.4 — PUT interface-templates with unknown name returns 404
+
+**Test:** `TestMgmtInterfaceTemplatesPutUnknownReturns404`
+
+PUT with an unknown name → assert 404.
+
+---
+
+### System test
+
+Start ServiceRegistry. Create a service definition. Update it via PUT with a changed metadata field. Query all service definitions and assert the updated value is returned. Repeat for interface templates.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/api/... ./internal/service/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/api/` and `internal/service/`.
+
+### Documentation updates (after Step 40)
+
+- `core/GAP_ANALYSIS.md` — mark G44 fully resolved; add implementation summary noting which PUT endpoints were added and which already existed
+- `core/SPEC.md` — add `PUT` row to service-definitions and interface-templates endpoint tables
+- `CONFORMANCE.md` — move G44 from Open → Resolved with Step 40; update ServiceRegistry Endpoint% rating
+
+### Completion criteria
+
+- [x] `TestMgmtServiceDefinitionsPutUpdatesEntry` passes
+- [x] `TestMgmtServiceDefinitionsPutUnknownReturns404` passes
+- [x] `TestMgmtInterfaceTemplatesPutUpdatesEntry` passes
+- [x] `TestMgmtInterfaceTemplatesPutUnknownReturns404` passes
+- [x] All existing ServiceRegistry management tests still pass
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on modified packages
+
+---
+
+## Step 41 — `securityPolicy` enum validation on service registration (G45)
+
+**Gap addressed:**
+- **G45** — `POST /serviceregistry/service-discovery/register` accepts any string in the `policy` field of an `InterfaceInstance`. The `SecurityPolicy` enum (`NONE`, `CERT_AUTH`, `TIME_LIMITED_TOKEN_AUTH`, `USAGE_LIMITED_TOKEN_AUTH`, `BASE64_SELF_CONTAINED_TOKEN_AUTH`) is defined in the model but not validated on the discovery register path. An invalid policy is stored verbatim and silently propagates to downstream consumers.
+
+**Why now:** Medium effort, independent. Prevents corrupted policy data from entering the store. Follows the same validation pattern as G19 (naming conventions) and G30 (interface names).
+
+**Prerequisites:** Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/api/ah5_handler.go` — in the service registration handler: validate the `policy` field of each `InterfaceInstance` against the enum set; return 400 with a descriptive message if unknown
+- `core/internal/model/ah5_types.go` (or equivalent) — ensure the `SecurityPolicy` constants are defined and accessible; add a `ValidSecurityPolicies` set or validation function
+- `core/internal/api/ah5_handler_test.go` — add policy validation tests
+
+**Valid policy values:** `NONE`, `CERT_AUTH`, `TIME_LIMITED_TOKEN_AUTH`, `USAGE_LIMITED_TOKEN_AUTH`, `BASE64_SELF_CONTAINED_TOKEN_AUTH`. Absent/empty policy defaults to `NONE`.
+
+---
+
+### TDD cycle 41.1 — Valid securityPolicy is accepted
+
+**Test:** `TestServiceRegisterValidSecurityPolicy`
+
+Register a service with `policy: "TIME_LIMITED_TOKEN_AUTH"` on an interface instance → assert 201 Created and the policy is stored correctly.
+
+---
+
+### TDD cycle 41.2 — Unknown securityPolicy returns 400
+
+**Test:** `TestServiceRegisterInvalidSecurityPolicy`
+
+Register a service with `policy: "NOT_A_REAL_POLICY"` → assert 400 Bad Request with an error message that names the invalid value.
+
+---
+
+### TDD cycle 41.3 — Absent securityPolicy defaults to NONE
+
+**Test:** `TestServiceRegisterAbsentSecurityPolicyDefaultsToNone`
+
+Register a service with no `policy` field → assert 201 and stored policy is `"NONE"` (or equivalent zero value). This is the backward-compatible regression guard — must pass before and after implementation.
+
+---
+
+### System test
+
+Register a service with an invalid `policy` value via curl → assert 400 response with descriptive error. Register with a valid value → assert 201 and the value is returned in a subsequent query.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/api/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/api/`.
+
+### Documentation updates (after Step 41)
+
+- `core/GAP_ANALYSIS.md` — mark G45 resolved; list accepted enum values and default
+- `core/SPEC.md` — document `securityPolicy` enum on the service register endpoint with the valid value set
+- `CONFORMANCE.md` — move G45 from Open → Resolved with Step 41; update ServiceRegistry Behavior% rating
+
+### Completion criteria
+
+- [x] `TestServiceRegisterValidSecurityPolicy` passes
+- [x] `TestServiceRegisterInvalidSecurityPolicy` passes
+- [x] `TestServiceRegisterAbsentSecurityPolicyDefaultsToNone` passes (regression guard)
+- [x] All existing service registration tests still pass
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on `internal/api/`
+
+---
+
+## Step 42 — Scoped policy evaluation in ConsumerAuth verify (G46)
+
+**Gap addressed:**
+- **G46** — GAP_ANALYSIS.md describes the scoped-policy lookup as disabled. Audit of `core/internal/consumerauth/service/auth.go:Verify` shows the lookup **is already implemented**:
+  ```go
+  policy := p.DefaultPolicy
+  if req.Scope != "" {
+      if sp, ok := p.ScopedPolicies[req.Scope]; ok {
+          policy = sp
+      }
+  }
+  if isAuthorized(req.Consumer, policy) {
+      return true
+  }
+  ```
+  No code change is required. This step adds tests that prove the behavior is correct and updates the gap status.
+
+**Why now:** Highest-priority Phase 4 step (was marked Blocker/Production). Confirming live behavior with tests is low risk and high value. If the tests reveal a regression, this becomes an implementation step.
+
+**Prerequisites:** Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/consumerauth/api/handler_test.go` — add scoped policy tests via the HTTP handler (integration-style)
+
+---
+
+### TDD cycle 42.1 — Scoped policy overrides default for matching scope
+
+**Test:** `TestVerifyScopedPolicyOverridesDefault`
+
+Grant policy: `defaultPolicy: DENY_ALL`, `scopedPolicies: {"write": ALLOW_ALL}`.
+Verify with `scope: "write"` → assert 200 (authorized).
+Verify with `scope: "read"` (no scoped entry → falls back to default DENY_ALL) → assert 403 (denied).
+
+This test will pass immediately if the implementation is correct; it is a coverage test not a TDD cycle in the strict sense.
+
+---
+
+### TDD cycle 42.2 — Empty scope falls back to default policy
+
+**Test:** `TestVerifyEmptyScopeFallsBackToDefault`
+
+Grant with `defaultPolicy: ALLOW_ALL`. Verify with no `scope` field → assert 200 (authorized via default).
+
+---
+
+### TDD cycle 42.3 — Unknown scope falls back to default policy
+
+**Test:** `TestVerifyUnknownScopeFallsBackToDefault`
+
+Grant with `defaultPolicy: DENY_ALL`, `scopedPolicies: {"write": ALLOW_ALL}`.
+Verify with `scope: "admin"` (not in map) → falls back to DENY_ALL → assert 403.
+
+---
+
+### System test
+
+POST grant with scoped policies to ConsumerAuth. POST verify with matching scope in body → assert 200 authorized. POST verify with different scope → assert 403 denied. POST verify with no scope → assert 200 (uses ALLOW_ALL default).
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/consumerauth/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/consumerauth/`.
+
+### Documentation updates (after Step 42)
+
+- `core/GAP_ANALYSIS.md` — update G46: mark resolved; note implementation was present but untested; list confirming test names
+- `CONFORMANCE.md` — move G46 from Open → Resolved with Step 42; update ConsumerAuthorization Behavior% rating (significant increase — was a Blocker)
+
+### Completion criteria
+
+- [x] `TestVerifyScopedPolicyOverridesDefault` passes
+- [x] `TestVerifyEmptyScopeFallsBackToDefault` passes
+- [x] `TestVerifyUnknownScopeFallsBackToDefault` passes
+- [x] All existing ConsumerAuth tests still pass
+- [x] `go test -race ./...` from `core/` passes
+- [x] Coverage ≥ 80% on `internal/consumerauth/`
+
+---
+
+## Step 43 — `ONLY_EXCLUSIVE` flag wired to lock store in DynamicOrchestration (G48)
+
+**Gap addressed:**
+- **G48** — `OrchestrationFlags.OnlyExclusive` is parsed and stored on the request (`// stub` comment in `model/types.go`) but the filter step in `Orchestrate()` never consults it. AH5 semantics: when `ONLY_EXCLUSIVE` is true, exclude candidates whose `ExclusiveUntil` field is a future timestamp (i.e., held under an active exclusive lock by another consumer). Candidates with empty or past `ExclusiveUntil` are included.
+
+**Why now:** Medium effort. The `LockStore` already exists in `core/internal/orchestration/dynamic/service/` and is populated by the handler. The only missing piece is wiring it into the `Orchestrate()` filter pipeline.
+
+**Implementation approach:** The `DynamicOrchestrator` does not currently have access to the lock store (it is owned by `DynamicOrchHandler`). The cleanest approach is to define a `LockChecker` interface:
+
+```go
+type LockChecker interface {
+    IsLocked(providerName string) bool
+}
+```
+
+Add a `SetLockChecker(lc LockChecker)` setter on `DynamicOrchestrator`. Implement `IsLocked` on `*LockStore` by checking whether any active lock for the provider has `ExclusiveUntil` in the future. Inject from `DynamicOrchHandler`. Pass `NopLockChecker{}` in tests that don't need it.
+
+**Prerequisites:** Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/orchestration/dynamic/service/orchestrator.go` — add `LockChecker` interface; add `lockChecker` field and `SetLockChecker` setter; add ONLY_EXCLUSIVE filter after the preferred-provider filter (Step 5)
+- `core/internal/orchestration/dynamic/service/lock_store.go` — implement `IsLocked(providerName string) bool` on `*LockStore`; define `NopLockChecker{}`
+- `core/internal/orchestration/dynamic/api/handler.go` — call `orch.SetLockChecker(h.locks)` after constructing the orchestrator
+- `core/internal/orchestration/dynamic/service/orchestrator_test.go` — add ONLY_EXCLUSIVE filter tests
+
+---
+
+### TDD cycle 43.1 — ONLY_EXCLUSIVE excludes a locked provider
+
+**Test:** `TestOrchestrationOnlyExclusiveFiltersLockedProvider`
+
+SR response: two providers. Provider A has `ExclusiveUntil` set to a future RFC3339 timestamp (locked). Provider B has empty `ExclusiveUntil`. Request: `ONLY_EXCLUSIVE: true`. Assert only provider B is in results.
+
+**Expected failure before implementation:** Both providers returned (flag not evaluated).
+
+---
+
+### TDD cycle 43.2 — ONLY_EXCLUSIVE passes a provider with no lock
+
+**Test:** `TestOrchestrationOnlyExclusivePassesUnlockedProvider`
+
+Provider has empty `ExclusiveUntil`. Request `ONLY_EXCLUSIVE: true`. Assert provider is included.
+
+---
+
+### TDD cycle 43.3 — Without ONLY_EXCLUSIVE flag locked providers are included
+
+**Test:** `TestOrchestrationWithoutOnlyExclusiveIncludesLockedProvider`
+
+Provider with future `ExclusiveUntil`. Request `ONLY_EXCLUSIVE: false` (or omitted). Assert provider is included (backward-compatible regression guard).
+
+---
+
+### TDD cycle 43.4 — Expired lock treated as unlocked
+
+**Test:** `TestOrchestrationOnlyExclusiveExpiredLockPassesProvider`
+
+Provider with `ExclusiveUntil` set to a timestamp in the past. Request `ONLY_EXCLUSIVE: true`. Assert provider is included (lock expired → not locked).
+
+---
+
+### System test
+
+Start DynamicOrchestration. Register two providers. Lock one via `POST /serviceorchestration/orchestration/mgmt/lock`. Call orchestration with `ONLY_EXCLUSIVE: true`. Assert only the unlocked provider is returned.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/orchestration/dynamic/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on all modified packages.
+
+### Documentation updates (after Step 43)
+
+- `core/GAP_ANALYSIS.md` — mark G48 resolved; describe `ExclusiveUntil` timestamp comparison semantics and the `LockChecker` interface
+- `core/SPEC.md` — document `ONLY_EXCLUSIVE` flag semantics in OrchestrationFlags section
+- `CONFORMANCE.md` — move G48 from Open → Resolved with Step 43; update DynamicOrchestration Behavior% rating
+
+### Completion criteria
+
+- [x] `TestOrchestrationOnlyExclusiveFiltersLockedProvider` passes
+- [x] `TestOrchestrationOnlyExclusivePassesUnlockedProvider` passes
+- [x] `TestOrchestrationWithoutOnlyExclusiveIncludesLockedProvider` passes (regression guard)
+- [x] `TestOrchestrationOnlyExclusiveExpiredLockPassesProvider` passes
+- [x] All existing DynamicOrchestration tests still pass
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 44 — Orchestration history query filtering (G49)
+
+**Gap addressed:**
+- **G49** — `POST /serviceorchestration/orchestration/mgmt/history/query` accepts any JSON body but always returns the full history. In a non-trivial deployment the store grows unboundedly and every query returns the complete set. This step adds filtering by `requesterSystemName`, `serviceDefinition`, `status`, and date range (`from`/`to`).
+
+**Why now:** Medium effort, independent of all other steps. No new dependencies — filtering is pure in-memory slice logic. Directly improves sysop experience.
+
+**Prerequisites:** Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/orchestration/dynamic/service/history_store.go` — add `HistoryQueryFilter` struct; update `query()` to accept a filter and apply it: exact match on string fields (empty = no filter); RFC3339 `from`/`to` bounds on `StartedAt`
+- `core/internal/orchestration/dynamic/api/handler.go` — decode filter fields from the POST body and pass to `hist.query()`
+- `core/internal/orchestration/dynamic/service/history_store_test.go` (new file, or append to existing) — add filter unit tests
+
+**New filter fields (in the POST body):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `requesterSystemName` | string | Exact match on `RequesterSystemName`; empty = no filter |
+| `serviceDefinition` | string | Exact match on `ServiceDefinition`; empty = no filter |
+| `status` | string | Exact match on `Status` (`DONE`, `ERROR`, `PENDING`, `DELIVERED`, `FAILED`); empty = no filter |
+| `from` | string (RFC3339) | Inclusive lower bound on `StartedAt`; absent = no lower bound |
+| `to` | string (RFC3339) | Inclusive upper bound on `StartedAt`; absent = no upper bound |
+
+---
+
+### TDD cycle 44.1 — Filter by requesterSystemName returns only matching entries
+
+**Test:** `TestHistoryQueryFilterByRequester`
+
+Add three history entries with `RequesterSystemName` `"alpha"`, `"beta"`, `"alpha"`. Query with `requesterSystemName: "alpha"` → assert two entries returned, both from alpha.
+
+**Expected failure before implementation:** All three entries returned (filter ignored).
+
+---
+
+### TDD cycle 44.2 — Filter by status returns only matching entries
+
+**Test:** `TestHistoryQueryFilterByStatus`
+
+Add entries with status `DONE` and `ERROR`. Query with `status: "ERROR"` → assert only ERROR entries returned.
+
+---
+
+### TDD cycle 44.3 — Filter by date range returns entries within bounds
+
+**Test:** `TestHistoryQueryFilterByDateRange`
+
+Add entries at known timestamps (use fixed `StartedAt` values). Query with `from` and `to` that include only a middle subset → assert only that subset returned.
+
+---
+
+### TDD cycle 44.4 — Empty filter body returns all entries (regression guard)
+
+**Test:** `TestHistoryQueryNoFilterReturnsAll`
+
+Add several entries. POST with an empty JSON body `{}` → assert all entries returned. Must pass before and after implementation.
+
+---
+
+### System test
+
+Run orchestration requests from two different consumers (`requesterSystem.systemName` = `"Alpha"` and `"Beta"`). POST history query with `requesterSystemName: "Alpha"` → assert only Alpha's entries appear.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/orchestration/dynamic/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on all modified packages.
+
+### Documentation updates (after Step 44)
+
+- `core/GAP_ANALYSIS.md` — mark G49 resolved; list the filter fields and semantics
+- `core/SPEC.md` — add history query filter fields to the DynamicOrchestration history endpoint description
+- `CONFORMANCE.md` — move G49 from Open → Resolved with Step 44; update DynamicOrchestration Behavior% rating
+
+### Completion criteria
+
+- [x] `TestHistoryQueryFilterByRequester` passes
+- [x] `TestHistoryQueryFilterByStatus` passes
+- [x] `TestHistoryQueryFilterByDateRange` passes
+- [x] `TestHistoryQueryNoFilterReturnsAll` passes (regression guard)
+- [x] All existing DynamicOrchestration history tests still pass
+- [x] `go test -race ./...` from `core/` passes
+- [x] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 45 — Blacklist expired-entry auto-purge (G50)
+
+**Gap addressed:**
+- **G50** — Blacklist entries whose `expiresAt` timestamp has passed accumulate in the store indefinitely. A query with `mode: ALL` returns expired entries alongside active ones, increasing noise in sysop audits. This step adds a background goroutine that periodically removes entries whose `expiresAt` is non-zero and in the past.
+
+**Why now:** Low priority, low effort. The background-goroutine pattern is established (see G8 — expired token cleanup in Authentication). No new dependencies.
+
+**Prerequisites:** Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/blacklist/` (service layer) — add `PurgeExpired()` method that removes entries where `expiresAt` is non-zero and before `time.Now()`
+- `core/cmd/blacklist/main.go` — start a goroutine after server is ready that calls `svc.PurgeExpired()` on a ticker driven by `BLACKLIST_PURGE_INTERVAL_SECONDS`; ticker is not started when the env var is `"0"`
+- `core/internal/blacklist/` (handler or service test) — add purge tests
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `BLACKLIST_PURGE_INTERVAL_SECONDS` | `3600` | Interval between expired-entry purge sweeps. Set to `0` to disable auto-purge. |
+
+**Purge semantics:** Hard delete (remove the record). This is consistent with the G50 intent of preventing unbounded accumulation. Soft-inactive entries (those `DELETE`d via the management endpoint) remain; only those with a non-zero, past `expiresAt` are removed.
+
+---
+
+### TDD cycle 45.1 — PurgeExpired removes expired entries
+
+**Test:** `TestBlacklistPurgeExpiredRemovesExpiredEntry`
+
+Add an entry with `expiresAt` set to 1 second in the past. Call `PurgeExpired()`. Assert the entry is no longer returned by a subsequent query.
+
+**Expected failure before implementation:** Entry still present after call.
+
+---
+
+### TDD cycle 45.2 — PurgeExpired keeps entries with future expiry
+
+**Test:** `TestBlacklistPurgeExpiredKeepsFutureEntry`
+
+Add an entry with `expiresAt` set 1 hour in the future. Call `PurgeExpired()`. Assert the entry is still present.
+
+---
+
+### TDD cycle 45.3 — PurgeExpired keeps permanent entries (no expiresAt)
+
+**Test:** `TestBlacklistPurgeExpiredKeepsPermanentEntry`
+
+Add an entry with no `expiresAt` (permanent blacklist). Call `PurgeExpired()`. Assert the entry is still present.
+
+---
+
+### System test
+
+Start Blacklist with `BLACKLIST_PURGE_INTERVAL_SECONDS=1`. Add an entry with `expiresAt` 2 seconds in the future. Wait 4 seconds. Query → assert the entry is no longer present.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/blacklist/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/blacklist/`.
+
+### Documentation updates (after Step 45)
+
+- `core/GAP_ANALYSIS.md` — mark G50 resolved; note purge semantics (hard delete, expiry-only, soft-deleted entries unaffected)
+- `core/SPEC.md` — add `BLACKLIST_PURGE_INTERVAL_SECONDS` to Blacklist configuration table
+- `README.md` — add `BLACKLIST_PURGE_INTERVAL_SECONDS` to Configuration section
+- `CONFORMANCE.md` — move G50 from Open → Resolved with Step 45; update Blacklist Behavior% rating
+
+### Completion criteria
+
+- [x] `TestBlacklistPurgeExpiredRemovesExpiredEntry` passes
+- [x] `TestBlacklistPurgeExpiredKeepsFutureEntry` passes
+- [x] `TestBlacklistPurgeExpiredKeepsPermanentEntry` passes
+- [x] All existing Blacklist tests still pass
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] `BLACKLIST_PURGE_INTERVAL_SECONDS` documented in `core/SPEC.md` and `README.md`
+- [x] Coverage ≥ 80% on `internal/blacklist/`
+
+---
+
+## Step 46 — SimpleStore full rule update endpoint (G51)
+
+**Gap addressed:**
+- **G51** — There is no endpoint to update the full content of an existing SimpleStore rule. `POST /serviceorchestration/orchestration/mgmt/simple-store/create` creates rules and `PUT mgmt/simple-store/modify-priorities` reorders them, but no PUT exists to update provider, consumer, service definition, service URI, or interfaces in place. Operators must delete and recreate rules, losing the stable rule UUID.
+
+**Why now:** Medium effort. Follows the same CRUD pattern as ConsumerAuth policy management. The `handleRuleByID` handler already dispatches on DELETE; extending it to PUT is straightforward.
+
+**Prerequisites:** Pre-flight check passes.
+
+**New endpoint:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `PUT` | `/serviceorchestration/orchestration/mgmt/simple-store/rules/{id}` | Replace all fields of an existing rule; preserves the rule's UUID |
+
+**Files to modify (core/):**
+- `core/internal/orchestration/simplestore/api/handler.go` — in `handleRuleByID`: add `http.MethodPut` case; decode full `UpdateRuleRequest` body; call `orch.UpdateRule(id, req)`; return 200 with updated rule
+- `core/internal/orchestration/simplestore/` (service layer) — add `UpdateRule(id string, req UpdateRuleRequest) (StoreRule, error)` method; return `ErrNotFound` if ID unknown; apply same field validation as `CreateRule`
+- `core/internal/orchestration/simplestore/` (repository) — add `Update` method
+- `core/internal/orchestration/simplestore/api/handler_test.go` — add update tests
+
+---
+
+### TDD cycle 46.1 — PUT rule updates all fields and returns 200
+
+**Test:** `TestSimpleStoreUpdateRuleUpdatesFields`
+
+Create a rule. PUT to `/mgmt/simple-store/rules/{id}` with all fields changed (different provider address, service URI, interfaces list). Assert 200 and all fields updated in the response. Query rules list and assert the stored rule reflects the changes.
+
+**Expected failure before implementation:** 405 Method Not Allowed.
+
+---
+
+### TDD cycle 46.2 — PUT rule with unknown ID returns 404
+
+**Test:** `TestSimpleStoreUpdateRuleUnknownIDReturns404`
+
+PUT to `/mgmt/simple-store/rules/nonexistent-id` → assert 404 Not Found.
+
+---
+
+### TDD cycle 46.3 — PUT rule preserves the rule UUID
+
+**Test:** `TestSimpleStoreUpdateRulePreservesID`
+
+Create a rule, record its ID. PUT update with changed fields. Assert the response `id` field matches the original ID. Query rules list and assert only one rule exists (update, not create).
+
+---
+
+### System test
+
+Create a SimpleStore rule. PUT updated provider fields. Query rules → assert the stored rule reflects all updated fields with the same ID and the list has the same number of rules as before.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/orchestration/simplestore/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/orchestration/simplestore/`.
+
+### Documentation updates (after Step 46)
+
+- `core/GAP_ANALYSIS.md` — mark G51 resolved
+- `core/SPEC.md` — add `PUT /mgmt/simple-store/rules/{id}` to SimpleStore endpoint table; document request body shape and UUID-preservation semantics
+- `CONFORMANCE.md` — move G51 from Open → Resolved with Step 46; update SimpleStoreOrchestration Endpoint% and Behavior% ratings
+
+### Completion criteria
+
+- [x] `TestSimpleStoreUpdateRuleUpdatesFields` passes
+- [x] `TestSimpleStoreUpdateRuleUnknownIDReturns404` passes
+- [x] `TestSimpleStoreUpdateRulePreservesID` passes
+- [x] All existing SimpleStore tests still pass
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on `internal/orchestration/simplestore/`
+
+---
+
+## Step 47 — Authentication identity creation naming convention (G52)
+
+**Gap addressed:**
+- **G52** — `POST /authentication/mgmt/identities` creates identity records without validating `systemName` against the PascalCase convention (`^[A-Z][A-Za-z0-9]{0,62}$`). G19 established this constraint for the ServiceRegistry; an identity system that accepts names the SR would reject creates a latent inconsistency. A system that cannot register in SR can still obtain tokens from Authentication.
+
+**Why now:** Low effort. The PascalCase regex is already used in `core/internal/api/validate.go` (or `ah5_handler.go`). This step reuses it without cross-package imports — either inline the regex or move the validator to `httputil`.
+
+**Prerequisites:** Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/authentication/api/handler.go` — in `mgmtIdentitiesCreate`: for each identity in the batch, validate `systemName` against `^[A-Z][A-Za-z0-9]{0,62}$`; return 400 if any name is invalid, before creating any identity (atomic rejection)
+- `core/internal/authentication/api/handler_test.go` — add naming validation tests
+
+**Implementation note:** Do not import `internal/api` from `internal/authentication`. Inline the regex (`regexp.MustCompile(...)`) or add a `ValidatePascalCase` helper to `core/internal/httputil/` (shared across systems).
+
+---
+
+### TDD cycle 47.1 — Valid PascalCase name is accepted
+
+**Test:** `TestAuthMgmtIdentitiesCreateValidName`
+
+POST `mgmt/identities` with `systemName: "MySystem"` → assert 201 Created and the identity record is returned.
+
+---
+
+### TDD cycle 47.2 — Invalid system name returns 400
+
+**Test:** `TestAuthMgmtIdentitiesCreateInvalidName`
+
+POST with `systemName: "mySystem"` (lowercase start) → assert 400. POST with `systemName: ""` → assert 400. POST with `systemName: "my system"` (space) → assert 400.
+
+---
+
+### TDD cycle 47.3 — Batch create is atomic: any invalid name rejects the whole batch
+
+**Test:** `TestAuthMgmtIdentitiesCreateBatchAtomicRejection`
+
+POST batch with `[{"systemName": "ValidSystem"}, {"systemName": "invalid"}]` → assert 400 and no identities are created (query returns empty list after the failed request).
+
+---
+
+### System test
+
+POST `mgmt/identities` with `systemName: "invalid"` → assert 400 and descriptive error. POST with `systemName: "ValidSystem"` → assert 201. Query identities → assert only the valid one is present.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/authentication/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/authentication/`.
+
+### Documentation updates (after Step 47)
+
+- `core/GAP_ANALYSIS.md` — mark G52 resolved; state the regex and note the atomic batch rejection policy
+- `core/SPEC.md` — document naming convention requirement for `POST /authentication/mgmt/identities`
+- `CONFORMANCE.md` — move G52 from Open → Resolved with Step 47; update Authentication Behavior% rating
+
+### Completion criteria
+
+- [x] `TestAuthMgmtIdentitiesCreateValidName` passes
+- [x] `TestAuthMgmtIdentitiesCreateInvalidName` passes
+- [x] `TestAuthMgmtIdentitiesCreateBatchAtomicRejection` passes
+- [x] All existing Authentication management tests still pass
+- [x] `go test -race ./...` from `core/` passes
+- [x] Coverage ≥ 80% on `internal/authentication/`
+
+---
+
+## Step 48 — `ONLY_EXCLUSIVE` stub behavior in SimpleStoreOrchestration (G25 residual)
+
+**Gap addressed:**
+- **G25** (residual) — After Step 43 implements `ONLY_EXCLUSIVE` filtering in DynamicOrchestration, SimpleStoreOrchestration still silently ignores the flag. SimpleStore has no lock store. Per the intercloud precedent (G25/E4), returning 200 while ignoring a semantically significant flag is misleading. This step makes SimpleStore return `501 Not Implemented` when `ONLY_EXCLUSIVE` is true, consistent with how `ALLOW_INTERCLOUD` is handled.
+
+**Why after Step 43:** Step 43 establishes the reference behavior for ONLY_EXCLUSIVE in DynamicOrch. This step mirrors it for SimpleStore. Together they fully close G25 and G48.
+
+**Prerequisites:** Step 43 complete. Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/orchestration/simplestore/service/orchestrator.go` — check `req.OrchestrationFlags.OnlyExclusive`; if true, return an error that maps to 501 (same error type used for intercloud flags)
+- `core/internal/orchestration/simplestore/api/handler_test.go` — add 501 test
+
+---
+
+### TDD cycle 48.1 — ONLY_EXCLUSIVE in SimpleStore orchestration returns 501
+
+**Test:** `TestSimpleStoreOrchestrationOnlyExclusiveReturns501`
+
+POST `/serviceorchestration/orchestration/pull` with `orchestrationFlags: {"ONLY_EXCLUSIVE": true}` → assert 501 Not Implemented with a descriptive error body.
+
+**Expected failure before implementation:** 200 with full results (flag ignored).
+
+---
+
+### TDD cycle 48.2 — SimpleStore orchestration without ONLY_EXCLUSIVE succeeds (regression guard)
+
+**Test:** `TestSimpleStoreOrchestrationWithoutOnlyExclusiveSucceeds`
+
+Normal orchestration request (no ONLY_EXCLUSIVE flag) with a matching rule → assert 200 with results. Must pass before and after implementation.
+
+---
+
+### System test
+
+POST orchestration to SimpleStore with `orchestrationFlags: {"ONLY_EXCLUSIVE": true}` via curl → assert 501 response body contains a descriptive error message explaining that ONLY_EXCLUSIVE is not supported in SimpleStore.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/orchestration/simplestore/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/orchestration/simplestore/`.
+
+### Documentation updates (after Step 48)
+
+- `core/GAP_ANALYSIS.md` — update G25: mark residual fully closed; note DynamicOrch implements ONLY_EXCLUSIVE (Step 43) and SimpleStore returns 501 (Step 48)
+- `core/SPEC.md` — document ONLY_EXCLUSIVE behavior for each orchestrator: DynamicOrch = filter by lock, SimpleStore = 501
+- `CONFORMANCE.md` — update G25 to Resolved; update SimpleStoreOrchestration ratings
+
+### Completion criteria
+
+- [x] `TestSimpleStoreOrchestrationOnlyExclusiveReturns501` passes
+- [x] `TestSimpleStoreOrchestrationWithoutOnlyExclusiveSucceeds` passes (regression guard)
+- [x] All existing SimpleStore orchestration tests still pass
+- [x] `go test -race ./...` from `core/` passes
+- [x] Coverage ≥ 80% on `internal/orchestration/simplestore/`
+
+---
+
+## Step 49 — Phase 4 documentation update
+
+**Purpose:** Ensures every authoritative document reflects the final implemented state of Phase 4. Apply after all Phase 4 implementation steps (40–48) are complete and passing.
+
+**Prerequisites:** Steps 40–48 all complete and passing. Pre-flight check passes.
+
+### `core/GAP_ANALYSIS.md`
+
+For each resolved gap add (if not done per-step):
+- A `**Status: Resolved in Step N**` line at the top of its section
+- An implementation summary paragraph (design decision, relevant env var if any, key files)
+
+Gaps to update: G25 (residual), G44, G45, G46, G48, G49, G50, G51, G52.
+
+### `CONFORMANCE.md`
+
+1. Move all nine gaps (G25 residual, G44–G46, G48–G52) from **Open Gaps** table → **Resolved Gaps** table with Step numbers 40–48.
+2. Update **Per-System Ratings** for all affected systems to match the Phase 4 projected values.
+3. Update Phase Plan: mark Phase 4 as **Complete**.
+4. Update **last updated** timestamp.
+
+### `CONFORMANCE_UPDATE_PLAN.md`
+
+1. Tick all completion criteria checkboxes in Steps 40–48.
+2. Add Phase 4 regression matrix (section 15).
+
+### `core/SPEC.md`
+
+- Add `PUT` rows to service-definitions and interface-templates endpoint tables (Step 40)
+- Document `securityPolicy` enum values on the service register endpoint (Step 41)
+- Add `scope` field to the ConsumerAuth verify request body description (Step 42)
+- Document `ONLY_EXCLUSIVE` flag semantics for DynamicOrch and SimpleStore (Steps 43, 48)
+- Add history query filter fields to DynamicOrch history endpoint (Step 44)
+- Add `BLACKLIST_PURGE_INTERVAL_SECONDS` to Blacklist configuration table (Step 45)
+- Add `PUT /mgmt/simple-store/rules/{id}` to SimpleStore endpoint table (Step 46)
+- Document PascalCase naming requirement for Authentication identity creation (Step 47)
+
+### `core/EXAMPLES.md`
+
+- Add example: SR `PUT /mgmt/service-definitions` update request and response
+- Add example: ConsumerAuth verify with `scope` field and scoped policy matching
+- Add example: DynamicOrch request with `ONLY_EXCLUSIVE: true` and filtered result
+- Add example: Orchestration history query with `requesterSystemName` filter
+
+### `README.md`
+
+- Add `BLACKLIST_PURGE_INTERVAL_SECONDS` to Blacklist Configuration table
+
+### Completion criteria
+
+- [ ] All nine gaps (G25 residual, G44–G46, G48–G52) appear in the Resolved Gaps table in `CONFORMANCE.md`
+- [ ] None of the nine gaps remain in the Open Gaps table in `CONFORMANCE.md`
+- [ ] Phase Plan row for Phase 4 shows **Complete**
+- [ ] All Steps 40–48 completion criteria checkboxes are `[x]`
+- [ ] All new env vars documented in `core/SPEC.md` and `README.md`
+- [ ] All new endpoints documented in `core/SPEC.md`
+- [ ] `core/EXAMPLES.md` updated with at least one example per major Phase 4 change
+- [ ] `core/GAP_ANALYSIS.md` shows resolved status for all nine gaps
+
+---
+
+## 15. Phase 4 — Regression matrix
+
+Run after all Phase 4 steps are complete (Steps 40–48):
+
+| Check | Steps |
+|---|---|
+| `cd core && go build ./...` | All Phase 4 |
+| `cd core && go vet ./...` | All Phase 4 |
+| `cd core && go test -race ./...` | All Phase 4 |
+| `bash core/test-system.sh` | All Phase 4 |
+| `go build ./...` (workspace root) | All Phase 4 |
 

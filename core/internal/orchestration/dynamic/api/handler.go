@@ -39,6 +39,8 @@ func NewHandler(orch *service.DynamicOrchestrator, mgmtAuthURL string) http.Hand
 		subs:        service.NewSubscriptionStore(),
 		mgmtAuthURL: mgmtAuthURL,
 	}
+	// Wire the lock store into the orchestrator so ONLY_EXCLUSIVE filtering works (G48).
+	orch.SetLockChecker(h.locks)
 	mux := http.NewServeMux()
 	// Pull orchestration
 	mux.HandleFunc("/serviceorchestration/orchestration/pull", h.handleOrchestrate)
@@ -283,10 +285,22 @@ func (h *Handler) handleHistoryQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var raw struct {
-		Pagination *coremodel.PageRequest `json:"pagination"`
+		Pagination          *coremodel.PageRequest `json:"pagination"`
+		RequesterSystemName string                 `json:"requesterSystemName"`
+		ServiceDefinition   string                 `json:"serviceDefinition"`
+		Status              string                 `json:"status"`
+		From                string                 `json:"from"`
+		To                  string                 `json:"to"`
 	}
 	json.NewDecoder(r.Body).Decode(&raw) //nolint:errcheck — empty body OK
-	result := h.orch.QueryHistory()
+	filter := service.HistoryQueryFilter{
+		RequesterSystemName: raw.RequesterSystemName,
+		ServiceDefinition:   raw.ServiceDefinition,
+		Status:              raw.Status,
+		From:                raw.From,
+		To:                  raw.To,
+	}
+	result := h.orch.QueryHistory(filter)
 	page, total := coremodel.Paginate(result.Entries, pageReqOrZero(raw.Pagination), func(e service.HistoryEntry) string { return e.ID })
 	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"entries":    page,

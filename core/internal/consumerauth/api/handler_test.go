@@ -792,3 +792,107 @@ func TestQueryTokensWithPagination(t *testing.T) {
 	}
 }
 
+// ─── Step 42 — Scoped policy evaluation (G46) ────────────────────────────────
+
+// TestVerifyScopedPolicyOverridesDefault confirms that a scoped policy overrides
+// the default when the matching scope is supplied, and that an unknown scope falls
+// back to the default policy.
+func TestVerifyScopedPolicyOverridesDefault(t *testing.T) {
+	h := newTestHandler()
+	// Grant: default = DENY_ALL (BLACKLIST with empty list → deny all),
+	// scoped "write" = ALLOW_ALL.
+	postJSON(t, h, "/consumerauthorization/authorization/grant", map[string]any{
+		"targetType": model.TargetServiceDef,
+		"target":     "data",
+		"provider":   "Provider1",
+		"defaultPolicy": map[string]any{
+			"policyType": model.PolicyBlacklist,
+			"policyList": []string{"*"}, // deny all via blacklist wildcard... but let's use WHITELIST with no list
+		},
+		"scopedPolicies": map[string]any{
+			"write": map[string]any{"policyType": model.PolicyAll},
+		},
+	})
+
+	// Verify with scope "write" → should be authorized (scoped policy = ALLOW_ALL)
+	wWrite := postJSON(t, h, "/consumerauthorization/authorization/verify", map[string]any{
+		"consumer":   "ConsumerA",
+		"provider":   "Provider1",
+		"target":     "data",
+		"targetType": model.TargetServiceDef,
+		"scope":      "write",
+	})
+	if wWrite.Code != http.StatusOK {
+		t.Fatalf("write scope: want 200, got %d", wWrite.Code)
+	}
+	var authWrite bool
+	json.NewDecoder(wWrite.Body).Decode(&authWrite)
+	if !authWrite {
+		t.Errorf("write scope: expected authorized=true, got false")
+	}
+}
+
+// TestVerifyEmptyScopeFallsBackToDefault confirms that an empty scope uses the
+// default policy (ALLOW_ALL in this test → authorized).
+func TestVerifyEmptyScopeFallsBackToDefault(t *testing.T) {
+	h := newTestHandler()
+	postJSON(t, h, "/consumerauthorization/authorization/grant", map[string]any{
+		"targetType":    model.TargetServiceDef,
+		"target":        "data",
+		"provider":      "Provider1",
+		"defaultPolicy": map[string]any{"policyType": model.PolicyAll},
+		"scopedPolicies": map[string]any{
+			"restricted": map[string]any{"policyType": model.PolicyWhitelist, "policyList": []string{}},
+		},
+	})
+
+	// No scope supplied → uses defaultPolicy (ALLOW_ALL)
+	w := postJSON(t, h, "/consumerauthorization/authorization/verify", map[string]any{
+		"consumer":   "ConsumerA",
+		"provider":   "Provider1",
+		"target":     "data",
+		"targetType": model.TargetServiceDef,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("empty scope: want 200, got %d", w.Code)
+	}
+	var authorized bool
+	json.NewDecoder(w.Body).Decode(&authorized)
+	if !authorized {
+		t.Errorf("empty scope: expected authorized=true via default ALLOW_ALL policy")
+	}
+}
+
+// TestVerifyUnknownScopeFallsBackToDefault confirms that an unknown scope name
+// falls back to the default policy (WHITELIST with no entries → deny).
+func TestVerifyUnknownScopeFallsBackToDefault(t *testing.T) {
+	h := newTestHandler()
+	postJSON(t, h, "/consumerauthorization/authorization/grant", map[string]any{
+		"targetType": model.TargetServiceDef,
+		"target":     "data",
+		"provider":   "Provider1",
+		// Default: WHITELIST with no allowed consumers → deny all
+		"defaultPolicy": map[string]any{"policyType": model.PolicyWhitelist, "policyList": []string{}},
+		"scopedPolicies": map[string]any{
+			"write": map[string]any{"policyType": model.PolicyAll},
+		},
+	})
+
+	// Unknown scope "admin" → falls back to default (WHITELIST empty → denied)
+	w := postJSON(t, h, "/consumerauthorization/authorization/verify", map[string]any{
+		"consumer":   "ConsumerA",
+		"provider":   "Provider1",
+		"target":     "data",
+		"targetType": model.TargetServiceDef,
+		"scope":      "admin",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("unknown scope: want 200, got %d", w.Code)
+	}
+	var authorized bool
+	json.NewDecoder(w.Body).Decode(&authorized)
+	if authorized {
+		t.Errorf("unknown scope: expected authorized=false (falls back to WHITELIST/empty default)")
+	}
+}
+

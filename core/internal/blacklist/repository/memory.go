@@ -15,6 +15,7 @@ type Repository interface {
 	Save(e Entry) Entry
 	All() []Entry
 	SetActive(systemName string, active bool) bool
+	DeleteExpired(before time.Time) int
 }
 
 // MemoryRepository is a thread-safe in-memory Repository.
@@ -57,4 +58,21 @@ func (r *MemoryRepository) SetActive(systemName string, active bool) bool {
 		}
 	}
 	return found
+}
+
+// DeleteExpired removes all entries whose ExpiresAt is non-zero and before `before`.
+// Returns the number of entries removed.
+func (r *MemoryRepository) DeleteExpired(before time.Time) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := len(r.entries)
+	kept := r.entries[:0]
+	for _, e := range r.entries {
+		if !e.ExpiresAt.IsZero() && e.ExpiresAt.Before(before) {
+			continue // remove
+		}
+		kept = append(kept, e)
+	}
+	r.entries = kept
+	return n - len(kept)
 }

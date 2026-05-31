@@ -1240,3 +1240,120 @@ func TestRegisterServiceMismatchedIdentityReturns403(t *testing.T) {
 		t.Errorf("service register mismatch: want 403, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// ─── Step 40 — PUT service-definitions and interface-templates ────────────────
+
+func TestMgmtServiceDefinitionsPutUpdatesEntry(t *testing.T) {
+	h := newAH5Handler()
+	// Create
+	ah5Post(t, h, "/serviceregistry/mgmt/service-definitions", map[string]any{
+		"serviceDefinitionNames": []string{"temperature"},
+	})
+	// PUT (update — name is the key, no other fields to change for ServiceDefinition,
+	// so we verify 200 and the entry is still present via query)
+	w := ah5Put(t, h, "/serviceregistry/mgmt/service-definitions", map[string]any{
+		"serviceDefinitionNames": []string{"temperature"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT service-definitions: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp model.ServiceDefinitionListResponse
+	json.NewDecoder(w.Body).Decode(&resp) //nolint
+	if resp.Count != 1 {
+		t.Errorf("Count = %d, want 1", resp.Count)
+	}
+}
+
+func TestMgmtServiceDefinitionsPutUnknownReturns404(t *testing.T) {
+	h := newAH5Handler()
+	w := ah5Put(t, h, "/serviceregistry/mgmt/service-definitions", map[string]any{
+		"serviceDefinitionNames": []string{"does-not-exist"},
+	})
+	if w.Code != http.StatusNotFound {
+		t.Errorf("PUT unknown service-definition: want 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMgmtInterfaceTemplatesPutUpdatesEntry(t *testing.T) {
+	h := newAH5Handler()
+	// Create
+	ah5Post(t, h, "/serviceregistry/mgmt/interface-templates", map[string]any{
+		"interfaceTemplates": []map[string]any{
+			{"name": "http_json", "protocol": "HTTP"},
+		},
+	})
+	// PUT — update protocol field
+	w := ah5Put(t, h, "/serviceregistry/mgmt/interface-templates", map[string]any{
+		"interfaceTemplates": []map[string]any{
+			{"name": "http_json", "protocol": "HTTPS"},
+		},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT interface-templates: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp model.InterfaceTemplateListResponse
+	json.NewDecoder(w.Body).Decode(&resp) //nolint
+	if resp.Count != 1 {
+		t.Errorf("Count = %d, want 1", resp.Count)
+	}
+	if resp.InterfaceTemplates[0].Protocol != "HTTPS" {
+		t.Errorf("protocol = %q, want HTTPS", resp.InterfaceTemplates[0].Protocol)
+	}
+}
+
+func TestMgmtInterfaceTemplatesPutUnknownReturns404(t *testing.T) {
+	h := newAH5Handler()
+	w := ah5Put(t, h, "/serviceregistry/mgmt/interface-templates", map[string]any{
+		"interfaceTemplates": []map[string]any{
+			{"name": "no-such-template", "protocol": "HTTP"},
+		},
+	})
+	if w.Code != http.StatusNotFound {
+		t.Errorf("PUT unknown interface-template: want 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// ─── Step 41 — securityPolicy enum validation ─────────────────────────────────
+
+func TestServiceRegisterValidSecurityPolicy(t *testing.T) {
+	h := newAH5Handler()
+	w := ah5Post(t, h, "/serviceregistry/service-discovery/register", map[string]any{
+		"systemName":            "SensorA",
+		"serviceDefinitionName": "temperature",
+		"serviceUri":            "/temp",
+		"interfaces": []map[string]any{
+			{"templateName": "http_json", "protocol": "HTTP", "policy": "TIME_LIMITED_TOKEN_AUTH"},
+		},
+	})
+	if w.Code != http.StatusCreated {
+		t.Errorf("valid policy: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestServiceRegisterInvalidSecurityPolicy(t *testing.T) {
+	h := newAH5Handler()
+	w := ah5Post(t, h, "/serviceregistry/service-discovery/register", map[string]any{
+		"systemName":            "SensorA",
+		"serviceDefinitionName": "temperature",
+		"serviceUri":            "/temp",
+		"interfaces": []map[string]any{
+			{"templateName": "http_json", "protocol": "HTTP", "policy": "NOT_A_REAL_POLICY"},
+		},
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid policy: want 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestServiceRegisterAbsentSecurityPolicyDefaultsToNone(t *testing.T) {
+	h := newAH5Handler()
+	w := ah5Post(t, h, "/serviceregistry/service-discovery/register", map[string]any{
+		"systemName":            "SensorA",
+		"serviceDefinitionName": "temperature",
+		"serviceUri":            "/temp",
+		"interfaces":            []string{"HTTP-INSECURE-JSON"},
+	})
+	if w.Code != http.StatusCreated {
+		t.Errorf("absent policy: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+}

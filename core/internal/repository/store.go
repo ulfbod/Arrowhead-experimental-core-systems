@@ -27,11 +27,13 @@ type AH5StoreInterface interface {
 	// ServiceDefinitions
 	SaveServiceDefinitions(names []string) []*model.ServiceDefinition
 	CreateServiceDefinitions(names []string) ([]*model.ServiceDefinition, string)
+	UpdateServiceDefinitions(names []string) ([]*model.ServiceDefinition, bool)
 	AllServiceDefinitions() []*model.ServiceDefinition
 	DeleteServiceDefinitions(names []string)
 
 	// InterfaceTemplates
 	CreateInterfaceTemplates(templates []*model.InterfaceTemplate) ([]*model.InterfaceTemplate, string)
+	UpdateInterfaceTemplates(templates []*model.InterfaceTemplate) ([]*model.InterfaceTemplate, bool)
 	AllInterfaceTemplates() []*model.InterfaceTemplate
 	DeleteInterfaceTemplates(names []string)
 

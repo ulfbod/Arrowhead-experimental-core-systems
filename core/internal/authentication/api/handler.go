@@ -221,6 +221,13 @@ func (h *Handler) mgmtIdentitiesCreate(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", authOrigin)
 		return
 	}
+	// Validate all systemNames against PascalCase before creating any identity (atomic rejection).
+	for _, id := range req.Identities {
+		if msg := httputil.ValidatePascalCase(id.SystemName); msg != "" {
+			httputil.WriteError(w, http.StatusBadRequest, msg, authOrigin)
+			return
+		}
+	}
 	records, err := h.svc.CreateIdentities(req.Identities)
 	if err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, err.Error(), authOrigin)

@@ -410,3 +410,115 @@ func TestOnlyInterclouReturns501(t *testing.T) {
 		t.Errorf("want 501, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// ─── Step 46 — SimpleStore PUT rule endpoint (G51) ────────────────────────────
+
+func putJSON(t *testing.T, h http.Handler, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPut, path, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestSimpleStoreUpdateRuleUpdatesFields(t *testing.T) {
+	h := newTestHandler()
+	id := createRuleAndGetID(t, h)
+
+	updated := map[string]any{
+		"consumerSystemName": "consumer-app",
+		"serviceDefinition":  "temperature-service",
+		"provider": map[string]any{
+			"systemName": "sensor-2", // changed
+			"address":    "10.0.0.2", // changed
+			"port":       9001,       // changed
+		},
+		"serviceUri": "/new-temperature", // changed
+		"interfaces": []string{"HTTP-SECURE-JSON"},
+	}
+	w := putJSON(t, h, "/serviceorchestration/orchestration/simplestore/rules/"+id, updated)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT rule: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var rule model.StoreRule
+	json.NewDecoder(w.Body).Decode(&rule)
+	if rule.ServiceUri != "/new-temperature" {
+		t.Errorf("serviceUri = %q, want /new-temperature", rule.ServiceUri)
+	}
+	if rule.Provider.SystemName != "sensor-2" {
+		t.Errorf("provider.systemName = %q, want sensor-2", rule.Provider.SystemName)
+	}
+}
+
+func TestSimpleStoreUpdateRuleUnknownIDReturns404(t *testing.T) {
+	h := newTestHandler()
+	w := putJSON(t, h, "/serviceorchestration/orchestration/simplestore/rules/nonexistent-id", validRuleBody)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("PUT unknown rule: want 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSimpleStoreUpdateRulePreservesID(t *testing.T) {
+	h := newTestHandler()
+	id := createRuleAndGetID(t, h)
+
+	updated := map[string]any{
+		"consumerSystemName": "consumer-app",
+		"serviceDefinition":  "temperature-service",
+		"provider": map[string]any{
+			"systemName": "sensor-99",
+			"address":    "10.0.0.99",
+			"port":       9099,
+		},
+		"serviceUri": "/temp-v2",
+		"interfaces": []string{"HTTP-INSECURE-JSON"},
+	}
+	w := putJSON(t, h, "/serviceorchestration/orchestration/simplestore/rules/"+id, updated)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT rule: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var rule model.StoreRule
+	json.NewDecoder(w.Body).Decode(&rule)
+	if rule.ID != id {
+		t.Errorf("ID changed: want %q, got %q", id, rule.ID)
+	}
+	// Verify only one rule exists.
+	wList := getReq(t, h, "/serviceorchestration/orchestration/simplestore/rules")
+	var listResp model.RulesResponse
+	json.NewDecoder(wList.Body).Decode(&listResp)
+	if listResp.Count != 1 {
+		t.Errorf("expected 1 rule after update, got %d", listResp.Count)
+	}
+}
+
+// ─── Step 48 — SimpleStore ONLY_EXCLUSIVE returns 501 (G25 residual) ──────────
+
+func TestSimpleStoreOrchestrationOnlyExclusiveReturns501(t *testing.T) {
+	h := newTestHandler()
+	// Create a matching rule first so the test isn't a trivial empty-result.
+	postJSON(t, h, "/serviceorchestration/orchestration/simplestore/rules", validRuleBody)
+	body := map[string]any{
+		"requesterSystem":    map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
+		"requestedService":   map[string]any{"serviceDefinition": "temperature-service"},
+		"orchestrationFlags": map[string]any{"ONLY_EXCLUSIVE": true},
+	}
+	w := postJSON(t, h, "/serviceorchestration/orchestration/pull", body)
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("ONLY_EXCLUSIVE in SimpleStore: want 501, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSimpleStoreOrchestrationWithoutOnlyExclusiveSucceeds(t *testing.T) {
+	h := newTestHandler()
+	postJSON(t, h, "/serviceorchestration/orchestration/simplestore/rules", validRuleBody)
+	body := map[string]any{
+		"requesterSystem":  map[string]any{"systemName": "consumer-app", "address": "localhost", "port": 0},
+		"requestedService": map[string]any{"serviceDefinition": "temperature-service"},
+	}
+	w := postJSON(t, h, "/serviceorchestration/orchestration/pull", body)
+	if w.Code != http.StatusOK {
+		t.Errorf("normal orchestration: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+}

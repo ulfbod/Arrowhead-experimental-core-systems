@@ -3,9 +3,24 @@ package httputil
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 )
+
+// rePascalCase matches a valid AH5 system name: starts with an uppercase letter,
+// followed by up to 62 alphanumeric characters.
+var rePascalCase = regexp.MustCompile(`^[A-Z][A-Za-z0-9]{0,62}$`)
+
+// ValidatePascalCase returns an error message if name does not match the PascalCase
+// convention (^[A-Z][A-Za-z0-9]{0,62}$). Returns "" if name is valid.
+func ValidatePascalCase(name string) string {
+	if !rePascalCase.MatchString(name) {
+		return fmt.Sprintf("systemName must be PascalCase (^[A-Z][A-Za-z0-9]{0,62}$), got: %q", name)
+	}
+	return ""
+}
 
 // ErrorTypeForStatus maps an HTTP status code to the AH5 exceptionType string.
 func ErrorTypeForStatus(status int) string {

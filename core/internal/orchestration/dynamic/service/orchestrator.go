@@ -37,6 +37,7 @@ type DynamicOrchestrator struct {
 	blClient          blclient.BlacklistClient
 	qosClient         client.QoSEvaluatorClient     // nil → NopQoSClient (fail-open)
 	translationClient client.TranslationClient      // nil → NopTranslationClient (ALLOW_TRANSLATION is no-op)
+	lockChecker       LockChecker                   // nil → NopLockChecker (ONLY_EXCLUSIVE is no-op)
 	checkAuth         bool
 	checkIdentity     bool
 	hist              *historyStore
@@ -81,9 +82,14 @@ func (o *DynamicOrchestrator) SetTranslationClient(c client.TranslationClient) {
 // Pass a client with the desired timeout (e.g. derived from PUSH_DELIVERY_TIMEOUT_SECONDS).
 func (o *DynamicOrchestrator) SetPushClient(c *http.Client) { o.pushClient = c }
 
-// QueryHistory returns all recorded orchestration history entries.
-func (o *DynamicOrchestrator) QueryHistory() HistoryQueryResponse {
-	return o.hist.query()
+// SetLockChecker configures the lock checker used for ONLY_EXCLUSIVE flag filtering (G48).
+// Pass NopLockChecker{} to disable exclusive-lock filtering (fail-open).
+func (o *DynamicOrchestrator) SetLockChecker(lc LockChecker) { o.lockChecker = lc }
+
+// QueryHistory returns orchestration history entries matching the given filter.
+// Pass a zero-value HistoryQueryFilter{} to return all entries.
+func (o *DynamicOrchestrator) QueryHistory(f HistoryQueryFilter) HistoryQueryResponse {
+	return o.hist.query(f)
 }
 
 // TriggerPush records a PUSH/PENDING history entry and asynchronously delivers
@@ -310,6 +316,23 @@ func (o *DynamicOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest, to
 		}
 		results = filtered
 	}
+
+	// Step 5.1: ONLY_EXCLUSIVE filter (G48). When true, exclude providers that are
+	// currently under an active exclusive lock according to the LockChecker.
+	if flags.OnlyExclusive {
+		lc := o.lockChecker
+		if lc == nil {
+			lc = NopLockChecker{}
+		}
+		filtered := results[:0]
+		for _, r := range results {
+			if !lc.IsLocked(r.ProviderName) {
+				filtered = append(filtered, r)
+			}
+		}
+		results = filtered
+	}
+
 	if flags.Matchmaking && len(results) > 1 {
 		results = results[:1]
 	}

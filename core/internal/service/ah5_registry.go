@@ -26,7 +26,9 @@ var (
 	ErrSystemAlreadyExists          = errors.New("system already exists")
 	ErrSystemNotFound               = errors.New("system not found")
 	ErrServiceDefAlreadyExists      = errors.New("service definition already exists")
+	ErrServiceDefNotFound           = errors.New("service definition not found")
 	ErrInterfaceTemplateExists      = errors.New("interface template already exists")
+	ErrInterfaceTemplateNotFound    = errors.New("interface template not found")
 	ErrServiceInstanceExists        = errors.New("service instance already exists")
 	ErrServiceInstanceNotFound      = errors.New("service instance not found")
 )
@@ -365,6 +367,19 @@ func (s *AH5RegistryService) CreateServiceDefinitions(req model.ServiceDefinitio
 	return model.ServiceDefinitionListResponse{ServiceDefinitions: defs, Count: len(defs)}, nil
 }
 
+// UpdateServiceDefinitions updates existing service definitions (touch updatedAt).
+// Returns an error if any name is not found.
+func (s *AH5RegistryService) UpdateServiceDefinitions(req model.ServiceDefinitionListRequest) (model.ServiceDefinitionListResponse, error) {
+	defs, ok := s.store.UpdateServiceDefinitions(req.ServiceDefinitionNames)
+	if !ok {
+		return model.ServiceDefinitionListResponse{}, ErrServiceDefNotFound
+	}
+	if defs == nil {
+		defs = []*model.ServiceDefinition{}
+	}
+	return model.ServiceDefinitionListResponse{ServiceDefinitions: defs, Count: len(defs)}, nil
+}
+
 // RemoveServiceDefinitions removes the named service definitions.
 func (s *AH5RegistryService) RemoveServiceDefinitions(names []string) {
 	s.store.DeleteServiceDefinitions(names)
@@ -386,6 +401,19 @@ func (s *AH5RegistryService) CreateInterfaceTemplates(req model.InterfaceTemplat
 	tmpls, conflict := s.store.CreateInterfaceTemplates(req.InterfaceTemplates)
 	if conflict != "" {
 		return model.InterfaceTemplateListResponse{}, ErrInterfaceTemplateExists
+	}
+	if tmpls == nil {
+		tmpls = []*model.InterfaceTemplate{}
+	}
+	return model.InterfaceTemplateListResponse{InterfaceTemplates: tmpls, Count: len(tmpls)}, nil
+}
+
+// UpdateInterfaceTemplates updates existing interface templates.
+// Returns an error if any name is not found.
+func (s *AH5RegistryService) UpdateInterfaceTemplates(req model.InterfaceTemplateListRequest) (model.InterfaceTemplateListResponse, error) {
+	tmpls, ok := s.store.UpdateInterfaceTemplates(req.InterfaceTemplates)
+	if !ok {
+		return model.InterfaceTemplateListResponse{}, ErrInterfaceTemplateNotFound
 	}
 	if tmpls == nil {
 		tmpls = []*model.InterfaceTemplate{}

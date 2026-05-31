@@ -75,6 +75,26 @@ func (r *SQLiteRepository) UpdatePriority(id string, priority int) bool {
 	return n > 0
 }
 
+func (r *SQLiteRepository) Update(rule model.StoreRule) (model.StoreRule, bool) {
+	ifaces, _ := json.Marshal(rule.Interfaces)
+	meta, _ := json.Marshal(rule.Metadata)
+	res, err := r.db.Exec(
+		`UPDATE store_rules SET consumer_system_name=?, service_definition=?, provider_name=?, provider_address=?, provider_port=?, service_uri=?, interfaces=?, metadata=?, priority=? WHERE id=?`,
+		rule.ConsumerSystemName, rule.ServiceDefinition,
+		rule.Provider.SystemName, rule.Provider.Address, rule.Provider.Port,
+		rule.ServiceUri, string(ifaces), string(meta), rule.Priority,
+		rule.ID,
+	)
+	if err != nil {
+		return model.StoreRule{}, false
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return model.StoreRule{}, false
+	}
+	return rule, true
+}
+
 func (r *SQLiteRepository) All() []model.StoreRule {
 	rows, err := r.db.Query(
 		`SELECT id, consumer_system_name, service_definition, provider_name, provider_address, provider_port, service_uri, interfaces, metadata, priority FROM store_rules ORDER BY id`,

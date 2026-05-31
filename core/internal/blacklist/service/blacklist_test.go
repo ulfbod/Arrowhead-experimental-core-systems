@@ -58,3 +58,61 @@ func TestIsBlacklistedExpiredEntry(t *testing.T) {
 		t.Error("IsBlacklisted = true for expired entry")
 	}
 }
+
+// ─── Step 45 — PurgeExpired ───────────────────────────────────────────────────
+
+func TestBlacklistPurgeExpiredRemovesExpiredEntry(t *testing.T) {
+	repo := repository.NewMemoryRepository()
+	svc := service.NewBlacklistService(repo)
+	past := time.Now().Add(-1 * time.Second)
+	svc.Add("expired-sys", "temp ban", past, "admin")
+
+	svc.PurgeExpired()
+
+	entries := svc.Query(nil)
+	for _, e := range entries {
+		if e.SystemName == "expired-sys" {
+			t.Errorf("PurgeExpired: expired entry still present: %+v", e)
+		}
+	}
+}
+
+func TestBlacklistPurgeExpiredKeepsFutureEntry(t *testing.T) {
+	repo := repository.NewMemoryRepository()
+	svc := service.NewBlacklistService(repo)
+	future := time.Now().Add(1 * time.Hour)
+	svc.Add("future-sys", "temp ban", future, "admin")
+
+	svc.PurgeExpired()
+
+	entries := svc.Query(nil)
+	found := false
+	for _, e := range entries {
+		if e.SystemName == "future-sys" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("PurgeExpired: future entry was incorrectly removed")
+	}
+}
+
+func TestBlacklistPurgeExpiredKeepsPermanentEntry(t *testing.T) {
+	repo := repository.NewMemoryRepository()
+	svc := service.NewBlacklistService(repo)
+	// Zero-value expiresAt = permanent
+	svc.Add("permanent-sys", "permanent ban", time.Time{}, "admin")
+
+	svc.PurgeExpired()
+
+	entries := svc.Query(nil)
+	found := false
+	for _, e := range entries {
+		if e.SystemName == "permanent-sys" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("PurgeExpired: permanent entry (no expiry) was incorrectly removed")
+	}
+}

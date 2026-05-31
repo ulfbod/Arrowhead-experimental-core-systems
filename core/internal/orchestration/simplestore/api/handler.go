@@ -69,6 +69,8 @@ func statusFor(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, orchmodel.ErrInterclouNotSupported):
 		return http.StatusNotImplemented
+	case errors.Is(err, orchmodel.ErrOnlyExclusiveNotSupported):
+		return http.StatusNotImplemented
 	default:
 		return http.StatusBadRequest
 	}
@@ -173,13 +175,10 @@ func (h *Handler) handleRules(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Legacy alias: DELETE /serviceorchestration/orchestration/simplestore/rules/{id}
+// PUT  /serviceorchestration/orchestration/simplestore/rules/{id} — update
+// DELETE /serviceorchestration/orchestration/simplestore/rules/{id} — remove
 func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, ssOrigin) {
-		return
-	}
-	if r.Method != http.MethodDelete {
-		httputil.WriteError(w, http.StatusMethodNotAllowed, "DELETE required", ssOrigin)
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/serviceorchestration/orchestration/simplestore/rules/")
@@ -187,11 +186,27 @@ func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, http.StatusBadRequest, "id is required", ssOrigin)
 		return
 	}
-	if err := h.orch.DeleteRule(id); err != nil {
-		httputil.WriteError(w, statusFor(err), err.Error(), ssOrigin)
-		return
+	switch r.Method {
+	case http.MethodPut:
+		var req model.CreateRuleRequest
+		if !httputil.DecodeJSON(w, r, &req) {
+			return
+		}
+		rule, err := h.orch.UpdateRule(id, req)
+		if err != nil {
+			httputil.WriteError(w, statusFor(err), err.Error(), ssOrigin)
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, rule, ssOrigin)
+	case http.MethodDelete:
+		if err := h.orch.DeleteRule(id); err != nil {
+			httputil.WriteError(w, statusFor(err), err.Error(), ssOrigin)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "PUT or DELETE required", ssOrigin)
 	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // POST /serviceorchestration/orchestration/subscribe

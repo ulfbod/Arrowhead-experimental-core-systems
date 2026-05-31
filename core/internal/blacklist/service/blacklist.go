@@ -73,6 +73,13 @@ func (s *BlacklistService) Query(filter *QueryFilter) []model.Entry {
 	return out
 }
 
+// PurgeExpired hard-deletes all entries whose expiresAt is non-zero and in the past.
+// Soft-deleted (inactive) entries without an expiry are not affected.
+// Returns the number of entries removed.
+func (s *BlacklistService) PurgeExpired() int {
+	return s.repo.DeleteExpired(time.Now())
+}
+
 func contains(ss []string, s string) bool {
 	for _, v := range ss {
 		if v == s {

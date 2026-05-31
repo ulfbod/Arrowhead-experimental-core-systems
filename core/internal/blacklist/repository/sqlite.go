@@ -105,3 +105,16 @@ func (r *SQLiteRepository) SetActive(systemName string, active bool) bool {
 	n, _ := res.RowsAffected()
 	return n > 0
 }
+
+// DeleteExpired removes entries whose expires_at is non-null and before `before`.
+func (r *SQLiteRepository) DeleteExpired(before time.Time) int {
+	res, err := r.db.Exec(
+		`DELETE FROM blacklist_entries WHERE expires_at IS NOT NULL AND expires_at != '' AND expires_at < ?`,
+		before.UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return 0
+	}
+	n, _ := res.RowsAffected()
+	return int(n)
+}

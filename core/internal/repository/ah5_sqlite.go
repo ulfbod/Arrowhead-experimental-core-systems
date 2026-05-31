@@ -289,6 +289,23 @@ func (s *AH5SQLiteStore) AllServiceDefinitions() []*model.ServiceDefinition {
 	return out
 }
 
+func (s *AH5SQLiteStore) UpdateServiceDefinitions(names []string) ([]*model.ServiceDefinition, bool) {
+	for _, name := range names {
+		var count int
+		s.db.QueryRow(`SELECT COUNT(*) FROM service_definitions WHERE name=?`, name).Scan(&count)
+		if count == 0 {
+			return nil, false
+		}
+	}
+	t := ah5SQLiteNow()
+	var out []*model.ServiceDefinition
+	for _, name := range names {
+		s.db.Exec(`UPDATE service_definitions SET updated_at=? WHERE name=?`, t, name)
+		out = append(out, s.getServiceDef(name))
+	}
+	return out, true
+}
+
 func (s *AH5SQLiteStore) DeleteServiceDefinitions(names []string) {
 	for _, name := range names {
 		s.db.Exec(`DELETE FROM service_definitions WHERE name=?`, name)
@@ -337,6 +354,26 @@ func (s *AH5SQLiteStore) AllInterfaceTemplates() []*model.InterfaceTemplate {
 		}
 	}
 	return out
+}
+
+func (s *AH5SQLiteStore) UpdateInterfaceTemplates(templates []*model.InterfaceTemplate) ([]*model.InterfaceTemplate, bool) {
+	for _, tmpl := range templates {
+		var count int
+		s.db.QueryRow(`SELECT COUNT(*) FROM interface_templates WHERE name=?`, tmpl.Name).Scan(&count)
+		if count == 0 {
+			return nil, false
+		}
+	}
+	t := ah5SQLiteNow()
+	var out []*model.InterfaceTemplate
+	for _, tmpl := range templates {
+		pr, _ := json.Marshal(tmpl.PropertyRequirements)
+		s.db.Exec(`UPDATE interface_templates SET protocol=?, property_requirements=?, updated_at=? WHERE name=?`,
+			tmpl.Protocol, string(pr), t, tmpl.Name)
+		stored := &model.InterfaceTemplate{Name: tmpl.Name, Protocol: tmpl.Protocol, PropertyRequirements: tmpl.PropertyRequirements, CreatedAt: t, UpdatedAt: t}
+		out = append(out, stored)
+	}
+	return out, true
 }
 
 func (s *AH5SQLiteStore) DeleteInterfaceTemplates(names []string) {

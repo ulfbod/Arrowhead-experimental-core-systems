@@ -6,6 +6,18 @@ import (
 	"time"
 )
 
+// LockChecker is the interface used by DynamicOrchestrator to check whether a
+// provider is currently under an exclusive lock.
+type LockChecker interface {
+	IsLocked(providerName string) bool
+}
+
+// NopLockChecker implements LockChecker and always returns false (no locks).
+// Use in tests and when no LockStore is wired.
+type NopLockChecker struct{}
+
+func (NopLockChecker) IsLocked(_ string) bool { return false }
+
 // Lock represents an exclusive lock on a service instance.
 type Lock struct {
 	ID                 int        `json:"id"`
@@ -79,6 +91,32 @@ func (s *LockStore) Query() LockQueryResponse {
 		active = []Lock{}
 	}
 	return LockQueryResponse{Locks: active, Count: len(active)}
+}
+
+// IsLocked returns true if any active (non-expired) lock exists for providerName.
+// A lock is considered to belong to a provider when its ServiceInstanceId equals
+// or starts with "<providerName>|" (matching the composite service-instance ID
+// format "<providerName>|<serviceDef>|<version>").
+// It implements LockChecker.
+func (s *LockStore) IsLocked(providerName string) bool {
+	now := time.Now()
+	prefix := providerName + "|"
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, l := range s.locks {
+		if l.ServiceInstanceId != providerName && !startsWith(l.ServiceInstanceId, prefix) {
+			continue
+		}
+		if l.ExpiresAt != nil && l.ExpiresAt.Before(now) {
+			continue // expired — not locked
+		}
+		return true
+	}
+	return false
+}
+
+func startsWith(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
 // RemoveByOwner deletes all locks belonging to owner. Returns the count removed.

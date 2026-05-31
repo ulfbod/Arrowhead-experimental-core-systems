@@ -560,8 +560,9 @@ func makeSub(notifyURL string) service.Subscription {
 func waitForHistory(t *testing.T, orch *service.DynamicOrchestrator, wantStatus string, maxWaitMs int) service.HistoryEntry {
 	t.Helper()
 	deadline := time.Now().Add(time.Duration(maxWaitMs) * time.Millisecond)
+	noFilter := service.HistoryQueryFilter{}
 	for time.Now().Before(deadline) {
-		hist := orch.QueryHistory()
+		hist := orch.QueryHistory(noFilter)
 		for _, e := range hist.Entries {
 			if e.Status == wantStatus {
 				return e
@@ -569,7 +570,7 @@ func waitForHistory(t *testing.T, orch *service.DynamicOrchestrator, wantStatus 
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for history entry with status=%q; entries: %+v", wantStatus, orch.QueryHistory().Entries)
+	t.Fatalf("timed out waiting for history entry with status=%q; entries: %+v", wantStatus, orch.QueryHistory(noFilter).Entries)
 	return service.HistoryEntry{}
 }
 
@@ -819,5 +820,100 @@ func TestOrchestrationWithoutTranslationClientFiltersInterfaceMismatch(t *testin
 	// No translationClient wired → interface filtering does not apply → providers pass through.
 	if len(resp.Results) != 1 {
 		t.Errorf("expected 1 result (no filter without translationClient), got %d", len(resp.Results))
+	}
+}
+
+// ─── Step 43 — ONLY_EXCLUSIVE wired to LockChecker ───────────────────────────
+
+// mockLockChecker is a test-only LockChecker that treats a fixed set of providers as locked.
+type mockLockChecker struct {
+	locked map[string]bool
+}
+
+func (m mockLockChecker) IsLocked(providerName string) bool {
+	return m.locked[providerName]
+}
+
+func TestOrchestrationOnlyExclusiveFiltersLockedProvider(t *testing.T) {
+	// Two providers: "locked-sensor" is locked, "free-sensor" is not.
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("locked-sensor", "free-sensor")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	orch.SetLockChecker(mockLockChecker{locked: map[string]bool{"locked-sensor": true}})
+
+	req := validRequest()
+	req.OrchestrationFlags.OnlyExclusive = true
+
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("ONLY_EXCLUSIVE: expected 1 result (unlocked only), got %d", len(resp.Results))
+	}
+	if resp.Results[0].ProviderName != "free-sensor" {
+		t.Errorf("expected free-sensor, got %q", resp.Results[0].ProviderName)
+	}
+}
+
+func TestOrchestrationOnlyExclusivePassesUnlockedProvider(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("free-sensor")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	orch.SetLockChecker(mockLockChecker{locked: map[string]bool{}})
+
+	req := validRequest()
+	req.OrchestrationFlags.OnlyExclusive = true
+
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Errorf("ONLY_EXCLUSIVE unlocked: expected 1 result, got %d", len(resp.Results))
+	}
+}
+
+func TestOrchestrationWithoutOnlyExclusiveIncludesLockedProvider(t *testing.T) {
+	// Without ONLY_EXCLUSIVE flag, locked providers are still included.
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("locked-sensor", "free-sensor")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	orch.SetLockChecker(mockLockChecker{locked: map[string]bool{"locked-sensor": true}})
+
+	req := validRequest()
+	// OnlyExclusive not set (false)
+
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Results) != 2 {
+		t.Errorf("without ONLY_EXCLUSIVE: expected 2 results (locked included), got %d", len(resp.Results))
+	}
+}
+
+func TestOrchestrationOnlyExclusiveExpiredLockPassesProvider(t *testing.T) {
+	// LockChecker returns false for "sensor-with-expired-lock" → treat as unlocked.
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-with-expired-lock")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	// The LockStore.IsLocked correctly handles expiry (tested separately).
+	// Here we use mockLockChecker returning false to simulate expired/no lock.
+	orch.SetLockChecker(mockLockChecker{locked: map[string]bool{"sensor-with-expired-lock": false}})
+
+	req := validRequest()
+	req.OrchestrationFlags.OnlyExclusive = true
+
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Errorf("expired lock: expected 1 result, got %d", len(resp.Results))
 	}
 }

@@ -28,28 +28,27 @@ Ratings assess three orthogonal dimensions:
 
 ## Per-System Ratings
 
-Ratings reflect the implemented state after Phase 3 (Steps 1–39, E1–E5) and account for all
-open gaps identified through the Phase 4/5 audit. Ratings will improve as Phases 4 and 5 are completed.
+Ratings reflect the implemented state after Phase 4 (Steps 1–49, E1–E5). Phase 5 work remains.
 
 | System | Endpoint% | Model% | Behavior% | Overall | Key open gaps |
 |--------|-----------|--------|-----------|---------|---------------|
-| ServiceRegistry | 82 | 75 | 82 | **~80%** | G44, G45 |
-| Authentication | 85 | 80 | 76 | **~81%** | G52 |
-| ConsumerAuthorization | 78 | 70 | 68 | **~72%** | G46, G47, G6 (partial) |
-| DynamicOrchestration | 88 | 82 | 84 | **~85%** | G48, G49, G25 (ONLY_EXCLUSIVE) |
-| SimpleStoreOrchestration | 77 | 75 | 82 | **~78%** | G51 |
-| Blacklist | 100 | 85 | 85 | **~91%** | G50 |
-| GeneralManagement (cross-cutting) | 100 | 85 | 87 | **~91%** | — |
+| ServiceRegistry | 92 | 85 | 90 | **~89%** | — |
+| Authentication | 90 | 83 | 85 | **~86%** | — |
+| ConsumerAuthorization | 83 | 78 | 80 | **~81%** | G47, G6 (partial) |
+| DynamicOrchestration | 92 | 85 | 90 | **~89%** | — |
+| SimpleStoreOrchestration | 85 | 80 | 87 | **~84%** | — |
+| Blacklist | 100 | 88 | 92 | **~94%** | — |
+| GeneralManagement (cross-cutting) | 100 | 88 | 92 | **~94%** | — |
 | FlexibleStoreOrchestration | N/A | N/A | N/A | Extension | No spec (G1) |
 | CertificateAuthority | N/A | N/A | N/A | Extension | Not in spec (G9) |
-| DeviceQoSEvaluator | 85 | 80 | 80 | **~82%** | G53 |
-| TranslationManager | 85 | 85 | 80 | **~84%** | Phase 5 roadmap |
+| DeviceQoSEvaluator | 90 | 85 | 87 | **~87%** | G53 |
+| TranslationManager | 90 | 88 | 85 | **~88%** | Phase 5 roadmap |
 
 **Notes:**
 - G11, G25 (intercloud), G40 (result fields), G41, G43 resolved in Phase 1 (Steps E1–E5).
 - G37, G42, G20, G38, G39, G26 resolved in Phase 2 (Steps 27–31).
 - G10, G23 (variants), G34 (MQTT adapter), G35, G36, G40 (QoS filtering) resolved in Phase 3 (Steps 33–38).
-- Ratings revised downward after Phase 4/5 audit revealed G44–G53 and residual partial gaps.
+- G25 (ONLY_EXCLUSIVE), G44, G45, G46, G48, G49, G50, G51, G52 resolved in Phase 4 (Steps 40–48).
 - GeneralManagement is a cross-cutting capability, not an independent system.
 - FlexibleStoreOrchestration and CertificateAuthority are extensions with no AH5 spec
   counterpart; conformance ratings are not applicable.
@@ -110,23 +109,14 @@ the remaining work to reach full AH5 conformance.
 | **G4** (completion) | mTLS not enforced by default; plain HTTP is the default transport | None | Low | High | **Blocker** | **5** |
 | **G6** (completion) | ConsumerAuth does not require a prior Authentication token for authz token generation | None | Low | Medium | High | **5** |
 | **G23** (JWT) | JWT token variants (RSA_SHA256, RSA_SHA512, TRANSLATION_BRIDGE) return 501 | None | Low | Medium | High | **5** |
-| **G25** (ONLY_EXCLUSIVE) | `ONLY_EXCLUSIVE` flag accepted but not enforced against the lock store | None | Low | Medium | Medium | **4** |
 | **G26** (auto-push) | Push delivery is manual-trigger only; no provider-change auto-polling | None | Medium | Medium | High | **5** |
 | **G34** (MQTTS) | MQTT over TLS not implemented; plain MQTT adapter is in place | Low | Low | Medium | High | **5** |
 
-### New gaps (Phase 4/5 audit)
+### Open gaps (Phase 5)
 
 | Gap | Description | PoC | Teaching | Prototyping | Production | Phase |
 |-----|-------------|-----|----------|-------------|------------|-------|
-| **G44** | ServiceRegistry missing PUT update operations for systems, devices, interface templates, service definitions | Low | Low | Medium | High | **4** |
-| **G45** | `securityPolicy` accepted but not validated on service registration; `authenticationInfo` stored but not enforced | None | Low | Medium | High | **4** |
-| **G46** | `scopedPolicies` stored but not evaluated in ConsumerAuthorization verify; only `defaultPolicy` is checked | None | Medium | High | **Blocker** | **4** |
 | **G47** | JWT token signing infrastructure absent; RSA key pair not managed; `/authorization-token/public-key` returns 404 | None | Low | High | **Blocker** | **5** |
-| **G48** | `ONLY_EXCLUSIVE` orchestration flag does not consult lock store to exclude locked providers | None | Low | Medium | Medium | **4** |
-| **G49** | Orchestration history query has no filtering by consumer, service, status, or date range | None | Low | Medium | High | **4** |
-| **G50** | Blacklist expired entries never auto-purged; accumulate unboundedly in store | None | None | Low | Medium | **4** |
-| **G51** | SimpleStore full rule update endpoint missing; only priority reordering is available | None | Low | Medium | Medium | **4** |
-| **G52** | Authentication identity creation does not enforce PascalCase naming convention (G19 applies to SR only) | None | Low | Low | Medium | **4** |
 | **G53** | QoS measurements limited to TCP RTT; bandwidth, jitter, packet-loss not modelled or measured | None | Low | High | High | **5** |
 
 ---
@@ -175,6 +165,15 @@ the remaining work to reach full AH5 conformance.
 | G40 (QoS filtering) | `qualityRequirements[]` in OrchestrationRequest; DynamicOrch filters candidates by latency via QoS client | 36 |
 | G36 | Translation Manager — JSON field-remapping bridges, CRUD, translate endpoint; `core/cmd/translationmgr` (port 8089) | 37 |
 | G34 | MQTT adapter (`core/internal/mqttutil`) — subscribe/publish with AH5 topic conventions; `MQTT-INSECURE-JSON` interface | 38 |
+| G25 (ONLY_EXCLUSIVE) | `ONLY_EXCLUSIVE` wired to lock store in DynamicOrch; returns 501 in SimpleStore | 43, 48 |
+| G44 | ServiceRegistry PUT update for service-definitions and interface-templates | 40 |
+| G45 | `securityPolicy` enum validated on service registration; unknown value → 400 | 41 |
+| G46 | Scoped policy evaluation confirmed in ConsumerAuth verify; test coverage added | 42 |
+| G48 | `ONLY_EXCLUSIVE` lock-store filter in DynamicOrchestration (LockChecker interface) | 43 |
+| G49 | Orchestration history query filtering (requester, service, status, from/to) | 44 |
+| G50 | Blacklist expired-entry auto-purge via `BLACKLIST_PURGE_INTERVAL_SECONDS` background goroutine | 45 |
+| G51 | SimpleStore full rule update — `PUT /simplestore/rules/{id}` with UUID preservation | 46 |
+| G52 | Authentication identity creation enforces PascalCase via `ValidatePascalCase` (httputil) | 47 |
 
 ---
 
@@ -185,7 +184,7 @@ the remaining work to reach full AH5 conformance.
 | **Phase 1** | E1–E5 | Wire-compatibility: five gaps that break spec-compliant clients | **Complete** |
 | **Phase 2** | 27–32 | Functional completeness: access policy, Blacklist integration, pagination, bulk endpoints, push delivery | **Complete** |
 | **Phase 3** | 33–39 | Advanced conformance: registration identity, token variants, QoS evaluation, support systems, MQTT | **Complete** |
-| **Phase 4** | 40–49 | Behavioral completeness: model correctness gaps, missing CRUD operations, scoped policy evaluation | Planned |
+| **Phase 4** | 40–49 | Behavioral completeness: model correctness gaps, missing CRUD operations, scoped policy evaluation | **Complete** |
 | **Phase 5** | 50–56 | Full protocol compliance: JWT token signing, mTLS by default, auth coupling, MQTTS, QoS dimensions | Planned |
 
 ### Phase 2 — Step breakdown
@@ -218,6 +217,8 @@ See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan (Steps 27�
 See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan (Steps 33–39).
 
 ### Phase 4 — Behavioral completeness (Steps 40–49)
+
+See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan (Steps 40–49, section "Phase 4 — Behavioral completeness").
 
 **Goal:** Close model-correctness and missing-CRUD gaps identified in the Phase 4/5 audit.
 No new external dependencies. All steps are independent of each other except where noted.
@@ -265,4 +266,4 @@ No new external dependencies. All steps are independent of each other except whe
 
 ---
 
-*Last updated: 2026-05-31 (Phase 4/5 audit — G44–G53 added; per-system ratings revised; Phase 4 and Phase 5 plans added)*
+*Last updated: 2026-05-31 (Phase 4 complete — Steps 40–48 implemented; G25 residual, G44–G46, G48–G52 resolved; per-system ratings updated to Phase 4 projected values)*
