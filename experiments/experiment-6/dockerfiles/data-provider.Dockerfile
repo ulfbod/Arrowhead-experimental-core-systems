@@ -2,7 +2,7 @@
 # rest-authz proxies authorized requests to this service.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY experiments/experiment-6/services/data-provider/ ./experiments/experiment-6/services/data-provider/
 WORKDIR /src/experiments/experiment-6/services/data-provider

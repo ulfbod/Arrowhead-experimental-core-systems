@@ -2,7 +2,7 @@
 # HTTPS server + TLS Kafka consumer. Gets its own cert from the core CA.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY experiments/experiment-7/services/data-provider-tls/ ./experiments/experiment-7/services/data-provider-tls/
 WORKDIR /src/experiments/experiment-7/services/data-provider-tls

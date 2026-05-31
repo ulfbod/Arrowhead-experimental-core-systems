@@ -70,11 +70,12 @@ Ratings reflect all resolved steps through Step 32 (Phase 2 complete).
 
 | Gap | Description | PoC | Teaching | Prototyping | Production | Phase |
 |-----|-------------|-----|----------|-------------|------------|-------|
-| **G40** (QoS) | `qualityRequirements[]` filtering not implemented; requires G35 | None | Low | Medium | High | **3** |
-| **G23** (variants) | Token variants USAGE_LIMITED, JWT not implemented | None | Low | Medium | High | **3** |
+| **G10** | Registration identity not enforced from Bearer token | None | Low | Medium | **Blocker** | **3** |
+| **G23** (variants) | Token variants USAGE_LIMITED, BASE64_SELF_CONTAINED, JWT not implemented | None | Low | Medium | High | **3** |
 | **G34** | No MQTT/MQTTS communication profiles | Low | Medium | High | High | **3** |
 | **G35** | Device QoS Evaluator support system not implemented | None | Medium | Medium | High | **3** |
 | **G36** | Translation Manager support system not implemented | None | Low | Medium | High | **3** |
+| **G40** (QoS) | `qualityRequirements[]` filtering not implemented; requires G35 | None | Low | Medium | High | **3** |
 
 ---
 
@@ -125,7 +126,7 @@ Ratings reflect all resolved steps through Step 32 (Phase 2 complete).
 |-------|-------|-------|--------|
 | **Phase 1** | E1–E5 | Wire-compatibility: five gaps that break spec-compliant clients | **Complete** |
 | **Phase 2** | 27–32 | Functional completeness: access policy, Blacklist integration, pagination, bulk endpoints, push delivery | **Complete** |
-| **Phase 3** | 33+ | Advanced features: additional token types, QoS evaluation, support systems | Planned |
+| **Phase 3** | 33–39 | Advanced conformance: registration identity, token variants, QoS evaluation, support systems, MQTT | Planned |
 
 ### Phase 2 — Step breakdown
 
@@ -140,6 +141,22 @@ Ratings reflect all resolved steps through Step 32 (Phase 2 complete).
 
 See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan (Steps 27–32).
 
+### Phase 3 — Step breakdown
+
+**Order:** Step 33 (G10) is a Production blocker and should be done first. Steps 34 and 35 are independent of each other. Step 36 is blocked on Step 35 (G35). Steps 37 and 38 are independent of all others. Step 38 (MQTT) is the highest-effort item and should be done last. Step 39 is the documentation sweep.
+
+| Step | Gap(s) | Focus | Priority | Affects core-evol |
+|------|--------|-------|----------|-------------------|
+| 33 | G10 | Registration identity enforcement — `REGISTER_AUTH_URL` env var; system/service register verifies Bearer matches request `name` | **Blocker** (Production) | No |
+| 34 | G23 | Token variants — `USAGE_LIMITED_TOKEN` (counter-based) and `BASE64_SELF_CONTAINED` (HMAC-signed); JWT variants remain 501 | Medium (Prototyping) | No |
+| 35 | G35 | Device QoS Evaluator — new `core/cmd/deviceqoseval` binary; TCP RTT probe; measurement store; management query endpoint | Medium (Prototyping) | No |
+| 36 | G40 | QoS filtering — `qualityRequirements[]` in `OrchestrationRequest`; DynamicOrch calls QoS Evaluator and filters candidates | Medium (Prototyping) | No |
+| 37 | G36 | Translation Manager — new `core/cmd/translationmgr` binary; JSON field-remapping bridge; minimal management endpoints | Low (Research) | No |
+| 38 | G34 | MQTT profiles — MQTT listener alongside HTTP when `MQTT_BROKER_URL` set; register MQTT interfaces in SR | Low (Research) | Yes |
+| 39 | — | Phase 3 documentation update — CONFORMANCE.md, CONFORMANCE_UPDATE_PLAN.md, GAP_ANALYSIS.md, SPEC.md, EXAMPLES.md, README.md | — | — |
+
+See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan (Steps 33–39).
+
 ---
 
 ## Extensions beyond AH5 (not conformance gaps)
@@ -152,4 +169,4 @@ See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan (Steps 27�
 
 ---
 
-*Last updated: 2026-05-30 (Phase 2 complete — Steps 27–32; gaps G20, G26, G37, G38, G39, G42 resolved)*
+*Last updated: 2026-05-31 (Phase 3 plan added — Steps 33–39; G10 added to open gaps)*

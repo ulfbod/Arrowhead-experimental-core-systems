@@ -6,7 +6,7 @@
 # but the experiment ultimately uses topic-auth-http instead. The file is retained
 # for reference. topic-auth-sync is NOT wired into experiment-4/docker-compose.yml.
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY support/topic-auth-sync/ ./support/topic-auth-sync/
 WORKDIR /src/support/topic-auth-sync

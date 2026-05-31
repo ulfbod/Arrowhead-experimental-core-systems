@@ -5,7 +5,7 @@
 # Identity comes from RabbitMQ username = cert CN (ssl_cert_login plugin).
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /build
 COPY support/authzforce/ /build/support/authzforce/
 COPY experiments/experiment-14/services/topic-auth-xacml/ /build/experiments/experiment-14/services/topic-auth-xacml/

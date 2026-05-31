@@ -3,7 +3,7 @@
 # profile-ca events instead of manual HTTP registration.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /build
 # core-evol contains proto/certlifecycle generated Go code
 COPY core-evol/ /build/core-evol/

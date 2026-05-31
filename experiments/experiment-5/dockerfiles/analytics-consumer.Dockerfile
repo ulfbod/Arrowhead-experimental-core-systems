@@ -1,7 +1,7 @@
 # Builds the analytics-consumer service for experiment-5 (Kafka SSE path).
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY experiments/experiment-5/services/analytics-consumer/ ./experiments/experiment-5/services/analytics-consumer/
 WORKDIR /src/experiments/experiment-5/services/analytics-consumer

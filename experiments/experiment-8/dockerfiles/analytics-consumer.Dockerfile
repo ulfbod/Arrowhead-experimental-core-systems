@@ -2,7 +2,7 @@
 # Connects to kafka-authz SSE endpoint (HTTP).
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY experiments/experiment-5/services/analytics-consumer/ ./experiments/experiment-5/services/analytics-consumer/
 WORKDIR /src/experiments/experiment-5/services/analytics-consumer

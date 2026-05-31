@@ -2,7 +2,7 @@
 # UC3 Service Partner (SP1/SP2): polls portal-cloud-ml via pki-rest-authz mTLS.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /build/experiments/experiment-10/services/service-partner
 COPY experiments/experiment-10/services/service-partner/ .
 RUN go mod download && CGO_ENABLED=0 go build -o /app .

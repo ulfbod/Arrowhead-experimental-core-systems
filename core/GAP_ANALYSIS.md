@@ -17,8 +17,10 @@ Documentation sources (reviewed May 2026 — full site traversal):
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/general_management/
 
 **Implementation status (as of May 2026):** Phases 1 and 2 complete (Steps 1–32, E1–E5).
-Resolved gaps: G2, G3, G5, G7, G8, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G24, G25, G26, G27, G28, G29, G30, G37, G38, G39, G41, G42, G43 (+ G23 partial, G40 partial).
-Open gaps (Phase 3): G1, G4, G6, G9, G10, G23 (variants), G34, G35, G36, G40 (QoS filtering).
+Resolved: G2, G3, G5, G7, G8, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G24, G25, G26, G27, G28, G29, G30, G37, G38, G39, G41, G42, G43.
+Partial: G4 (mTLS experiment-7 only), G6 (optional coupling), G23 (TIME_LIMITED only), G40 (result fields only).
+Open (Phase 3): G10, G23 (variants), G34, G35, G36, G40 (QoS filtering).
+Design decisions (not conformance gaps): G1 (FlexibleStore — no spec), G9 (CA — intentional extension).
 
 ---
 
@@ -32,6 +34,8 @@ The AH5 documentation page for FlexibleStore Orchestration is marked "Coming soo
 - `metadataFilter` map on rules — a rule only matches when the request's metadata is a superset of the filter (see D3)
 
 The entire FlexibleStore system should be reviewed against official documentation once it is published.
+
+**Status:** Design decision — no official spec exists; not a conformance gap. Review when AH5 publishes the FlexibleStore specification.
 
 ---
 
@@ -71,6 +75,8 @@ only the Docker healthchecks and the one-shot seed container use plain HTTP. The
 plain HTTP (bootstrapping constraint: services must reach it to get their own certificates).
 See `experiments/experiment-7/DIAGRAMS.md` for full coverage details.
 
+**Status:** Partial — mTLS available in `core/` systems via `TLS_PORT`/`TLS_CERT_FILE`/`TLS_KEY_FILE`/`TLS_CA_FILE` env vars (experiment-7). CA remains plain HTTP (bootstrapping constraint). Full AH5 production mTLS across all systems is Phase 3 work.
+
 ---
 
 ### G5 — No persistence
@@ -91,6 +97,8 @@ Each system has a `sqlite.go` implementing its repository interface via `modernc
 The Authentication system issues identity tokens (who are you?). The ConsumerAuthorization system issues authorization tokens (are you allowed to call this service?). `POST /consumerauthorization/authorization/token/generate` does not require or validate a prior identity token from the Authentication system — these remain independent.
 
 However, DynamicOrchestration now connects the two when `ENABLE_IDENTITY_CHECK=true`: the identity token from the Authentication system is verified before the ConsumerAuthorization check, and the verified systemName from the token is used as the consumer identity. This partial coupling closes the impersonation gap (see D8). A5 covers remaining ambiguities about the full AH5 token-relay mechanism.
+
+**Status:** Partial — optional identity-to-authorization coupling via `ENABLE_IDENTITY_CHECK` (DynamicOrchestration only). Full AH5 token relay (ConsumerAuth requires prior Authentication token) is not enforced.
 
 ---
 
@@ -136,6 +144,8 @@ the server cannot derive the caller's name from a token.
 **Impact:** Any client can register or revoke under any name. This is acceptable for
 in-memory research use but must be resolved before any security-sensitive deployment.
 
+**Status:** Open (Phase 3) — G2 (credential verification) is resolved, but identity derivation from token on register/revoke paths is not yet enforced. Closing this gap requires wiring `ENABLE_IDENTITY_CHECK`-style verification into the ServiceRegistry registration handlers.
+
 ---
 
 ### G11 — System revoke derives identity from verified token
@@ -159,6 +169,8 @@ retained but still uses query-parameter identity.
 The `cmd/ca` binary and `internal/ca/` packages implement a Certificate Authority that issues and verifies X.509 ECDSA leaf certificates. This system has no counterpart in the AH5 specification; it was added for experiment-2 to support certificate-based system identity. All crypto uses Go stdlib only (`crypto/ecdsa`, `crypto/x509`, `encoding/pem`). All state is in-memory (G5 applies here too).
 
 The CA intentionally does not enforce mutual TLS — it provides certificates that *could* be used for mTLS, but the current HTTP transport remains plain (see G4). Connecting the CA to the Authentication system's credential verification is a possible future extension.
+
+**Status:** Design decision — intentional extension beyond AH5; not a conformance gap. CA is useful for experiments requiring X.509 identity but has no AH5 spec counterpart.
 
 ---
 
@@ -208,7 +220,7 @@ This implementation stores the version field as-is; empty string is preserved.
 
 ### G15 — HTTP method and response-field mismatches on Authentication and ConsumerAuthorization
 
-**Status: Partially resolved in Step 7 (Authentication endpoints)**
+**Status: Resolved in Steps 7 and 12** (Step 7: logout method, verify path param, login response fields; Step 12: verify response `expirationTime` and `sysop`; intentional deviation in ConsumerAuth verify response documented below)
 
 Several endpoints deviate from the AH5 wire protocol in HTTP method or response shape:
 
@@ -412,6 +424,8 @@ AH5 defines a push-style orchestration alongside pull:
 
 ### G27 — Lock management and orchestration history absent — **RESOLVED (Step 18)**
 
+**Status: Resolved in Step 18**
+
 ~~AH5 DynamicOrchestration exposes two management services with no implementation here.~~
 
 Implemented in Step 18:
@@ -488,6 +502,8 @@ This implementation registers all systems with `interfaces: ["HTTP-INSECURE-JSON
 
 **Fix:** Requires MQTT broker (e.g., Mosquitto), per-service topic routing, and request/response mapping. High effort. For research and teaching purposes, document the gap explicitly rather than leaving it implicit.
 
+**Status:** Open (Phase 3) — no MQTT broker integration implemented.
+
 ---
 
 ### G35 — Device QoS Evaluator support system not implemented
@@ -503,6 +519,8 @@ This support system has no implementation in this repository. It was first docum
 
 **Fix:** Implement as a new binary under `core/cmd/deviceqoseval`. At minimum: accept a measurement request (target host:port), perform a TCP RTT probe, store the result, and expose the management query endpoint.
 
+**Status:** Open (Phase 3) — support system not implemented. Required by G40 (QoS filtering).
+
 ---
 
 ### G36 — Translation Manager support system not implemented
@@ -516,6 +534,8 @@ AH5 defines a Translation Manager as a support system providing protocol and dat
 The Translation Manager is invoked by DynamicOrchestration when the `ALLOW_TRANSLATION` flag is set and no directly-compatible provider exists. This implementation accepts `ALLOW_TRANSLATION` but treats it as a no-op (G25 note).
 
 **Fix:** Implement as a new binary. For research use, a minimal translation bridge (e.g., JSON field remapping) is sufficient. Full protocol-level translation (HTTP ↔ MQTT) is a major effort.
+
+**Status:** Open (Phase 3) — support system not implemented. `ALLOW_TRANSLATION` flag is accepted but treated as no-op.
 
 ---
 
@@ -568,8 +588,7 @@ AH5 ConsumerAuthorization exposes `authorizationManagement` bulk endpoints under
 
 ### G40 — QoS requirements not supported in orchestration requests
 
-**Result-fields sub-gap: Resolved in Step E3** (see below).
-**QoS sub-gap: open** — `qualityRequirements[]` filtering requires G35 (Device QoS Evaluator).
+**Status:** Partially resolved — result fields resolved in Step E3 (see below); QoS filtering open (Phase 3, requires G35).
 
 AH5 `ServiceOrchestrationRequest` includes a `qualityRequirements[]` array. Each entry specifies quality dimensions that candidate providers must satisfy. The orchestrator is expected to call the Device QoS Evaluator (G35) to retrieve RTT/bandwidth metrics for each candidate and filter out providers that do not meet the requirements.
 

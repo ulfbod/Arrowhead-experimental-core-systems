@@ -1,7 +1,7 @@
 # Builds the PAP (Policy Administration Point) service for experiment-10.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /build/experiments/experiment-10/services/pap
 COPY support/ /build/support/
 COPY experiments/experiment-10/services/pap/ .

@@ -2,7 +2,7 @@
 # RabbitMQ HTTP auth backend backed by AuthzForce XACML.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY support/authzforce/ ./support/authzforce/
 COPY support/topic-auth-xacml/ ./support/topic-auth-xacml/

@@ -2,7 +2,7 @@
 # AMQP consumer using TLS (amqps://) with full AHC orchestration flow.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY support/message-broker/ ./support/message-broker/
 COPY experiments/experiment-7/services/consumer-direct-tls/ ./experiments/experiment-7/services/consumer-direct-tls/

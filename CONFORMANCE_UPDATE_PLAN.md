@@ -272,12 +272,12 @@ Target: ≥ 80% on both packages.
 
 ### Completion criteria
 
-- [ ] `TestLoginTokenIsUUIDv4` passes
-- [ ] `TestLoginTokensAreUnique` passes
-- [ ] `TestGenerateTokenIsUUIDv4` passes
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on modified packages
+- [x] `TestLoginTokenIsUUIDv4` passes
+- [x] `TestLoginTokensAreUnique` passes
+- [x] `TestGenerateTokenIsUUIDv4` passes
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on modified packages
 
 ---
 
@@ -502,13 +502,13 @@ Target: ≥ 80% on `ah5_memory.go`, `ah5_registry.go`, `ah5_handler.go`.
 
 ### Completion criteria
 
-- [ ] All TDD cycle tests pass
-- [ ] `go test -race ./...` passes
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
-- [ ] `AH5ServiceInstance.InstanceId` is composite string in all responses
-- [ ] Empty `version` normalises to `"1.0.0"` in service and system registration
-- [ ] Coverage ≥ 80% on modified packages
+- [x] All TDD cycle tests pass
+- [x] `go test -race ./...` passes
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
+- [x] `AH5ServiceInstance.InstanceId` is composite string in all responses
+- [x] Empty `version` normalises to `"1.0.0"` in service and system registration
+- [x] Coverage ≥ 80% on modified packages
 
 ---
 
@@ -744,12 +744,12 @@ Target: ≥ 80% on `ah5_registry.go`, `ah5_memory.go`, `ah5_handler.go`.
 
 ### Completion criteria
 
-- [ ] All TDD cycle tests pass
-- [ ] `go test -race ./...` passes
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
-- [ ] E2E test covers 423 case
-- [ ] Coverage ≥ 80% on modified packages
+- [x] All TDD cycle tests pass
+- [x] `go test -race ./...` passes
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
+- [x] E2E test covers 423 case
+- [x] Coverage ≥ 80% on modified packages
 
 ---
 
@@ -923,12 +923,12 @@ Target: ≥ 80% on `validate.go` and `ah5_handler.go`.
 
 ### Completion criteria
 
-- [ ] All existing tests still pass after test-data rename
-- [ ] All TDD cycle tests for validation pass
-- [ ] `go test -race ./...` passes
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on modified packages
+- [x] All existing tests still pass after test-data rename
+- [x] All TDD cycle tests for validation pass
+- [x] `go test -race ./...` passes
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on modified packages
 
 ---
 
@@ -1106,11 +1106,11 @@ Target: ≥ 80% on `ah5_types.go` and `ah5_registry.go`.
 
 ### Completion criteria
 
-- [ ] All 8 TDD cycle tests pass
-- [ ] `go test -race ./...` passes
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on modified packages
+- [x] All 8 TDD cycle tests pass
+- [x] `go test -race ./...` passes
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on modified packages
 
 ---
 
@@ -1233,14 +1233,14 @@ Target: ≥ 80%.
 
 ### Completion criteria
 
-- [ ] `GET /authorization/grant` returns 404
-- [ ] `GET /consumerauthorization/authorization/grant` returns 201
-- [ ] E2E test passes with new path
-- [ ] All experiment test-system.sh pass
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
-- [ ] `core/SPEC.md` updated with new paths
-- [ ] Coverage ≥ 80% on modified packages
+- [x] `GET /authorization/grant` returns 404
+- [x] `GET /consumerauthorization/authorization/grant` returns 201
+- [x] E2E test passes with new path
+- [x] All experiment test-system.sh pass
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
+- [x] `core/SPEC.md` updated with new paths
+- [x] Coverage ≥ 80% on modified packages
 
 ---
 
@@ -1387,16 +1387,16 @@ Target: ≥ 80%.
 
 ### Completion criteria
 
-- [ ] All TDD cycle tests pass
-- [ ] Login response has `expirationTime`, not `expiresAt`
-- [ ] Logout rejects DELETE, accepts POST
-- [ ] Verify accepts path parameter
-- [ ] Verify response has `verified`, not `valid`
-- [ ] All experiment services updated
-- [ ] All experiment test-system.sh pass
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80%
+- [x] All TDD cycle tests pass
+- [x] Login response has `expirationTime`, not `expiresAt`
+- [x] Logout rejects DELETE, accepts POST
+- [x] Verify accepts path parameter
+- [x] Verify response has `verified`, not `valid`
+- [x] All experiment services updated
+- [x] All experiment test-system.sh pass
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80%
 
 ---
 
@@ -1501,14 +1501,14 @@ Target: ≥ 80%.
 
 ### Completion criteria
 
-- [ ] `/serviceorchestration/orchestration/pull` accepted by all three orchestrators
-- [ ] Old paths return 404
-- [ ] `orchestrationFlags` parsed without error; MATCHMAKING and ONLY_PREFERRED functional
-- [ ] core-evol `dynamicorch-xacml` updated to new path
-- [ ] All experiment test-system.sh pass
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80%
+- [x] `/serviceorchestration/orchestration/pull` accepted by all three orchestrators
+- [x] Old paths return 404
+- [x] `orchestrationFlags` parsed without error; MATCHMAKING and ONLY_PREFERRED functional
+- [x] core-evol `dynamicorch-xacml` updated to new path
+- [x] All experiment test-system.sh pass
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80%
 
 ---
 
@@ -1710,16 +1710,16 @@ Target: ≥ 80% across all packages.
 
 ### Completion criteria
 
-- [ ] Interface extraction leaves all existing tests green (Step 9A)
-- [ ] All six SQLite implementations compile and pass their TDD tests
-- [ ] `DB_PATH=:memory:` mode produces identical test results to in-memory
-- [ ] Restart test: services persisted before restart are visible after restart
-- [ ] File-delete test: empty database after file removed
-- [ ] `docker compose down -v` gives clean slate (verified manually)
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
-- [ ] All experiment test-system.sh pass
-- [ ] Coverage ≥ 80% across all packages
+- [x] Interface extraction leaves all existing tests green (Step 9A)
+- [x] All six SQLite implementations compile and pass their TDD tests
+- [x] `DB_PATH=:memory:` mode produces identical test results to in-memory
+- [x] Restart test: services persisted before restart are visible after restart
+- [x] File-delete test: empty database after file removed
+- [x] `docker compose down -v` gives clean slate (verified manually)
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
+- [x] All experiment test-system.sh pass
+- [x] Coverage ≥ 80% across all packages
 
 ---
 
@@ -2104,12 +2104,12 @@ No Docker needed. No experiment code changes.
 
 ### Completion criteria
 
-- [ ] `ErrorResponse` type is defined with all `ErrorType` constants
-- [ ] `WriteErrorResponse` helper sets `Content-Type: application/json`
-- [ ] Every handler test that previously tested an error response now also asserts `exceptionType` field
-- [ ] No handler uses `http.Error` or `fmt.Fprintf(w, ...)` for error responses
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
+- [x] `ErrorResponse` type is defined with all `ErrorType` constants
+- [x] `WriteErrorResponse` helper sets `Content-Type: application/json`
+- [x] Every handler test that previously tested an error response now also asserts `exceptionType` field
+- [x] No handler uses `http.Error` or `fmt.Fprintf(w, ...)` for error responses
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
 
 ---
 
@@ -2376,12 +2376,12 @@ No Docker needed.
 
 ### Completion criteria
 
-- [ ] `Paginate[T]` passes all six unit tests
-- [ ] All AH5 ServiceRegistry query handlers accept `pagination` object and return `totalCount`
-- [ ] Requests without `pagination` field return the full collection (backward-compatible)
-- [ ] `count` = page size; `totalCount` = full matching set size
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
+- [x] `Paginate[T]` passes all six unit tests
+- [x] All AH5 ServiceRegistry query handlers accept `pagination` object and return `totalCount`
+- [x] Requests without `pagination` field return the full collection (backward-compatible)
+- [x] `count` = page size; `totalCount` = full matching set size
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
 
 ---
 
@@ -2551,11 +2551,11 @@ should be checked (grep `expiresAt\|expirationTime` in experiment Go files).
 
 ### Completion criteria
 
-- [ ] Verify response contains `expirationTime` (RFC3339) and `sysop: false`
-- [ ] Cleanup goroutine calls `DeleteExpired` on the configured interval
-- [ ] `POST /authentication/identity/change` returns 200 for a live-session system, 401 otherwise
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
+- [x] Verify response contains `expirationTime` (RFC3339) and `sysop: false`
+- [x] Cleanup goroutine calls `DeleteExpired` on the configured interval
+- [x] `POST /authentication/identity/change` returns 200 for a live-session system, 401 otherwise
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
 
 ---
 
@@ -2905,16 +2905,16 @@ bash experiments/experiment-14/test-system.sh
 
 ### Completion criteria
 
-- [ ] All six mgmt endpoints respond correctly with correct response field names (`identities`, `sessions`)
-- [ ] Login rejects unknown systemNames with 401
-- [ ] Login rejects wrong passwords with 401
-- [ ] Login succeeds with correct bcrypt-matched credentials
-- [ ] Sysop bootstrap identity is created on empty-store startup
-- [ ] `sysop` field in verify response reflects the identity record
-- [ ] SQLite identity table is created and used when `DB_PATH` is set
-- [ ] Seed containers in all affected experiments updated
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
+- [x] All six mgmt endpoints respond correctly with correct response field names (`identities`, `sessions`)
+- [x] Login rejects unknown systemNames with 401
+- [x] Login rejects wrong passwords with 401
+- [x] Login succeeds with correct bcrypt-matched credentials
+- [x] Sysop bootstrap identity is created on empty-store startup
+- [x] `sysop` field in verify response reflects the identity record
+- [x] SQLite identity table is created and used when `DB_PATH` is set
+- [x] Seed containers in all affected experiments updated
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
 
 ---
 
@@ -3227,16 +3227,16 @@ bash experiments/experiment-14/test-system.sh
 
 ### Completion criteria
 
-- [ ] Grant response contains `instanceId` in composite format
-- [ ] Revoke accepts composite `instanceId` as path parameter (URL-encoded)
-- [ ] Lookup requires at least one filter; returns 400 otherwise
-- [ ] Verify returns plain JSON Boolean (no wrapper object)
-- [ ] All four management endpoints work with pagination
-- [ ] SQLite schema updated and tested
-- [ ] All experiment seed commands updated
-- [ ] Support module lookup parsers updated
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
+- [x] Grant response contains `instanceId` in composite format
+- [x] Revoke accepts composite `instanceId` as path parameter (URL-encoded)
+- [x] Lookup requires at least one filter; returns 400 otherwise
+- [x] Verify returns plain JSON Boolean (no wrapper object)
+- [x] All four management endpoints work with pagination
+- [x] SQLite schema updated and tested
+- [x] All experiment seed commands updated
+- [x] Support module lookup parsers updated
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
 
 ---
 
@@ -3455,13 +3455,13 @@ No Docker needed. No experiment code changes.
 
 ### Completion criteria
 
-- [ ] `TIME_LIMITED_TOKEN` generate returns `AuthorizationTokenDescriptor`
-- [ ] Verify returns correct `AuthorizationTokenVerifyResponse`
-- [ ] Non-TIME_LIMITED variants return 501 with structured `ErrorResponse`
-- [ ] Encryption-key register/remove endpoints respond correctly
-- [ ] Public-key returns 404
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
+- [x] `TIME_LIMITED_TOKEN` generate returns `AuthorizationTokenDescriptor`
+- [x] Verify returns correct `AuthorizationTokenVerifyResponse`
+- [x] Non-TIME_LIMITED variants return 501 with structured `ErrorResponse`
+- [x] Encryption-key register/remove endpoints respond correctly
+- [x] Public-key returns 404
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
 
 ---
 
@@ -3647,13 +3647,13 @@ services; verify by running Docker tests.
 
 ### Completion criteria
 
-- [ ] Structured `ServiceInterfaceRequest` accepted and stored correctly
-- [ ] Flat-string interface (backward compat) still accepted
-- [ ] `policy` field rejects unknown `SecurityPolicy` values with 400
-- [ ] ServiceLookupRequest with no filter fields returns 400
-- [ ] Mandatory template property check works when template is registered
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
+- [x] Structured `ServiceInterfaceRequest` accepted and stored correctly
+- [x] Flat-string interface (backward compat) still accepted
+- [x] `policy` field rejects unknown `SecurityPolicy` values with 400
+- [x] ServiceLookupRequest with no filter fields returns 400
+- [x] Mandatory template property check works when template is registered
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
 
 ---
 
@@ -3875,12 +3875,12 @@ bash experiments/experiment-14/test-system.sh
 
 ### Completion criteria
 
-- [ ] Both `serviceRequirement` and `requestedService` decode successfully to the same struct
-- [ ] Encoded response uses `results`, `serviceDefinitition`, `cloudIdentitifer` (spec typos)
-- [ ] DynamicOrch calls AH5 lookup endpoint; results are correctly mapped
-- [ ] All experiment consumer services parse the new field names
-- [ ] `go test -race ./...` from `core/` passes (all existing tests still pass)
-- [ ] `bash core/test-system.sh` passes
+- [x] Both `serviceRequirement` and `requestedService` decode successfully to the same struct
+- [x] Encoded response uses `results`, `serviceDefinitition`, `cloudIdentitifer` (spec typos)
+- [x] DynamicOrch calls AH5 lookup endpoint; results are correctly mapped
+- [x] All experiment consumer services parse the new field names
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `bash core/test-system.sh` passes
 
 ---
 
@@ -5397,16 +5397,16 @@ Target: ≥ 80% on every modified package.
 
 ### Completion criteria
 
-- [ ] `TestMgmtRequiresBearerWhenAuthURLSet` passes (one representative handler per system)
-- [ ] `TestMgmtOpenWhenAuthURLUnset` passes (default dev mode)
-- [ ] `TestMgmtAuthUnreachableReturns401` passes (fail-closed)
-- [ ] `TestMgmtValidSysopTokenSucceeds` passes
-- [ ] All existing management endpoint tests still pass with `MGMT_AUTH_URL` unset
-- [ ] `core-evol` mgmt routes return 401 without Bearer when `MGMT_AUTH_URL` set
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `cd core-evol && go test -race ./...` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on all modified packages
+- [x] `TestMgmtRequiresBearerWhenAuthURLSet` passes (one representative handler per system)
+- [x] `TestMgmtOpenWhenAuthURLUnset` passes (default dev mode)
+- [x] `TestMgmtAuthUnreachableReturns401` passes (fail-closed)
+- [x] `TestMgmtValidSysopTokenSucceeds` passes
+- [x] All existing management endpoint tests still pass with `MGMT_AUTH_URL` unset
+- [x] `core-evol` mgmt routes return 401 without Bearer when `MGMT_AUTH_URL` set
+- [x] `go test -race ./...` from `core/` passes
+- [x] `cd core-evol && go test -race ./...` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all modified packages
 
 ---
 
@@ -5493,19 +5493,19 @@ Target: ≥ 80% on every modified package.
 
 ### Completion criteria
 
-- [ ] `TestRegisterBlacklistedSystemReturns403` passes
-- [ ] `TestOrchestrationExcludesBlacklistedProvider` passes (DynamicOrch)
-- [ ] `TestSimpleStoreExcludesBlacklistedProvider` passes
-- [ ] `TestConsumerAuthGrantBlacklistedConsumerReturns403` passes
-- [ ] `TestConsumerAuthGrantBlacklistedProviderReturns403` passes
-- [ ] `TestConsumerAuthVerifyBlacklistedReturns403` passes
-- [ ] `TestBlacklistUnreachableFails closed` passes (returns 403/error when Blacklist down)
-- [ ] `TestBlacklistURLUnsetSkipsCheck` passes (no calls to Blacklist when env var unset)
-- [ ] core-evol: `TestXACMLOrchestratorExcludesBlacklistedProvider` passes
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `cd core-evol && go test -race ./...` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on all modified packages
+- [x] `TestRegisterBlacklistedSystemReturns403` passes
+- [x] `TestOrchestrationExcludesBlacklistedProvider` passes (DynamicOrch)
+- [x] `TestSimpleStoreExcludesBlacklistedProvider` passes
+- [x] `TestConsumerAuthGrantBlacklistedConsumerReturns403` passes
+- [x] `TestConsumerAuthGrantBlacklistedProviderReturns403` passes
+- [x] `TestConsumerAuthVerifyBlacklistedReturns403` passes
+- [x] `TestBlacklistUnreachableFails closed` passes (returns 403/error when Blacklist down)
+- [x] `TestBlacklistURLUnsetSkipsCheck` passes (no calls to Blacklist when env var unset)
+- [x] core-evol: `TestXACMLOrchestratorExcludesBlacklistedProvider` passes
+- [x] `go test -race ./...` from `core/` passes
+- [x] `cd core-evol && go test -race ./...` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all modified packages
 
 ---
 
@@ -5588,16 +5588,16 @@ Target: ≥ 80% on every modified package.
 
 ### Completion criteria
 
-- [ ] `TestPaginateHelper` covers page/size/direction/sortField combinations
-- [ ] `TestServiceListPaginationPage0Size10Returns10Of25` passes
-- [ ] `TestServiceListPaginationPage2Returns5Of25` passes
-- [ ] `TestServiceListNoPaginationReturnsAll` passes (backward-compatible)
-- [ ] `TestAuthIdentityQueryPagination` passes
-- [ ] At least one pagination test per system handler package
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `cd core-evol && go test -race ./...` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on all modified packages
+- [x] `TestPaginateHelper` covers page/size/direction/sortField combinations
+- [x] `TestServiceListPaginationPage0Size10Returns10Of25` passes
+- [x] `TestServiceListPaginationPage2Returns5Of25` passes
+- [x] `TestServiceListNoPaginationReturnsAll` passes (backward-compatible)
+- [x] `TestAuthIdentityQueryPagination` passes
+- [x] At least one pagination test per system handler package
+- [x] `go test -race ./...` from `core/` passes
+- [x] `cd core-evol && go test -race ./...` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all modified packages
 
 ---
 
@@ -5680,17 +5680,17 @@ Target: ≥ 80% on every modified package.
 
 ### Completion criteria
 
-- [ ] `TestBulkGrantPoliciesCreatesAll` passes
-- [ ] `TestBulkRevokePoliciesRemovesAll` passes
-- [ ] `TestQueryPoliciesWithFilters` passes
-- [ ] `TestCheckPoliciesMixedResult` passes
-- [ ] `TestBulkGenerateTokensReturnsTokenList` passes
-- [ ] `TestBulkRevokeTokensRevokesAll` passes
-- [ ] `TestQueryTokensWithPagination` passes
-- [ ] All existing single-item endpoint tests still pass (no regression)
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on all modified packages
+- [x] `TestBulkGrantPoliciesCreatesAll` passes
+- [x] `TestBulkRevokePoliciesRemovesAll` passes
+- [x] `TestQueryPoliciesWithFilters` passes
+- [x] `TestCheckPoliciesMixedResult` passes
+- [x] `TestBulkGenerateTokensReturnsTokenList` passes
+- [x] `TestBulkRevokeTokensRevokesAll` passes
+- [x] `TestQueryTokensWithPagination` passes
+- [x] All existing single-item endpoint tests still pass (no regression)
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all modified packages
 
 ---
 
@@ -5771,16 +5771,16 @@ Target: ≥ 80% on both service packages.
 
 ### Completion criteria
 
-- [ ] `TestPushTriggerDeliversToPushSubscriber` passes (real HTTP delivery via httptest.Server)
-- [ ] `TestPushDeliveryFailureRecordedInHistory` passes (unreachable subscriber → FAILED)
-- [ ] `TestPushDeliveryTimeoutRespected` passes (slow subscriber → FAILED before timeout+1s)
-- [ ] `TestPushTriggerDoesNotBlockHandler` passes (handler returns 200 before goroutines complete)
-- [ ] `TestSimpleStorePushDelivery` passes (same for SimpleStore)
-- [ ] core-evol: `TestXACMLOrchestratorPushDelivery` passes
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `cd core-evol && go test -race ./...` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on `orchestration/dynamic/service` and `orchestration/simplestore/service`
+- [x] `TestPushTriggerDeliversToPushSubscriber` passes (real HTTP delivery via httptest.Server)
+- [x] `TestPushDeliveryFailureRecordedInHistory` passes (unreachable subscriber → FAILED)
+- [x] `TestPushDeliveryTimeoutRespected` passes (slow subscriber → FAILED before timeout+1s)
+- [x] `TestPushTriggerDoesNotBlockHandler` passes (handler returns 200 before goroutines complete)
+- [x] `TestSimpleStorePushDelivery` passes (same for SimpleStore)
+- [x] core-evol: `TestXACMLOrchestratorPushDelivery` passes
+- [x] `go test -race ./...` from `core/` passes
+- [x] `cd core-evol && go test -race ./...` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on `orchestration/dynamic/service` and `orchestration/simplestore/service`
 
 ---
 
@@ -5845,15 +5845,15 @@ Gaps to update: G37, G42, G20, G38, G39, G26.
 
 ### Completion criteria
 
-- [ ] All six gaps (G37, G42, G20, G38, G39, G26) appear in the Resolved Gaps table in `CONFORMANCE.md`
-- [ ] None of the six gaps remain in the Open Gaps table in `CONFORMANCE.md`
-- [ ] Per-system ratings updated in `CONFORMANCE.md`
-- [ ] Phase Plan row for Phase 2 shows **Complete**
-- [ ] All Steps 27–31 completion criteria checkboxes are `[x]`
-- [ ] All new env vars documented in `core/SPEC.md` and `README.md`
-- [ ] All new endpoints documented in `core/SPEC.md`
-- [ ] `core/EXAMPLES.md` updated with at least one example per major new feature
-- [ ] `core/GAP_ANALYSIS.md` shows resolved status for G20, G26, G37, G38, G39, G42
+- [x] All six gaps (G37, G42, G20, G38, G39, G26) appear in the Resolved Gaps table in `CONFORMANCE.md`
+- [x] None of the six gaps remain in the Open Gaps table in `CONFORMANCE.md`
+- [x] Per-system ratings updated in `CONFORMANCE.md`
+- [x] Phase Plan row for Phase 2 shows **Complete**
+- [x] All Steps 27–31 completion criteria checkboxes are `[x]`
+- [x] All new env vars documented in `core/SPEC.md` and `README.md`
+- [x] All new endpoints documented in `core/SPEC.md`
+- [x] `core/EXAMPLES.md` updated with at least one example per major new feature
+- [x] `core/GAP_ANALYSIS.md` shows resolved status for G20, G26, G37, G38, G39, G42
 
 ---
 
@@ -5869,4 +5869,841 @@ Run after all Phase 2 steps are complete (Steps 27–31):
 | `bash core/test-system.sh` | All Phase 2 |
 | `cd core-evol && go build ./... && go test -race ./...` | 27, 28, 31 |
 | `go build ./...` (workspace root) | All Phase 2 |
+
+---
+
+---
+
+# Phase 3 — Advanced Conformance
+
+**Scope:** Steps 33–39. Addresses all remaining Phase 3 gaps from `CONFORMANCE.md`.
+**Order:** Step 33 is a Production blocker and must be done first. Steps 34 and 35 are independent of each other and of Step 33. Step 36 requires Step 35 (Device QoS Evaluator must exist before QoS filtering). Steps 37 and 38 are independent of all other steps. Step 38 is the highest-effort item; do it last. Step 39 is the documentation sweep after all implementation steps are complete.
+
+**TDD cycle and coverage standard** are the same as Phase 1 (see sections 2 and 3 above).
+
+---
+
+## Step 33 — Registration identity enforcement (G10)
+
+**Gap addressed:**
+- **G10** — `POST /serviceregistry/system-discovery/register` and
+  `POST /serviceregistry/service-discovery/register` derive the registrant name from the
+  request body. AH5 requires the name to be derived from the caller's verified identity
+  (Bearer token). Any caller can currently register under any name, making self-registration
+  unenforceable.
+
+**Why first:** Production blocker. All the authentication infrastructure needed (G2, G11,
+G37) is already in place. This is the final gap that must close before a deployment can
+enforce identity-based access.
+
+**Prerequisites:** Steps 13 (bcrypt credential verification) and 27 (management auth)
+complete. `MGMT_AUTH_URL` pattern established. Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/httputil/respond.go` — add
+  `VerifyTokenIdentity(r *http.Request, authURL, claimedName string) (bool, int)` helper:
+  extracts Bearer token, calls `GET <authURL>/authentication/identity/verify/<token>`,
+  asserts the returned `systemName` equals `claimedName`. Returns `(true, 0)` on match,
+  `(false, 401)` on missing token, `(false, 403)` on mismatch or non-sysop identity,
+  `(false, 401)` on network error (fail-closed).
+- `core/internal/api/ah5_handler.go` — call `httputil.VerifyTokenIdentity` at the top of
+  `handleSystemRegister` (check against request `name`) and `handleServiceRegister` (check
+  against `providerSystem.systemName`). Only active when `registerAuthURL` is non-empty.
+- `core/cmd/serviceregistry/main.go` — read `REGISTER_AUTH_URL`; pass to `NewAH5Handler`.
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `REGISTER_AUTH_URL` | *(unset)* | When set, system and service registration require `Authorization: Bearer <token>` whose verified `systemName` matches the `name`/`providerSystem.systemName` in the request body. Unset = open registration (development/PoC mode). Fail-closed: network error → 401. |
+
+---
+
+### TDD cycle 33.1 — Matching token identity allows registration
+
+**Test:** `TestRegisterSystemMatchingTokenIdentitySucceeds`
+
+Fake Authentication server returns `{"systemName": "SensorA", "verified": true}`.
+`POST /serviceregistry/system-discovery/register` with `"name": "SensorA"` and
+`Authorization: Bearer <valid-token>` and `registerAuthURL` set → assert 201.
+
+**Expected failure before implementation:** 201 without any token check.
+
+---
+
+### TDD cycle 33.2 — Mismatched identity returns 403
+
+**Test:** `TestRegisterSystemMismatchedIdentityReturns403`
+
+Fake Authentication server returns `{"systemName": "SensorA", "verified": true}`.
+Request body has `"name": "SensorB"` → assert 403.
+
+**Expected failure before implementation:** 201 (no name check).
+
+---
+
+### TDD cycle 33.3 — Missing Bearer returns 401
+
+**Test:** `TestRegisterSystemMissingBearerWithAuthURLReturns401`
+
+`REGISTER_AUTH_URL` set, no `Authorization` header → assert 401.
+
+---
+
+### TDD cycle 33.4 — Auth unreachable is fail-closed
+
+**Test:** `TestRegisterSystemAuthUnreachableReturns401`
+
+`REGISTER_AUTH_URL` points to a non-listening port → assert 401.
+
+---
+
+### TDD cycle 33.5 — No auth URL means open registration
+
+**Test:** `TestRegisterSystemNoAuthURLIsOpen`
+
+`REGISTER_AUTH_URL` unset, no token in request → assert 201 (dev-mode backward-compat).
+
+---
+
+### TDD cycle 33.6 — Service registration enforced identically
+
+**Test:** `TestRegisterServiceMatchingTokenIdentitySucceeds` and
+`TestRegisterServiceMismatchedIdentityReturns403`
+
+Same pattern as 33.1–33.2, applied to `handleServiceRegister` checking
+`providerSystem.systemName`.
+
+---
+
+### System test
+
+Start the full stack with `REGISTER_AUTH_URL=http://localhost:8081`. Log in as `SensorA`.
+Call `POST /serviceregistry/system-discovery/register` with `"name": "SensorA"` and
+the token → assert 201. Call again with `"name": "SensorB"` → assert 403. Call without
+any token → assert 401. Restart with `REGISTER_AUTH_URL` unset → assert 201 without
+any token (backward-compatible).
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out \
+  ./internal/httputil/... \
+  ./internal/api/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on every modified package.
+
+### Documentation updates (after Step 33)
+
+- `core/GAP_ANALYSIS.md` — mark G10 resolved; add implementation summary
+- `core/SPEC.md` — add `REGISTER_AUTH_URL` to ServiceRegistry configuration; document
+  identity enforcement on register endpoints
+- `README.md` — add `REGISTER_AUTH_URL` to Configuration table (ServiceRegistry)
+- `CONFORMANCE.md` — move G10 from Open → Resolved; update ServiceRegistry Behavior%
+
+### Completion criteria
+
+- [ ] `TestRegisterSystemMatchingTokenIdentitySucceeds` passes
+- [ ] `TestRegisterSystemMismatchedIdentityReturns403` passes
+- [ ] `TestRegisterSystemMissingBearerWithAuthURLReturns401` passes
+- [ ] `TestRegisterSystemAuthUnreachableReturns401` passes
+- [ ] `TestRegisterSystemNoAuthURLIsOpen` passes
+- [ ] `TestRegisterServiceMatchingTokenIdentitySucceeds` passes
+- [ ] `TestRegisterServiceMismatchedIdentityReturns403` passes
+- [ ] All existing ServiceRegistry handler tests still pass (no regression)
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 34 — Token variants (G23)
+
+**Gap addressed:**
+- **G23** — ConsumerAuthorization implements only `TIME_LIMITED_TOKEN`. The AH5 spec
+  defines five additional variants. This step implements two feasible variants:
+  `USAGE_LIMITED_TOKEN` (counter-based: each verify decrements a usage counter; token
+  expires when counter reaches zero) and `BASE64_SELF_CONTAINED` (HMAC-signed JSON
+  payload; verifiable without server state). JWT variants and `TRANSLATION_BRIDGE_TOKEN`
+  remain `501 Not Implemented`.
+
+**Why now:** Medium-priority for Prototyping. Independent of all other Phase 3 steps.
+Implementing two variants without external dependencies is achievable at low risk.
+
+**Prerequisites:** Step 15 complete (TIME_LIMITED_TOKEN and token endpoint scaffolding
+exist). Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/consumerauth/model/types.go` — add `MaxUsageCount int` to token storage
+  model; add `UsageCount int` field for tracking
+- `core/internal/consumerauth/repository/memory.go` — add `IncrementUsage(token string) (int, error)` and `GetToken(token string)` methods
+- `core/internal/consumerauth/repository/sqlite.go` — same, persisted
+- `core/internal/consumerauth/service/auth.go` — implement `GenerateUsageLimited`
+  (store token with `MaxUsageCount`, `UsageCount=0`); implement `VerifyUsageLimited`
+  (increment counter, reject if `UsageCount >= MaxUsageCount`); implement
+  `GenerateBase64SelfContained` (HMAC-SHA256 over JSON payload with `HMAC_SECRET` env
+  var); implement `VerifyBase64SelfContained` (decode and verify HMAC without any
+  repository lookup)
+- `core/internal/consumerauth/api/handler.go` — route `USAGE_LIMITED_TOKEN` and
+  `BASE64_SELF_CONTAINED` token types to new service methods; keep JWT variants as 501
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `HMAC_SECRET` | `arrowhead-default-secret` | 32-byte secret used to sign `BASE64_SELF_CONTAINED` tokens. Must be set to a strong random value in production. |
+
+---
+
+### TDD cycle 34.1 — USAGE_LIMITED token generated and counted
+
+**Test:** `TestUsageLimitedTokenGenerated`
+
+`POST /consumerauthorization/authorization-token/generate` with
+`"tokenType": "USAGE_LIMITED_TOKEN"`, `"maxUsageCount": 3` → assert 201, token returned.
+
+---
+
+### TDD cycle 34.2 — USAGE_LIMITED token decrements on verify
+
+**Test:** `TestUsageLimitedTokenDecrementsOnVerify`
+
+Generate a token with `maxUsageCount=3`. Call
+`GET /consumerauthorization/authorization-token/verify/<token>` three times → all return
+200. Fourth call → assert 403.
+
+**Expected failure before implementation:** Four calls all return 200 (no counter).
+
+---
+
+### TDD cycle 34.3 — Exhausted USAGE_LIMITED token is permanently invalid
+
+**Test:** `TestUsageLimitedTokenExpiredAfterMaxUsage`
+
+After the fourth (failing) verify call, attempt a fifth → assert 403 (not a transient error).
+
+---
+
+### TDD cycle 34.4 — BASE64_SELF_CONTAINED token generated
+
+**Test:** `TestBase64SelfContainedTokenGenerated`
+
+`POST .../generate` with `"tokenType": "BASE64_SELF_CONTAINED"` → assert 201, opaque
+base64 token returned.
+
+---
+
+### TDD cycle 34.5 — BASE64_SELF_CONTAINED token verifiable without stored state
+
+**Test:** `TestBase64SelfContainedTokenVerifiable`
+
+Generate a token, then call verify → assert 200. Restart the in-memory service (discard
+all stored tokens), call verify again → assert 200 (self-contained: no stored state needed).
+
+**Expected failure before implementation:** Second verify returns 404 (token not found in store).
+
+---
+
+### TDD cycle 34.6 — JWT variants still return 501
+
+**Test:** `TestJWTVariantReturns501` (regression guard)
+
+`POST .../generate` with `"tokenType": "RSA_SHA256_JSON_WEB_TOKEN"` → assert 501.
+Must still pass after implementing the two new variants.
+
+---
+
+### System test
+
+With the stack running, generate a `USAGE_LIMITED_TOKEN` with `maxUsageCount=2`. Call
+verify twice → both 200. Call a third time → 403. Generate a `BASE64_SELF_CONTAINED`
+token; call verify → 200.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out \
+  ./internal/consumerauth/model/... \
+  ./internal/consumerauth/repository/... \
+  ./internal/consumerauth/service/... \
+  ./internal/consumerauth/api/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on every modified package.
+
+### Documentation updates (after Step 34)
+
+- `core/GAP_ANALYSIS.md` — update G23 from partial to "Resolved for USAGE_LIMITED and BASE64_SELF_CONTAINED; JWT variants remain 501"
+- `core/SPEC.md` — document `maxUsageCount` field in generate request; document `HMAC_SECRET` env var; update token type table
+- `core/EXAMPLES.md` — add example: USAGE_LIMITED token generation and exhaustion
+- `CONFORMANCE.md` — update G23 open gap description; update ConsumerAuthorization ratings
+
+### Completion criteria
+
+- [ ] `TestUsageLimitedTokenGenerated` passes
+- [ ] `TestUsageLimitedTokenDecrementsOnVerify` passes
+- [ ] `TestUsageLimitedTokenExpiredAfterMaxUsage` passes
+- [ ] `TestBase64SelfContainedTokenGenerated` passes
+- [ ] `TestBase64SelfContainedTokenVerifiable` passes (both before and after in-memory reset)
+- [ ] `TestJWTVariantReturns501` still passes (regression guard)
+- [ ] All existing token endpoint tests still pass
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 35 — Device QoS Evaluator (G35)
+
+**Gap addressed:**
+- **G35** — AH5 defines a Device QoS Evaluator support system that measures RTT and
+  bandwidth to devices and services. DynamicOrchestration must call it when evaluating
+  `qualityRequirements[]` (G40). Without this binary, Step 36 cannot be implemented.
+
+**Why now:** Prerequisite for Step 36 (G40). The binary follows the same four-layer
+package structure as all other core systems, so it is low-risk to scaffold. The minimum
+viable implementation (TCP RTT probe + in-memory measurement store) is sufficient for
+Step 36.
+
+**Prerequisites:** Pre-flight check passes. `core/PATTERNS.md` read before starting.
+
+**New files (core/):**
+- `core/cmd/deviceqoseval/main.go` — wire handler, service, repository; read `PORT`
+  (default 8088) and `DB_PATH`
+- `core/internal/deviceqoseval/model/types.go` — `MeasurementRequest`, `MeasurementResult`,
+  `QoSRecord` types
+- `core/internal/deviceqoseval/repository/memory.go` — in-memory store of `QoSRecord`
+- `core/internal/deviceqoseval/repository/sqlite.go` — SQLite-backed store
+- `core/internal/deviceqoseval/service/evaluator.go` — `Measure(host, port string) QoSRecord`
+  (TCP RTT probe using `net.DialTimeout`); `Query(filter) []QoSRecord`
+- `core/internal/deviceqoseval/api/handler.go` — three endpoints (see below)
+
+**Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/deviceqosevaluator/quality-evaluation/measure` | Trigger TCP RTT probe to `host:port`; store and return `QoSRecord` |
+| `POST` | `/deviceqosevaluator/quality-evaluation/mgmt/query` | Query stored records with optional `host`, `port`, `from`, `to` filters; paginated |
+| `GET` | `/deviceqosevaluator/health` | Standard health endpoint |
+
+**`QoSRecord` fields:** `id` (UUID), `host`, `port`, `latencyMs` (int64), `measuredAt` (RFC3339), `reachable` (bool).
+
+---
+
+### TDD cycle 35.1 — Measure returns RTT for reachable host
+
+**Test:** `TestMeasureLocalhostReturnsPositiveLatency`
+
+Start a TCP listener on a random port. Call
+`POST /deviceqosevaluator/quality-evaluation/measure` with `{"host": "127.0.0.1", "port": "<port>"}` → assert 200, `latencyMs >= 0`, `reachable: true`.
+
+---
+
+### TDD cycle 35.2 — Measure marks unreachable host
+
+**Test:** `TestMeasureUnreachableHostReturnsRecord`
+
+Call measure with a port that has nothing listening (use a high random port) → assert 200,
+`reachable: false`, `latencyMs` is 0 or timeout value. (Not a 422 — the measurement
+itself succeeded; the target was unreachable.)
+
+**Expected failure before implementation:** 500 or panic on dial error.
+
+---
+
+### TDD cycle 35.3 — Mgmt query returns stored measurements
+
+**Test:** `TestMgmtQueryReturnsMeasurements`
+
+Trigger two measurements (one reachable, one not). Call
+`POST /deviceqosevaluator/quality-evaluation/mgmt/query` with empty body → assert both
+records returned.
+
+---
+
+### TDD cycle 35.4 — Mgmt query filters by host
+
+**Test:** `TestMgmtQueryFilterByHost`
+
+Trigger measurements for two different hosts. Query with `{"host": "<host1>"}` → assert
+only host1 records returned.
+
+---
+
+### System test
+
+Start the binary (`PORT=8088`). POST a measure to localhost:8080 (ServiceRegistry port)
+→ assert 200, positive latency, reachable. POST a measure to localhost:9999 (nothing
+listening) → assert reachable: false. Query mgmt → assert both records present.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out \
+  ./internal/deviceqoseval/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on every package under `internal/deviceqoseval/`.
+
+### Documentation updates (after Step 35)
+
+- `core/GAP_ANALYSIS.md` — mark G35 resolved; add implementation summary (TCP RTT probe, `QoSRecord`, endpoints)
+- `core/SPEC.md` — add Device QoS Evaluator section (port 8088, three endpoints, `QoSRecord` shape)
+- `README.md` — add Device QoS Evaluator to the systems table and Configuration section
+- `CONFORMANCE.md` — move G35 from Open → Resolved; note G40 is now unblocked
+
+### Completion criteria
+
+- [ ] `TestMeasureLocalhostReturnsPositiveLatency` passes
+- [ ] `TestMeasureUnreachableHostReturnsRecord` passes
+- [ ] `TestMgmtQueryReturnsMeasurements` passes
+- [ ] `TestMgmtQueryFilterByHost` passes
+- [ ] `go build ./cmd/deviceqoseval` succeeds
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on all `internal/deviceqoseval/` packages
+
+---
+
+## Step 36 — QoS filtering in orchestration (G40)
+
+**Gap addressed:**
+- **G40** — `OrchestrationRequest` has no `qualityRequirements[]` field.
+  DynamicOrchestration does not call the Device QoS Evaluator. This step adds the field,
+  defines the `QoSEvaluatorClient` interface, and filters orchestration candidates based
+  on their measured latency.
+
+**Why now:** Unblocked by Step 35 (Device QoS Evaluator binary exists). Step 36 is the
+payoff for Step 35.
+
+**Prerequisites:** Step 35 complete and passing. Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/orchestration/model/types.go` — add `QoSRequirement` struct
+  (`maxLatencyMs int64`) and `QualityRequirements []QoSRequirement` to `OrchestrationRequest`
+- `core/internal/orchestration/dynamic/client/qoseval.go` (new file) — define
+  `QoSEvaluatorClient` interface with
+  `Measure(ctx context.Context, host, port string) (latencyMs int64, reachable bool, err error)`;
+  provide `HTTPQoSEvaluatorClient` implementation (calls `POST /deviceqosevaluator/quality-evaluation/measure`)
+- `core/internal/orchestration/dynamic/service/orchestrator.go` — after SR lookup, for each
+  candidate: if `QualityRequirements` is non-empty and `QOS_EVALUATOR_URL` is set, call
+  `QoSEvaluatorClient.Measure`; exclude candidates where `latencyMs > maxLatencyMs` or
+  `reachable == false`. Fail-open: if evaluator is unreachable, include the candidate
+  (quality is additive, not a security gate)
+- `core/cmd/dynamicorch/main.go` — read `QOS_EVALUATOR_URL`; construct and inject
+  `HTTPQoSEvaluatorClient` (nil when unset → no filtering)
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `QOS_EVALUATOR_URL` | *(unset)* | When set, DynamicOrchestration measures each candidate's latency and filters by `qualityRequirements[].maxLatencyMs`. Unset = no QoS filtering. Fail-open: unreachable evaluator → candidate included. |
+
+---
+
+### TDD cycle 36.1 — Fast provider passes QoS filter
+
+**Test:** `TestQoSFilterPassesFastProvider`
+
+Two fake providers in SR response. Fake QoS evaluator returns 5ms for provider A, 300ms
+for provider B. Request has `qualityRequirements: [{"maxLatencyMs": 50}]` → assert only
+provider A in result.
+
+**Expected failure before implementation:** both providers returned (no filtering).
+
+---
+
+### TDD cycle 36.2 — No requirements passes all providers
+
+**Test:** `TestQoSFilterNoRequirementsPassesAll`
+
+Request has empty `qualityRequirements` → all providers returned regardless of latency.
+This is the backward-compatible regression guard — must pass before and after implementation.
+
+---
+
+### TDD cycle 36.3 — Evaluator unreachable is fail-open
+
+**Test:** `TestQoSEvaluatorUnreachablePassesCandidate`
+
+`QOS_EVALUATOR_URL` set to non-listening address. Request has `qualityRequirements` →
+assert all candidates included (fail-open). This distinguishes QoS (additive quality
+gate) from auth (security gate, which is fail-closed).
+
+---
+
+### TDD cycle 36.4 — Unreachable provider excluded
+
+**Test:** `TestQoSFilterExcludesUnreachableProvider`
+
+Fake QoS evaluator returns `reachable: false` for provider B. Request has
+`qualityRequirements: [{"maxLatencyMs": 100}]` → assert provider B excluded even though
+its measured latency would be within the threshold.
+
+---
+
+### System test
+
+Start the full stack with `QOS_EVALUATOR_URL=http://localhost:8088`. Register two
+providers. Trigger a QoS measurement for each (one fast, one slow or unreachable). Call
+orchestration with `qualityRequirements: [{"maxLatencyMs": 50}]` → assert only the fast
+provider is returned.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out \
+  ./internal/orchestration/model/... \
+  ./internal/orchestration/dynamic/client/... \
+  ./internal/orchestration/dynamic/service/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on every modified package.
+
+### Documentation updates (after Step 36)
+
+- `core/GAP_ANALYSIS.md` — mark G40 fully resolved; add implementation summary
+- `core/SPEC.md` — add `qualityRequirements[]` to OrchestrationRequest; add `QOS_EVALUATOR_URL` to DynamicOrchestration configuration; document fail-open semantics
+- `core/EXAMPLES.md` — add example: orchestration request with `qualityRequirements` and filtered result
+- `CONFORMANCE.md` — move G40 (QoS filtering) from Open → Resolved; update DynamicOrchestration ratings
+
+### Completion criteria
+
+- [ ] `TestQoSFilterPassesFastProvider` passes
+- [ ] `TestQoSFilterNoRequirementsPassesAll` passes (backward-compatible regression guard)
+- [ ] `TestQoSEvaluatorUnreachablePassesCandidate` passes
+- [ ] `TestQoSFilterExcludesUnreachableProvider` passes
+- [ ] All existing DynamicOrchestration tests still pass
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 37 — Translation Manager (G36)
+
+**Gap addressed:**
+- **G36** — AH5 defines a Translation Manager support system for protocol and data model
+  translation. DynamicOrchestration accepts `ALLOW_TRANSLATION` but treats it as a no-op.
+  This step implements a minimal Translation Manager with JSON field-remapping bridges.
+
+**Why now:** Low-priority for Research. Independent of all other Phase 3 steps. A minimal
+implementation enables `ALLOW_TRANSLATION` to become functional.
+
+**Prerequisites:** Pre-flight check passes. `core/PATTERNS.md` read before starting.
+
+**New files (core/):**
+- `core/cmd/translationmgr/main.go` — wire handler, service, repository; read `PORT`
+  (default 8089) and `DB_PATH`
+- `core/internal/translationmgr/model/types.go` — `Bridge` (id, sourceFormat, targetFormat,
+  fieldMappings `map[string]string`, active bool), `TranslateRequest`, `TranslateResponse`
+- `core/internal/translationmgr/repository/memory.go`
+- `core/internal/translationmgr/repository/sqlite.go`
+- `core/internal/translationmgr/service/translator.go` — `Translate(bridgeId, payload)`:
+  unmarshal JSON, apply `fieldMappings` (rename keys), marshal result; `CRUD` for bridges
+- `core/internal/translationmgr/api/handler.go`
+
+**Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/translationmanager/translation/translate` | Translate payload using named bridge |
+| `GET` | `/translationmanager/translation/status/{bridgeId}` | Inspect bridge status |
+| `POST` | `/translationmanager/translation/mgmt/bridges` | Create bridge configuration |
+| `GET` | `/translationmanager/translation/mgmt/bridges` | List all bridges (paginated) |
+| `DELETE` | `/translationmanager/translation/mgmt/bridges/{id}` | Delete bridge |
+| `GET` | `/translationmanager/health` | Standard health endpoint |
+
+**DynamicOrchestration change (core/):**
+- `core/internal/orchestration/dynamic/client/translationmgr.go` (new) — define
+  `TranslationClient` interface; `HTTPTranslationClient` implementation
+- `core/internal/orchestration/dynamic/service/orchestrator.go` — when `ALLOW_TRANSLATION`
+  flag is true and `TRANSLATION_MGR_URL` is set and no compatible direct provider exists:
+  attempt translation via `TranslationClient`; include translated providers in result
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRANSLATION_MGR_URL` | *(unset)* | When set and `ALLOW_TRANSLATION` flag is true, DynamicOrch attempts protocol translation for incompatible providers. Unset = ALLOW_TRANSLATION is a no-op. |
+
+---
+
+### TDD cycle 37.1 — Bridge created and translate invoked
+
+**Test:** `TestCreateBridgeAndTranslate`
+
+Create a bridge with `fieldMappings: {"temperature": "temp_celsius"}`. POST a payload
+`{"temperature": 22.5}` to translate endpoint with that bridgeId → assert response
+contains `{"temp_celsius": 22.5}` and original key absent.
+
+---
+
+### TDD cycle 37.2 — Unknown bridge returns 404
+
+**Test:** `TestTranslateUnknownBridgeReturns404`
+
+`POST /translationmanager/translation/translate` with unknown `bridgeId` → assert 404.
+
+---
+
+### TDD cycle 37.3 — Bridge CRUD
+
+**Test:** `TestBridgeCRUD`
+
+Create → list (appears) → delete → list (absent). Assert 404 on translate after deletion.
+
+---
+
+### TDD cycle 37.4 — DynamicOrch uses translation when ALLOW_TRANSLATION set
+
+**Test:** `TestOrchestrationWithAllowTranslationUsesTranslationMgr`
+
+SR returns one provider with interface `HTTP-SECURE-JSON`. Request has interface
+`HTTP-INSECURE-JSON` and `ALLOW_TRANSLATION: true`. Fake translation manager returns a
+translated provider. Assert translated provider in orchestration result.
+
+**Expected failure before implementation:** Empty result (no compatible provider, translation not attempted).
+
+---
+
+### System test
+
+Start Translation Manager (`PORT=8089`). Create a field-mapping bridge. Call translate
+with a JSON payload — assert renamed fields. Start DynamicOrchestration with
+`TRANSLATION_MGR_URL=http://localhost:8089`. Submit an orchestration request with
+`ALLOW_TRANSLATION: true` and a provider with a different interface — assert result
+contains the translated provider.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out \
+  ./internal/translationmgr/... \
+  ./internal/orchestration/dynamic/client/... \
+  ./internal/orchestration/dynamic/service/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on every modified package.
+
+### Documentation updates (after Step 37)
+
+- `core/GAP_ANALYSIS.md` — mark G36 resolved; add implementation summary
+- `core/SPEC.md` — add Translation Manager section (port 8089, endpoints, Bridge shape); add `TRANSLATION_MGR_URL` to DynamicOrchestration configuration; update `ALLOW_TRANSLATION` from no-op to functional
+- `README.md` — add Translation Manager to systems table and Configuration section
+- `CONFORMANCE.md` — move G36 from Open → Resolved; update DynamicOrchestration ratings
+
+### Completion criteria
+
+- [ ] `TestCreateBridgeAndTranslate` passes
+- [ ] `TestTranslateUnknownBridgeReturns404` passes
+- [ ] `TestBridgeCRUD` passes
+- [ ] `TestOrchestrationWithAllowTranslationUsesTranslationMgr` passes
+- [ ] All existing DynamicOrchestration tests still pass
+- [ ] `go build ./cmd/translationmgr` succeeds
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 38 — MQTT communication profiles (G34)
+
+**Gap addressed:**
+- **G34** — All systems register with `interfaces: ["HTTP-INSECURE-JSON"]` only. AH5
+  requires `generic_mqtt` and `generic_mqtts` profiles. This step adds an MQTT listener
+  alongside the existing HTTP listener when `MQTT_BROKER_URL` is configured, and registers
+  the corresponding interface in ServiceRegistry.
+
+**Why last:** Highest-effort item. Requires a running MQTT broker (e.g., Mosquitto),
+per-topic routing, request/response correlation (MQTT is message-oriented, not
+request-response), and JSON payload mapping. Cross-cutting: affects all eight systems.
+For research/teaching purposes this step is scoped to the minimum viable MQTT surface.
+
+**Prerequisites:** Steps 33–37 complete. A Mosquitto broker accessible at
+`MQTT_BROKER_URL`. Pre-flight check passes.
+
+**Scope (minimum viable):**
+Each system publishes its responses on a reply topic and subscribes to a request topic.
+Request correlation uses a `correlationId` field in the JSON payload. A request received
+on `ah5/<system>/request` is routed to the same handler logic as HTTP; the response is
+published to `ah5/<system>/reply/<correlationId>`.
+
+**Files to modify (core/):**
+- `core/internal/mqttutil/broker.go` (new package) — `MQTTAdapter` wraps an
+  `mqtt.Client`; `Subscribe(topic, handler)` and `Publish(topic, payload)` helpers;
+  uses `github.com/eclipse/paho.mqtt.golang`
+- Each `cmd/<system>/main.go` — read `MQTT_BROKER_URL`; if set, start `MQTTAdapter`
+  and register the system under `HTTP-INSECURE-JSON` and `MQTT-INSECURE-JSON` in SR
+- Each `internal/<system>/api/handler.go` — add `ServeHTTP`-compatible adapter for MQTT
+  messages (unmarshal request from payload, call existing service method, marshal response)
+
+**New environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `MQTT_BROKER_URL` | *(unset)* | MQTT broker address (e.g., `tcp://localhost:1883`). When set, each system starts an MQTT listener and registers `MQTT-INSECURE-JSON` interface. |
+| `MQTT_CLIENT_ID_PREFIX` | `arrowhead` | Prefix for MQTT client IDs (appended with system name). |
+
+---
+
+### TDD cycle 38.1 — MQTT adapter subscribes and publishes
+
+**Test:** `TestMQTTAdapterRoundTrip`
+
+Use an in-process MQTT broker mock (or `paho.mqtt.golang` with `NewClient` using
+`MemoryStore`). Subscribe to a topic, publish a message, assert the handler is called
+with the correct payload.
+
+---
+
+### TDD cycle 38.2 — System registers MQTT interface when broker set
+
+**Test:** `TestSystemRegistersMQTTInterfaceWhenBrokerSet`
+
+Start ServiceRegistry with `MQTT_BROKER_URL` pointing to a mock broker. Assert that the
+system's own SR registration includes `MQTT-INSECURE-JSON` in `interfaces`. When
+`MQTT_BROKER_URL` unset → `interfaces` contains only `HTTP-INSECURE-JSON`.
+
+---
+
+### TDD cycle 38.3 — Health endpoint reachable via MQTT
+
+**Test:** `TestHealthEndpointViaMQTT`
+
+Publish a health request to `ah5/serviceregistry/request` topic with
+`{"path": "/health", "correlationId": "abc"}`. Assert a response published to
+`ah5/serviceregistry/reply/abc` with `{"status": "UP"}`.
+
+---
+
+### System test
+
+Start a Mosquitto broker (`docker run eclipse-mosquitto`). Start all eight systems with
+`MQTT_BROKER_URL=tcp://localhost:1883`. Use an MQTT client (`mosquitto_pub`/`mosquitto_sub`)
+to send a health request to each system and assert a response is received on the reply
+topic. Verify HTTP endpoints are unaffected.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out \
+  ./internal/mqttutil/... \
+  ./internal/api/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/mqttutil/`. Handler packages: focus on the MQTT adapter path.
+
+### Documentation updates (after Step 38)
+
+- `core/GAP_ANALYSIS.md` — mark G34 resolved; add implementation summary (topic scheme, correlation, `MQTT_BROKER_URL`)
+- `core/SPEC.md` — add MQTT section: topic naming convention, correlation protocol, `MQTT_BROKER_URL` and `MQTT_CLIENT_ID_PREFIX` env vars; update interface registration
+- `README.md` — add `MQTT_BROKER_URL` and `MQTT_CLIENT_ID_PREFIX` to Configuration table (all systems)
+- `CONFORMANCE.md` — move G34 from Open → Resolved; update per-system ratings (Endpoint% gains for all systems)
+
+### Completion criteria
+
+- [ ] `TestMQTTAdapterRoundTrip` passes
+- [ ] `TestSystemRegistersMQTTInterfaceWhenBrokerSet` passes
+- [ ] `TestHealthEndpointViaMQTT` passes
+- [ ] All eight systems start successfully with `MQTT_BROKER_URL` set
+- [ ] All existing HTTP tests still pass (no regression from MQTT listener)
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes (broker started before test)
+- [ ] Coverage ≥ 80% on `internal/mqttutil/`
+
+---
+
+## Step 39 — Phase 3 documentation update
+
+**Purpose:** Ensures every authoritative document reflects the final implemented state of
+Phase 3. Apply after all Phase 3 implementation steps (33–38) are complete and passing.
+
+**Prerequisites:** Steps 33–38 all complete and passing. Pre-flight check passes.
+
+### `core/GAP_ANALYSIS.md`
+
+For each resolved gap add (if not done per-step):
+- A `**Status: Resolved in Step N**` line at the top of its section
+- An implementation summary paragraph (env var(s), which files, key design decision)
+
+Gaps to update: G10, G23, G34, G35, G36, G40.
+
+### `CONFORMANCE.md`
+
+1. Move all six gaps (G10, G23, G34, G35, G36, G40) from **Open Gaps** table →
+   **Resolved Gaps** table with Step numbers 33–38.
+2. Update **Per-System Ratings** for all affected systems.
+3. Update Phase Plan: mark Phase 3 as **Complete**.
+4. Update **last updated** timestamp.
+
+### `CONFORMANCE_UPDATE_PLAN.md`
+
+1. Tick all completion criteria checkboxes in Steps 33–38.
+2. Add Phase 3 regression matrix (see below) as section 14.
+
+### `core/SPEC.md`
+
+- Add `REGISTER_AUTH_URL` to ServiceRegistry configuration
+- Add `HMAC_SECRET` to ConsumerAuthorization configuration
+- Add Device QoS Evaluator section (port 8088, three endpoints, `QoSRecord` shape)
+- Add `QOS_EVALUATOR_URL` to DynamicOrchestration configuration
+- Add `qualityRequirements[]` to `OrchestrationRequest`
+- Add Translation Manager section (port 8089, endpoints, Bridge shape)
+- Add `TRANSLATION_MGR_URL` and update `ALLOW_TRANSLATION` note in DynamicOrchestration
+- Add MQTT section (topic scheme, `MQTT_BROKER_URL`, `MQTT_CLIENT_ID_PREFIX`)
+
+### `core/EXAMPLES.md`
+
+- Add example: `USAGE_LIMITED_TOKEN` generation and exhaustion
+- Add example: orchestration request with `qualityRequirements` and filtered result
+- Add example: JSON field-remapping bridge translate request and response
+
+### `README.md`
+
+- Add `REGISTER_AUTH_URL` (ServiceRegistry)
+- Add `HMAC_SECRET` (ConsumerAuthorization)
+- Add Device QoS Evaluator and Translation Manager to systems table
+- Add `QOS_EVALUATOR_URL` (DynamicOrchestration)
+- Add `TRANSLATION_MGR_URL` (DynamicOrchestration)
+- Add `MQTT_BROKER_URL` and `MQTT_CLIENT_ID_PREFIX` (all systems)
+
+### Completion criteria
+
+- [ ] All six gaps (G10, G23, G34, G35, G36, G40) appear in the Resolved Gaps table in `CONFORMANCE.md`
+- [ ] None of the six gaps remain in the Open Gaps table in `CONFORMANCE.md`
+- [ ] Phase Plan row for Phase 3 shows **Complete**
+- [ ] All Steps 33–38 completion criteria checkboxes are `[x]`
+- [ ] All new env vars documented in `core/SPEC.md` and `README.md`
+- [ ] All new endpoints documented in `core/SPEC.md`
+- [ ] `core/EXAMPLES.md` updated with at least one example per major new feature
+- [ ] `core/GAP_ANALYSIS.md` shows resolved status for G10, G23, G34, G35, G36, G40
+
+---
+
+## 14. Phase 3 — Regression matrix
+
+Run after all Phase 3 steps are complete (Steps 33–38):
+
+| Check | Steps |
+|---|---|
+| `cd core && go build ./...` | All Phase 3 |
+| `cd core && go vet ./...` | All Phase 3 |
+| `cd core && go test -race ./...` | All Phase 3 |
+| `bash core/test-system.sh` | All Phase 3 |
+| `cd core-evol && go build ./... && go test -race ./...` | 38 |
+| `go build ./...` (workspace root) | All Phase 3 |
 

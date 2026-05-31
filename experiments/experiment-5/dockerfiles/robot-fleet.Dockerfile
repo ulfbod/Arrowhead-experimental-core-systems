@@ -1,7 +1,7 @@
 # Builds the robot-fleet service for experiment-5 (dual AMQP+Kafka publish).
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY support/message-broker/ ./support/message-broker/
 COPY experiments/experiment-5/services/robot-fleet/ ./experiments/experiment-5/services/robot-fleet/

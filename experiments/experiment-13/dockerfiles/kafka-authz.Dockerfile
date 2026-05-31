@@ -4,7 +4,7 @@
 # Identity comes from Kafka principal (cert CN — ssl.client.auth=required).
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /build
 COPY support/authzforce/ /build/support/authzforce/
 COPY experiments/experiment-13/services/kafka-authz/ /build/experiments/experiment-13/services/kafka-authz/

@@ -3,7 +3,7 @@
 # Reuses experiment-8 profile-ca source unchanged.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src/experiments/experiment-8/services/profile-ca
 COPY experiments/experiment-8/services/profile-ca/ .
 RUN go mod download && CGO_ENABLED=0 go build -o /app .

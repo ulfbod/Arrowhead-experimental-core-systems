@@ -3,7 +3,7 @@
 # Uses Arrowhead 5.2 PKI lifecycle for identity acquisition.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /build/experiments/experiment-8/services/pki-rest-authz
 COPY support/ /build/support/
 COPY experiments/experiment-8/services/pki-rest-authz/ .

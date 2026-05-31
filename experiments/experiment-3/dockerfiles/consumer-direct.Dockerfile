@@ -1,7 +1,7 @@
 # Builds the consumer-direct service.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY support/message-broker/ ./support/message-broker/
 COPY experiments/experiment-3/services/consumer-direct/ ./experiments/experiment-3/services/consumer-direct/

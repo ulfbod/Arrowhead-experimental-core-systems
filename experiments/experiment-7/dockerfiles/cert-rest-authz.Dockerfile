@@ -3,7 +3,7 @@
 # certificate CN instead of X-Consumer-Name header.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY support/authzforce/ ./support/authzforce/
 COPY experiments/experiment-7/services/cert-rest-authz/ ./experiments/experiment-7/services/cert-rest-authz/

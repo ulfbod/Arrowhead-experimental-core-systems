@@ -3056,6 +3056,246 @@ reader count leaks permanently — subsequent writers (`Lock()`) block forever, 
 
 ---
 
+## EXP-037 — core/ change applied without matching core-evol/ update; behaviour diverges at runtime (2026-05-29)
+
+### Symptom
+
+A conformance step is implemented in `core/` — all tests in `core/` pass and the
+conformance rating improves. The equivalent change is not applied to `core-evol/`.
+Experiments that use `dynamicorch-xacml` (from `core-evol/`) exhibit the old
+behaviour at runtime even though the `core/` binary is correct. The divergence is
+invisible to `go test ./...` because `core/` and `core-evol/` are separate modules
+with separate test suites.
+
+### Root Cause
+
+`core/` and `core-evol/` are separate Go modules with structurally similar
+orchestration code. There is no shared package between them and no CI check that
+requires both to be updated together. Any step that modifies orchestration logic,
+handler behaviour, request/response model fields, or general management in `core/`
+must be followed immediately by the equivalent change in `core-evol/`.
+
+### Fix
+
+For every conformance step that touches:
+- `core/internal/orchestration/` (any sub-package)
+- `core/internal/api/ah5_handler.go`
+- `core/internal/generalmgmt/`
+- Any request or response model in `core/internal/orchestration/model/`
+
+also apply the equivalent change to:
+- `core-evol/internal/orchestration/`
+- `core-evol/internal/orchestration/handler.go`
+- `core-evol/cmd/dynamicorch-xacml/main.go`
+
+and verify with:
+
+```bash
+cd core-evol && go build ./... && go test -race ./...
+```
+
+A step is not complete until both modules pass `go test -race ./...`.
+
+### Guidance for Future Iterations
+
+**Pre-flight rule:** Any step in `CONFORMANCE_UPDATE_PLAN.md` that modifies
+orchestration logic, handler behaviour, request/response model, or general
+management in `core/` is incomplete until the equivalent change is applied to
+`core-evol/`. Mark the step completion criteria as **not met** until both
+`cd core && go test -race ./...` and `cd core-evol && go test -race ./...` pass.
+
+**Detection:** `CONFORMANCE_UPDATE_PLAN.md` completion criteria for
+orchestration-touching steps always include a `cd core-evol && go test -race ./...`
+gate. If that gate is absent from a step, add it before starting implementation.
+
+**Canonical diff:** After finishing a `core/` change, run:
+```bash
+diff <(grep -r "OrchestrationResult\|orchestrationFlags\|CloudIdentifier" core/internal/orchestration/ | sort) \
+     <(grep -r "OrchestrationResult\|orchestrationFlags\|CloudIdentifier" core-evol/internal/orchestration/ | sort)
+```
+Any unexpected diff line is a missed sync point.
+
+---
+
+## EXP-038 — All experiment Dockerfiles fail to build after `go.mod` minimum raised to 1.25 (all experiments, 2026-05-31)
+
+### Symptom
+
+`docker compose up --build` fails during the Go build stage with:
+
+```
+go: go.mod requires go >= 1.25.0 (running go 1.22.12; GOTOOLCHAIN=local)
+```
+
+The error appears in every Dockerfile that uses `FROM golang:1.22-alpine AS builder`,
+even though `core.Dockerfile` (already updated to `golang:1.25-alpine`) builds
+successfully. Affected images include `profile-ca`, `pip`, `kafka-authz`,
+`dynamicorch-xacml`, `pap`, `robot-fleet-tls`, and all other Go service images.
+
+### Root Cause
+
+When a dependency with a high `go` directive is added to any module in the workspace
+(e.g. `modernc.org/sqlite` in `core/` and `core-evol/`), `go mod tidy` propagates the
+required minimum to all importing modules' `go.mod` files. All `go.mod` files across the
+workspace were raised to `go 1.25.0`. However, most experiment Dockerfiles were left
+pointing at `golang:1.22-alpine`. Docker images carry their own bundled Go toolchain and
+`GOTOOLCHAIN=local` prevents them from upgrading at runtime.
+
+EXP-033 documented that `core.Dockerfile` must be updated when `modernc.org/sqlite` is
+added; the dozens of service-specific Dockerfiles in each experiment were missed.
+
+### Fix
+
+Replace `golang:1.22-alpine` with `golang:1.25-alpine` in every `*.Dockerfile` under
+`experiments/`:
+
+```bash
+find experiments/ -name "*.Dockerfile" -exec grep -l "golang:1\.22-alpine" {} \; \
+  | xargs sed -i 's/golang:1\.22-alpine/golang:1.25-alpine/g'
+```
+
+122 Dockerfiles across experiments 2–14 were updated in a single pass.
+
+### Guidance for Future Iterations
+
+Whenever the minimum Go version in any workspace `go.mod` is raised, update **all**
+`*.Dockerfile` files across every experiment — not just `core.Dockerfile`. The guard
+from EXP-033 was necessary but not sufficient: every service-specific Dockerfile carries
+its own `FROM golang:X.Y-alpine` line and must be bumped in the same commit.
+
+**Detection command** — run after any `go mod tidy` that changes the `go` directive:
+
+```bash
+REQUIRED=$(grep "^go " core/go.mod | awk '{print $2}')
+grep -rn "golang:1\." experiments/*/dockerfiles/*.Dockerfile \
+  | grep -v "golang:${REQUIRED}-alpine"
+```
+
+Any output means a Dockerfile is below the required version and will fail to build.
+
+---
+
+## EXP-039 — Experiment Docker builds fail with "missing go.sum entry" after Go toolchain bump (all experiments, 2026-05-31)
+
+### Symptom
+
+`docker compose up --build` fails during the Go build stage immediately after the Go
+version in Dockerfiles is updated (e.g. from 1.22 to 1.25). The error is:
+
+```
+golang.org/x/net@v0.54.0: missing go.sum entry for go.mod file; to add it:
+  go mod download golang.org/x/net
+golang.org/x/sys@v0.45.0: missing go.sum entry for go.mod file; to add it:
+  go mod download golang.org/x/sys
+```
+
+The Dockerfiles now use the correct Go version (1.25) and `go.mod` is correct, but the
+build still fails inside the container.
+
+### Root Cause
+
+Go's module system records checksums for every dependency's source archive **and** for
+every dependency's `go.mod` file. The `go.sum` entries for `go.mod` files (the
+`/go.mod h1:…` lines) are determined by the graph of transitive dependencies, which can
+change between Go toolchain versions.
+
+When `go mod tidy` was last run with Go 1.22, it computed a dependency graph for that
+toolchain. Go 1.25 resolves the graph differently (e.g. `grpc@v1.64.0` pulls in
+`golang.org/x/net@v0.54.0` and `golang.org/x/sys@v0.45.0` whose `go.mod` checksums
+were not required under 1.22). The `go.sum` files committed to the repo did not include
+those checksums, so the build fails with "missing go.sum entry".
+
+This is a second-order effect of EXP-038: bumping the Dockerfile Go image is necessary
+but not sufficient — `go.sum` must also be regenerated with the new toolchain.
+
+### Fix
+
+Run `go mod tidy` in **every** module directory — including root-level modules `core/`
+and `core-evol/` — then sync the workspace:
+
+```bash
+# From repo root — tidy root-level modules
+go mod tidy -C core
+go mod tidy -C core-evol
+
+# Tidy every experiment module
+find experiments -name "go.mod" -printf "%h\n" | sort | while read dir; do
+  (cd "$dir" && go mod tidy)
+done
+
+# Tidy every support module
+find support -name "go.mod" -printf "%h\n" | sort | while read dir; do
+  (cd "$dir" && go mod tidy)
+done
+
+# Sync workspace-level sums
+go work sync
+```
+
+All modules were tidied. Their `go.sum` files gained the missing `/go.mod h1:` checksum
+lines for transitive dependencies (e.g. `golang.org/x/net v0.54.0/go.mod h1:…`).
+
+### Guidance for Future Iterations
+
+Whenever the Go toolchain version is raised in `go.mod` (or in any Dockerfile), run
+`go mod tidy` in **every module** in the repo — not just the one where the change was
+made. The single command above covers the full repo. Commit the resulting `go.sum`
+changes in the same commit as the `go.mod` and Dockerfile changes.
+
+**Three-step rule for a Go version bump:**
+1. Update `go` directive in all `go.mod` files (`go mod tidy` propagates it)
+2. Update `FROM golang:X.Y-alpine` in all `*.Dockerfile` files (EXP-038)
+3. Re-run `go mod tidy` in every module to regenerate `go.sum` for the new toolchain
+
+Missing any one of these three steps produces a Docker build failure.
+
+---
+
+## EXP-040 — `authz-pdp` Docker build fails with "missing go.sum entry" — EXP-039 fix was incomplete (experiment-13, 2026-05-31)
+
+### Symptom
+
+After applying the EXP-039 fix (running `go mod tidy` across `experiments/` and
+`support/`), `docker compose up --build` still fails for `authz-pdp`:
+
+```
+golang.org/x/net@v0.54.0: missing go.sum entry for go.mod file
+golang.org/x/sys@v0.45.0: missing go.sum entry for go.mod file
+```
+
+`authz-pdp` builds from `core-evol/` (the Dockerfile sets `WORKDIR /build/core-evol`
+and runs `go build ./cmd/authz-pdp`), so it uses `core-evol/go.sum`. That file had the
+source hashes (`h1:`) for each package but was missing the go.mod hashes (`/go.mod h1:`).
+
+### Root Cause
+
+The EXP-039 fix script only covered `find experiments -name "go.mod"` and
+`find support -name "go.mod"`. It did not tidy `core/` or `core-evol/`, which are
+root-level modules — not under `experiments/` or `support/`. Both root modules have
+the same issue: `go mod tidy` was last run with Go 1.22; the new 1.25 toolchain
+requires additional `/go.mod h1:` entries in `go.sum`.
+
+### Fix
+
+```bash
+go mod tidy -C core-evol
+go mod tidy -C core
+```
+
+`core-evol/go.sum` gained the two missing lines:
+```
+golang.org/x/net v0.54.0/go.mod h1:…
+golang.org/x/sys v0.45.0/go.mod h1:…
+```
+
+### Guidance for Future Iterations
+
+The EXP-039 fix script has been updated to include `core/` and `core-evol/` explicitly.
+The canonical tidy command for a Go version bump covers all four module groups:
+`core/`, `core-evol/`, `experiments/**/`, `support/**/`. See the updated EXP-039 fix.
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -3108,8 +3348,11 @@ Use this before marking an experiment implementation complete:
 - [ ] Never call `java -jar <fixed-path>` in a custom entrypoint for a third-party JVM image — inspect the image's native startup script first (`docker inspect` + `docker run --entrypoint cat`) to find the correct jar path (e.g. Kafdrop uses `/kafdrop*/kafdrop*jar` glob); delegate to the native script via `exec /kafdrop.sh` instead of reimplementing it (EXP-031)
 - [ ] Kafdrop mTLS config: (1) convert EC key from SEC1 to PKCS#8 with `openssl pkcs8 -topk8 -nocrypt` (Java rejects SEC1 with "algid parse error"); (2) pass SSL config via `KAFKA_PROPERTIES` base64 env var + `KAFKA_PROPERTIES_FILE` (decoded by `/kafdrop.sh` before Java starts); (3) use `file:///abs/path` prefix on `--kafka.properties.file` so Spring returns FileUrlResource not ClassPathResource; never pass SSL config as `--kafka.properties.<key>=<val>` CLI args (Spring binder loses dotted keys like `security.protocol`) (EXP-031)
 - [ ] After any core HTTP path rename, run `grep -rn "/<old-path>" support/` and update every matching `http.NewRequest` / `http.Post` call and test mock in `support/` — path strings are not type-checked and test mocks with the old path silently pass while runtime breaks (EXP-032)
+- [ ] Any conformance step that touches `core/internal/orchestration/`, `core/internal/api/ah5_handler.go`, `core/internal/generalmgmt/`, or any orchestration model field must be applied to `core-evol/` in the same commit — run `cd core-evol && go test -race ./...` before marking the step complete (EXP-037)
 - [ ] When `core/` changes the ConsumerAuth lookup endpoint method (GET→POST), path, required body, or response shape, update `support/policy-sync/sync.go` in lockstep: method, URL (`/mgmt/query` for no-filter fetch-all), type definitions, and WHITELIST expansion in `sync()`. Run `go test ./...` in `support/policy-sync` — the mock CA will catch method and shape mismatches immediately (EXP-036)
 - [ ] When adding a Go dependency that itself declares a high `go` directive in its own `go.mod` (e.g. `modernc.org/sqlite v1.50.1` requires `go 1.25.0`), update every `core.Dockerfile` that builds from that module — the Docker builder uses the image's bundled toolchain and `GOTOOLCHAIN=local` blocks builds on a lower version; bump `FROM golang:X.Y-alpine` to match the new minimum (EXP-033)
 - [ ] After any CA API change, run `grep -rn "consumerSystemName\|providerSystemName" experiments/` — the CA grant API uses a provider-centric WHITELIST model (`provider`/`targetType`/`target`/`defaultPolicy.policyList`) with ONE policy per `(provider, targetType, target)` triple; old per-consumer fields are silently rejected with 400. Also update grep success patterns from `"id":` to `"instanceId":` (EXP-034)
 - [ ] The `setup` container must depend on `authentication: condition: service_healthy` and register every non-Sysop system via `POST /authentication/mgmt/identities` before any downstream service starts. Missing registration causes 401 → `log.Fatalf` → crash loop → DOWN in the dashboard (EXP-035)
 - [ ] Handlers that dereference a lazily-initialised global (e.g. `fleet *Fleet` assigned only after all connections succeed) must nil-check it inside the `mu.RLock()` / `mu.Lock()` block — a nil method call panics before the deferred unlock, permanently leaking the lock and eventually deadlocking all later callers (EXP-035)
+- [ ] When the minimum Go version in any workspace `go.mod` is raised, update **all** `*.Dockerfile` files across all experiments — not just `core.Dockerfile`. Run `grep -rn "golang:1\." experiments/*/dockerfiles/*.Dockerfile | grep -v "golang:$(grep '^go ' core/go.mod | awk '{print $2}')-alpine"` to detect any Dockerfile below the required version. A single `find experiments/ -name "*.Dockerfile" | xargs sed -i 's/golang:OLD/golang:NEW/g'` fixes the whole repo in one pass (EXP-038)
+- [ ] After any Go toolchain version bump, re-run `go mod tidy` in **every** module — `core/`, `core-evol/`, all experiment services, all support packages — and then `go work sync`. Missing any module leaves its `go.sum` without the `/go.mod h1:` entries the new toolchain requires, causing Docker build failures. Commit all updated `go.sum` files together with the `go.mod` and Dockerfile changes (EXP-039, EXP-040)

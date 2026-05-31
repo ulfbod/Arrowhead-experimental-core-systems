@@ -3,7 +3,7 @@
 # via mTLS to cert-rest-authz, demonstrating certificate-based identity.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY experiments/experiment-7/services/cert-consumer/ ./experiments/experiment-7/services/cert-consumer/
 WORKDIR /src/experiments/experiment-7/services/cert-consumer

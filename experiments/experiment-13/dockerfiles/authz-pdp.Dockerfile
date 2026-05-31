@@ -2,7 +2,7 @@
 # Unchanged from experiment-12 — reuses core-evol/cmd/authz-pdp.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /build
 COPY support/authzforce/ /build/support/authzforce/
 COPY core-evol/ /build/core-evol/

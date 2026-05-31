@@ -1,7 +1,7 @@
 # Builds the kafka-authz service (Kafka SSE proxy with AuthzForce enforcement).
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY support/authzforce/ ./support/authzforce/
 COPY support/kafka-authz/ ./support/kafka-authz/

@@ -2,7 +2,7 @@
 # Unchanged from experiment-13 — reuses experiment-13 profile-ca source.
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /build
 # core-evol contains proto/certlifecycle generated Go code
 COPY core-evol/ /build/core-evol/

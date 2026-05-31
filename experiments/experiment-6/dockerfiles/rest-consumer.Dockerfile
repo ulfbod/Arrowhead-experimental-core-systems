@@ -1,7 +1,7 @@
 # Builds the rest-consumer service for experiment-6 (REST client via rest-authz PEP).
 # Build context: repo root (ArrowheadCore/)
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY experiments/experiment-6/services/rest-consumer/ ./experiments/experiment-6/services/rest-consumer/
 WORKDIR /src/experiments/experiment-6/services/rest-consumer
