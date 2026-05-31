@@ -755,3 +755,69 @@ func TestQoSFilterExcludesUnreachableProvider(t *testing.T) {
 		t.Errorf("unreachable provider should be excluded, got %d results", len(resp.Results))
 	}
 }
+
+// ---- Translation (G36) ----
+
+// mockTranslationClient records whether CanTranslate was called and returns a fixed answer.
+type mockTranslationClient struct {
+	called   bool
+	canXlate bool
+}
+
+func (m *mockTranslationClient) CanTranslate(_ context.Context, _, _ string) (bool, error) {
+	m.called = true
+	return m.canXlate, nil
+}
+
+func TestOrchestrationWithAllowTranslationUsesTranslationMgr(t *testing.T) {
+	// SR returns a provider with interface "HTTP" (not the requested "MQTT-JSON").
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+	ca := httptest.NewServer(http.HandlerFunc(caAlwaysAuthorized()))
+	defer ca.Close()
+
+	orch := newOrchestrator(sr.URL, ca.URL, false)
+
+	mock := &mockTranslationClient{canXlate: true}
+	orch.SetTranslationClient(mock)
+
+	req := validRequest()
+	req.OrchestrationFlags.AllowTranslation = true
+	// The fake SR returns providers with interface "HTTP"; request asks for "MQTT-JSON".
+	req.RequestedService.Interfaces = []string{"MQTT-JSON"}
+
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !mock.called {
+		t.Error("expected TranslationClient.CanTranslate to be called when ALLOW_TRANSLATION=true and interface mismatch")
+	}
+	// TranslationClient returned true → provider included despite interface mismatch.
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result (translation allowed), got %d", len(resp.Results))
+	}
+}
+
+func TestOrchestrationWithoutTranslationClientFiltersInterfaceMismatch(t *testing.T) {
+	// SR returns provider with interface "HTTP"; request asks for "MQTT-JSON" + ALLOW_TRANSLATION=true
+	// but no TranslationClient is set → flag is a no-op, providers are returned as-is.
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	// No SetTranslationClient call → translationClient is nil.
+
+	req := validRequest()
+	req.OrchestrationFlags.AllowTranslation = true
+	req.RequestedService.Interfaces = []string{"MQTT-JSON"}
+
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// No translationClient wired → interface filtering does not apply → providers pass through.
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result (no filter without translationClient), got %d", len(resp.Results))
+	}
+}

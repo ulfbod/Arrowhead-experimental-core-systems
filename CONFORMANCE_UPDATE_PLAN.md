@@ -6509,7 +6509,7 @@ Target: ≥ 80% on every modified package.
 - [x] `TestCreateBridgeAndTranslate` passes
 - [x] `TestTranslateUnknownBridgeReturns404` passes
 - [x] `TestBridgeCRUD` passes
-- [ ] `TestOrchestrationWithAllowTranslationUsesTranslationMgr` passes
+- [x] `TestOrchestrationWithAllowTranslationUsesTranslationMgr` passes
 - [x] All existing DynamicOrchestration tests still pass
 - [x] `go build ./cmd/translationmgr` succeeds
 - [x] `go test -race ./...` from `core/` passes
@@ -6620,7 +6620,7 @@ Target: ≥ 80% on `internal/mqttutil/`. Handler packages: focus on the MQTT ada
 - [x] `TestSystemRegistersMQTTInterfaceWhenBrokerSet` passes
 - [x] `TestHealthEndpointViaMQTT` passes
 - [ ] All eight systems start successfully with `MQTT_BROKER_URL` set
-- [ ] All existing HTTP tests still pass (no regression from MQTT listener)
+- [x] All existing HTTP tests still pass (no regression from MQTT listener)
 - [x] `go test -race ./...` from `core/` passes
 - [x] `bash core/test-system.sh` passes (broker started before test)
 - [x] Coverage ≥ 80% on `internal/mqttutil/`
@@ -6689,7 +6689,7 @@ Gaps to update: G10, G23, G34, G35, G36, G40.
 - [x] All Steps 33–38 completion criteria checkboxes are `[x]`
 - [x] All new env vars documented in `core/SPEC.md` and `README.md`
 - [x] All new endpoints documented in `core/SPEC.md`
-- [ ] `core/EXAMPLES.md` updated with at least one example per major new feature
+- [x] `core/EXAMPLES.md` updated with at least one example per major new feature
 - [x] `core/GAP_ANALYSIS.md` shows resolved status for G10, G23, G34, G35, G36, G40
 
 ---

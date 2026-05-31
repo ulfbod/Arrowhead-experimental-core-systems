@@ -31,15 +31,16 @@ var (
 
 // DynamicOrchestrator performs real-time orchestration.
 type DynamicOrchestrator struct {
-	srClient      client.ServiceRegistryClient
-	caClient      client.ConsumerAuthClient
-	idClient      client.IdentityClient // nil when checkIdentity=false
-	blClient      blclient.BlacklistClient
-	qosClient     client.QoSEvaluatorClient // nil → NopQoSClient (fail-open)
-	checkAuth     bool
-	checkIdentity bool
-	hist          *historyStore
-	pushClient    *http.Client // used for push notification delivery; nil → http.DefaultClient
+	srClient          client.ServiceRegistryClient
+	caClient          client.ConsumerAuthClient
+	idClient          client.IdentityClient // nil when checkIdentity=false
+	blClient          blclient.BlacklistClient
+	qosClient         client.QoSEvaluatorClient     // nil → NopQoSClient (fail-open)
+	translationClient client.TranslationClient      // nil → NopTranslationClient (ALLOW_TRANSLATION is no-op)
+	checkAuth         bool
+	checkIdentity     bool
+	hist              *historyStore
+	pushClient        *http.Client // used for push notification delivery; nil → http.DefaultClient
 }
 
 // NewDynamicOrchestratorWithClients creates a new orchestrator with injected interface
@@ -68,6 +69,13 @@ func NewDynamicOrchestratorWithClients(
 // SetQoSClient configures the QoS evaluator client used for latency-based filtering.
 // Pass client.NopQoSClient{} to disable QoS filtering (fail-open).
 func (o *DynamicOrchestrator) SetQoSClient(c client.QoSEvaluatorClient) { o.qosClient = c }
+
+// SetTranslationClient configures the Translation Manager client (G36).
+// When set and ALLOW_TRANSLATION flag is true, providers that fail interface matching
+// are re-evaluated via CanTranslate and included if translation is possible.
+func (o *DynamicOrchestrator) SetTranslationClient(c client.TranslationClient) {
+	o.translationClient = c
+}
 
 // SetPushClient configures the HTTP client used for push notification delivery.
 // Pass a client with the desired timeout (e.g. derived from PUSH_DELIVERY_TIMEOUT_SECONDS).
@@ -118,6 +126,18 @@ func (o *DynamicOrchestrator) deliverPush(sub Subscription, entryID string) {
 		return
 	}
 	o.hist.updateStatus(entryID, "DELIVERED")
+}
+
+// interfacesMatch returns true if any of the provider's interfaces appears in the requested list.
+func interfacesMatch(providerIfaces, requestedIfaces []string) bool {
+	for _, p := range providerIfaces {
+		for _, r := range requestedIfaces {
+			if p == r {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // extractNotifyURL returns the delivery URL from a notifyInterface map.
@@ -210,6 +230,35 @@ func (o *DynamicOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest, to
 	}
 	if results == nil {
 		results = []orchmodel.OrchestrationResult{}
+	}
+
+	// Step 4.3: Interface filtering with ALLOW_TRANSLATION support (G36).
+	// When the request specifies interfaces and ALLOW_TRANSLATION is true and a
+	// TranslationClient is configured, providers that fail interface matching are
+	// re-evaluated via CanTranslate. Fail-open: translation check error → include.
+	if len(req.RequestedService.Interfaces) > 0 && req.OrchestrationFlags.AllowTranslation && o.translationClient != nil {
+		tc := o.translationClient
+		filtered := make([]orchmodel.OrchestrationResult, 0, len(results))
+		for _, r := range results {
+			if interfacesMatch(r.Interfaces, req.RequestedService.Interfaces) {
+				filtered = append(filtered, r)
+				continue
+			}
+			// Interface mismatch — check if translation is possible.
+			canTranslate := false
+			for _, provIface := range r.Interfaces {
+				for _, reqIface := range req.RequestedService.Interfaces {
+					ok, err := tc.CanTranslate(ctx, provIface, reqIface)
+					if err == nil && ok {
+						canTranslate = true
+					}
+				}
+			}
+			if canTranslate {
+				filtered = append(filtered, r)
+			}
+		}
+		results = filtered
 	}
 
 	// Step 4.5: QoS filtering (G40). Applied only when qualityRequirements are specified.

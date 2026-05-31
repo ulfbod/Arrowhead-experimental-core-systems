@@ -319,3 +319,161 @@ Response includes:
   "count": 1
 }
 ```
+
+---
+
+## Example 10: USAGE_LIMITED token generation and exhaustion
+
+Generate a token with a fixed usage count:
+
+`POST /consumerauthorization/authorization-token/generate` (requires sysop Bearer):
+
+```json
+{
+  "tokenVariant": "USAGE_LIMITED_TOKEN",
+  "provider": "SensorProvider",
+  "targetType": "SERVICE_DEF",
+  "target": "temperatureService",
+  "consumer": "ConsumerApp",
+  "maxUsageCount": 2
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "tokenType": "USAGE_LIMITED_TOKEN",
+  "targetType": "SERVICE_DEF",
+  "token": "9f4e3b2a1d0c...",
+  "expiresAt": ""
+}
+```
+
+Verify the token (first call): `GET /consumerauthorization/authorization-token/verify/9f4e3b2a1d0c...` → `200 OK`
+
+Verify the token (second call): → `200 OK`
+
+Verify the token (third call — exhausted): → `403 Forbidden`
+
+---
+
+## Example 11: BASE64_SELF_CONTAINED token — self-verifiable without stored state
+
+Generate a self-contained token (no server state required for verification):
+
+`POST /consumerauthorization/authorization-token/generate` (requires sysop Bearer):
+
+```json
+{
+  "tokenVariant": "BASE64_SELF_CONTAINED",
+  "provider": "SensorProvider",
+  "targetType": "SERVICE_DEF",
+  "target": "temperatureService",
+  "consumer": "ConsumerApp"
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "tokenType": "BASE64_SELF_CONTAINED",
+  "targetType": "SERVICE_DEF",
+  "token": "eyJwcm92aWRlciI6Ii4uLiJ9.a3f9c2b1...",
+  "expiresAt": ""
+}
+```
+
+The token is a `<base64-payload>.<hex-hmac>` string. Verification decodes and checks the HMAC using `HMAC_SECRET`; no database lookup is needed. The token can be verified on any instance of ConsumerAuthorization sharing the same `HMAC_SECRET`.
+
+---
+
+## Example 12: Orchestration request with qualityRequirements
+
+Filter orchestration candidates by maximum acceptable latency:
+
+`POST /serviceorchestration/orchestration/pull` (or the AH5 path):
+
+```json
+{
+  "requesterSystem": { "systemName": "ConsumerApp", "address": "consumer-host", "port": 9090 },
+  "serviceRequirement": { "serviceDefinition": "temperature-service" },
+  "qualityRequirements": [
+    { "maxLatencyMs": 50 }
+  ]
+}
+```
+
+DynamicOrchestration calls `POST /deviceqosevaluator/quality-evaluation/measure` for each
+candidate. Candidates with `latencyMs > 50` or `reachable: false` are excluded.
+Fail-open: if the QoS Evaluator is unreachable, all candidates are included.
+
+Response `200 OK` (only fast providers):
+
+```json
+{
+  "results": [
+    {
+      "providerName": "fast-sensor",
+      "serviceDefinitition": "temperature-service",
+      "cloudIdentitifer": "LOCAL"
+    }
+  ]
+}
+```
+
+`QOS_EVALUATOR_URL` must be set to enable QoS filtering (e.g., `http://localhost:8088`).
+
+---
+
+## Example 13: JSON field-remapping bridge in Translation Manager
+
+**Step 1: Create a bridge**
+
+`POST /translationmanager/translation/mgmt/bridges` (requires sysop Bearer):
+
+```json
+{
+  "sourceFormat": "sensor-v1",
+  "targetFormat": "sensor-v2",
+  "fieldMappings": {
+    "temperature": "temp_celsius",
+    "humidity":    "rel_humidity"
+  }
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "id": "bridge-uuid-...",
+  "sourceFormat": "sensor-v1",
+  "targetFormat": "sensor-v2",
+  "fieldMappings": { "temperature": "temp_celsius", "humidity": "rel_humidity" },
+  "active": true,
+  "createdAt": "2026-05-31T10:00:00Z"
+}
+```
+
+**Step 2: Translate a payload**
+
+`POST /translationmanager/translation/translate`:
+
+```json
+{
+  "bridgeId": "bridge-uuid-...",
+  "payload": { "temperature": 22.5, "humidity": 61.0 }
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "bridgeId": "bridge-uuid-...",
+  "originalPayload":   { "temperature": 22.5, "humidity": 61.0 },
+  "translatedPayload": { "temp_celsius": 22.5, "rel_humidity": 61.0 }
+}
+```
