@@ -11,7 +11,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"log"
 	"log/slog"
 	"net/http"
@@ -90,32 +89,20 @@ func main() {
 		slog.Info("Dashboard available", "url", "http://localhost:"+cfg.Port+"/")
 	}
 
-	// Optional TLS listener on TLS_PORT.
+	tlsCfg, err := tlsutil.LoadServerTLSConfig(
+		os.Getenv("TLS_CERT_FILE"),
+		os.Getenv("TLS_KEY_FILE"),
+		os.Getenv("TLS_CA_FILE"),
+	)
+	if err != nil {
+		log.Fatalf("[ServiceRegistry] TLS config: %v", err)
+	}
+	httpsOnly := os.Getenv("HTTPS_ONLY") == "true"
+	tlsAddr := ""
 	if tlsPort := os.Getenv("TLS_PORT"); tlsPort != "" {
-		tlsCfg, err := tlsutil.LoadServerTLSConfig(
-			os.Getenv("TLS_CERT_FILE"),
-			os.Getenv("TLS_KEY_FILE"),
-			os.Getenv("TLS_CA_FILE"),
-		)
-		if err != nil {
-			log.Fatalf("[ServiceRegistry] TLS config: %v", err)
-		}
-		if tlsCfg != nil {
-			go startTLS(mux, tlsPort, tlsCfg, "ServiceRegistry")
-		}
+		tlsAddr = ":" + tlsPort
 	}
 
 	slog.Info("Listening", "system", "ServiceRegistry", "port", cfg.Port)
-	log.Fatal(http.ListenAndServe(":"+cfg.Port, mux))
-}
-
-func startTLS(handler http.Handler, port string, tlsCfg *tls.Config, name string) {
-	ln, err := tls.Listen("tcp", ":"+port, tlsCfg)
-	if err != nil {
-		log.Fatalf("[%s] TLS listen on :%s: %v", name, port, err)
-	}
-	slog.Info("Listening (HTTPS/mTLS)", "system", name, "port", port)
-	if err := http.Serve(ln, handler); err != nil {
-		log.Fatalf("[%s] TLS serve: %v", name, err)
-	}
+	log.Fatal(tlsutil.ServeHTTPS(":"+cfg.Port, tlsAddr, mux, tlsCfg, httpsOnly))
 }

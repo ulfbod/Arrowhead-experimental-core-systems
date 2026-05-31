@@ -12,6 +12,7 @@ import (
 	ssapi "arrowhead/core/internal/orchestration/simplestore/api"
 	ssrepo "arrowhead/core/internal/orchestration/simplestore/repository"
 	sssvc "arrowhead/core/internal/orchestration/simplestore/service"
+	"arrowhead/core/internal/tlsutil"
 )
 
 func main() {
@@ -46,6 +47,20 @@ func main() {
 	root.Handle("/serviceorchestration/orchestration/general/", mgmtHandler)
 	root.Handle("/", sysHandler)
 
+	tlsCfg, err := tlsutil.LoadServerTLSConfig(
+		os.Getenv("TLS_CERT_FILE"),
+		os.Getenv("TLS_KEY_FILE"),
+		os.Getenv("TLS_CA_FILE"),
+	)
+	if err != nil {
+		log.Fatalf("[SimpleStoreOrchestration] TLS config: %v", err)
+	}
+	httpsOnly := os.Getenv("HTTPS_ONLY") == "true"
+	tlsAddr := ""
+	if tlsPort := os.Getenv("TLS_PORT"); tlsPort != "" {
+		tlsAddr = ":" + tlsPort
+	}
+
 	slog.Info("Listening", "system", "SimpleStoreOrchestration", "port", port)
-	log.Fatal(http.ListenAndServe(":"+port, root))
+	log.Fatal(tlsutil.ServeHTTPS(":"+port, tlsAddr, root, tlsCfg, httpsOnly))
 }

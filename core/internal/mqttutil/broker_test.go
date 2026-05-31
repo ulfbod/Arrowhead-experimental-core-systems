@@ -1,6 +1,7 @@
 package mqttutil_test
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"sync"
 	"testing"
@@ -163,5 +164,53 @@ func TestSystemRegistersMQTTInterfaceWhenBrokerSet(t *testing.T) {
 	const expectedInterface = "MQTT-INSECURE-JSON"
 	if mqttutil.MQTTInterfaceName != expectedInterface {
 		t.Errorf("MQTTInterfaceName = %q, want %q", mqttutil.MQTTInterfaceName, expectedInterface)
+	}
+}
+
+// Step 55 (G34): MQTTS tests.
+
+func TestMQTTSecureInterfaceNameDefined(t *testing.T) {
+	const want = "MQTT-SECURE-JSON"
+	if mqttutil.MQTTSecureInterfaceName != want {
+		t.Errorf("MQTTSecureInterfaceName = %q, want %q", mqttutil.MQTTSecureInterfaceName, want)
+	}
+}
+
+func TestNewMQTTAdapterWithTLSAcceptsTLSConfig(t *testing.T) {
+	// NewMQTTAdapterWithTLS with a non-nil TLS config and an injected mock client
+	// should create a valid adapter without error.
+	mockClient := newMockClient()
+	tlsCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec — test only
+	adapter := mqttutil.NewMQTTAdapterWithTLSClient(mockClient, "securesvc", tlsCfg)
+	if adapter == nil {
+		t.Fatal("expected non-nil adapter")
+	}
+	// Verify it can publish (adapter is wired correctly).
+	if err := adapter.Publish("corr-tls", []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	mockClient.mu.Lock()
+	got := mockClient.published["ah5/securesvc/reply/corr-tls"]
+	mockClient.mu.Unlock()
+	if string(got) != `{"ok":true}` {
+		t.Errorf("published = %q, want {\"ok\":true}", string(got))
+	}
+}
+
+func TestNewMQTTAdapterNilTLSFallsBackToInsecure(t *testing.T) {
+	// NewMQTTAdapterWithTLS with a nil TLS config behaves like NewMQTTAdapterWithClient.
+	mockClient := newMockClient()
+	adapter := mqttutil.NewMQTTAdapterWithTLSClient(mockClient, "plainsvc", nil)
+	if adapter == nil {
+		t.Fatal("expected non-nil adapter")
+	}
+	if err := adapter.Publish("corr-plain", []byte(`{"plain":true}`)); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	mockClient.mu.Lock()
+	got := mockClient.published["ah5/plainsvc/reply/corr-plain"]
+	mockClient.mu.Unlock()
+	if string(got) != `{"plain":true}` {
+		t.Errorf("published = %q, want {\"plain\":true}", string(got))
 	}
 }

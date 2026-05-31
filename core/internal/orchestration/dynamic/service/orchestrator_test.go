@@ -674,13 +674,29 @@ func TestMissingNotifyURLRecordsFailure(t *testing.T) {
 
 // mockQoSClient implements dynclient.QoSEvaluatorClient for testing.
 type mockQoSClient struct {
-	latency   int64
-	reachable bool
-	err       error
+	latency      int64
+	reachable    bool
+	err          error
+	bandwidthBps int64
+	jitterMs     int64
+	packetLoss   float64
 }
 
 func (m *mockQoSClient) Measure(_ context.Context, _, _ string) (int64, bool, error) {
 	return m.latency, m.reachable, m.err
+}
+
+func (m *mockQoSClient) FullMeasure(_ context.Context, _, _ string) (dynclient.QoSRecord, error) {
+	if m.err != nil {
+		return dynclient.QoSRecord{}, m.err
+	}
+	return dynclient.QoSRecord{
+		LatencyMs:    m.latency,
+		Reachable:    m.reachable,
+		BandwidthBps: m.bandwidthBps,
+		JitterMs:     m.jitterMs,
+		PacketLoss:   m.packetLoss,
+	}, nil
 }
 
 func TestQoSFilterPassesFastProvider(t *testing.T) {
@@ -915,5 +931,80 @@ func TestOrchestrationOnlyExclusiveExpiredLockPassesProvider(t *testing.T) {
 	}
 	if len(resp.Results) != 1 {
 		t.Errorf("expired lock: expected 1 result, got %d", len(resp.Results))
+	}
+}
+
+// ─── Step 53 — QoS full model (G53) ─────────────────────────────────────────
+
+// TestOrchestrationQoSBandwidthRequirement — only provider with sufficient bandwidth passes.
+func TestOrchestrationQoSBandwidthRequirement(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("high-bw-provider", "low-bw-provider")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	callCount := 0
+	orch.SetQoSClient(&mockBandwidthQoSClient{
+		records: map[string]dynclient.QoSRecord{
+			// provider address is empty string in test since srResponse doesn't set address
+			// The orchestrator passes ProviderAddress which is "" for test SR responses
+			"": {Reachable: true, LatencyMs: 1, BandwidthBps: 1000000},
+		},
+		// second call returns low bandwidth
+		secondRecord: dynclient.QoSRecord{Reachable: true, LatencyMs: 1, BandwidthBps: 100},
+		callCount:    &callCount,
+	})
+
+	req := validRequest()
+	// MaxBandwidthBps = 500000 means minimum bandwidth threshold of 500KB/s
+	req.QualityRequirements = []orchmodel.QoSRequirement{{MaxBandwidthBps: 500000}}
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("orchestrate: %v", err)
+	}
+	// Only high-bandwidth provider should be included
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result (high-bw passes), got %d", len(resp.Results))
+	}
+	if len(resp.Results) > 0 && resp.Results[0].ProviderName != "high-bw-provider" {
+		t.Errorf("expected high-bw-provider, got %q", resp.Results[0].ProviderName)
+	}
+}
+
+// mockBandwidthQoSClient returns different QoS records on successive calls.
+type mockBandwidthQoSClient struct {
+	records      map[string]dynclient.QoSRecord
+	secondRecord dynclient.QoSRecord
+	callCount    *int
+}
+
+func (m *mockBandwidthQoSClient) Measure(_ context.Context, _, _ string) (int64, bool, error) {
+	rec, err := m.FullMeasure(context.Background(), "", "")
+	return rec.LatencyMs, rec.Reachable, err
+}
+
+func (m *mockBandwidthQoSClient) FullMeasure(_ context.Context, _, _ string) (dynclient.QoSRecord, error) {
+	*m.callCount++
+	if *m.callCount <= 1 {
+		return dynclient.QoSRecord{Reachable: true, LatencyMs: 1, BandwidthBps: 1000000}, nil
+	}
+	return m.secondRecord, nil
+}
+
+// TestOrchestrationQoSNoRequirementsPassesAll — regression guard: no requirements → all pass.
+func TestOrchestrationQoSNoRequirementsPassesAll(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("provider-1", "provider-2")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	orch.SetQoSClient(&mockQoSClient{latency: 9999, reachable: true})
+
+	req := validRequest()
+	// No qualityRequirements → no QoS filtering
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("orchestrate: %v", err)
+	}
+	if len(resp.Results) != 2 {
+		t.Errorf("no requirements: expected 2 results, got %d", len(resp.Results))
 	}
 }

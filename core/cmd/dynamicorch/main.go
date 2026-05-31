@@ -23,7 +23,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"log"
 	"log/slog"
 	"net/http"
@@ -98,7 +97,16 @@ func main() {
 	}
 	orch.SetPushClient(&http.Client{Timeout: time.Duration(pushTimeoutSec) * time.Second})
 
-	sysHandler := dynapi.NewHandler(orch, os.Getenv("MGMT_AUTH_URL"))
+	srPollURL := os.Getenv("SR_POLL_URL")
+	pushPollIntervalSec := 30
+	if v := os.Getenv("PUSH_POLL_INTERVAL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			pushPollIntervalSec = n
+		}
+	}
+	pushPollInterval := time.Duration(pushPollIntervalSec) * time.Second
+
+	sysHandler := dynapi.NewHandlerWithPoller(orch, os.Getenv("MGMT_AUTH_URL"), srPollURL, pushPollInterval)
 
 	mgmtHandler := generalmgmt.NewHandler(buf, "serviceorchestration/orchestration", map[string]string{
 		"PORT":                  port,
@@ -117,30 +125,18 @@ func main() {
 	root.Handle("/serviceorchestration/orchestration/general/", mgmtHandler)
 	root.Handle("/", sysHandler)
 
-	// Optional TLS listener on TLS_PORT for incoming connections.
+	serverTLSCfg, err := tlsutil.LoadServerTLSConfig(certFile, keyFile, caFile)
+	if err != nil {
+		log.Fatalf("[DynamicOrchestration] server TLS config: %v", err)
+	}
+	httpsOnly := os.Getenv("HTTPS_ONLY") == "true"
+	tlsAddr := ""
 	if tlsPort := os.Getenv("TLS_PORT"); tlsPort != "" {
-		serverTLSCfg, err := tlsutil.LoadServerTLSConfig(certFile, keyFile, caFile)
-		if err != nil {
-			log.Fatalf("[DynamicOrchestration] server TLS config: %v", err)
-		}
-		if serverTLSCfg != nil {
-			go startTLS(root, tlsPort, serverTLSCfg, "DynamicOrchestration")
-		}
+		tlsAddr = ":" + tlsPort
 	}
 
 	slog.Info("Listening", "system", "DynamicOrchestration", "port", port,
 		"sr", srURL, "ca", caURL, "auth", authSysURL,
 		"checkAuth", checkAuth, "checkIdentity", checkIdentity)
-	log.Fatal(http.ListenAndServe(":"+port, root))
-}
-
-func startTLS(handler http.Handler, port string, tlsCfg *tls.Config, name string) {
-	ln, err := tls.Listen("tcp", ":"+port, tlsCfg)
-	if err != nil {
-		log.Fatalf("[%s] TLS listen on :%s: %v", name, port, err)
-	}
-	slog.Info("Listening (HTTPS/mTLS)", "system", name, "port", port)
-	if err := http.Serve(ln, handler); err != nil {
-		log.Fatalf("[%s] TLS serve: %v", name, err)
-	}
+	log.Fatal(tlsutil.ServeHTTPS(":"+port, tlsAddr, root, serverTLSCfg, httpsOnly))
 }

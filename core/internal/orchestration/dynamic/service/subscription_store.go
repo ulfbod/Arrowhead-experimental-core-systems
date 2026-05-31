@@ -12,6 +12,7 @@ type Subscription struct {
 	ID                   string         `json:"id"`
 	OwnerSystemName      string         `json:"ownerSystemName"`
 	TargetSystemName     string         `json:"targetSystemName"`
+	ServiceDefinition    string         `json:"serviceDefinition,omitempty"` // used by auto-push poller (G26)
 	OrchestrationRequest map[string]any `json:"orchestrationRequest"`
 	NotifyInterface      map[string]any `json:"notifyInterface,omitempty"`
 	ExpiredAt            *string        `json:"expiredAt,omitempty"`
@@ -22,6 +23,7 @@ type Subscription struct {
 type CreateSubscriptionRequest struct {
 	OwnerSystemName      string         `json:"ownerSystemName"`
 	TargetSystemName     string         `json:"targetSystemName"`
+	ServiceDefinition    string         `json:"serviceDefinition,omitempty"` // when set, auto-push polls SR for provider changes
 	OrchestrationRequest map[string]any `json:"orchestrationRequest"`
 	NotifyInterface      map[string]any `json:"notifyInterface,omitempty"`
 	ExpiredAt            *string        `json:"expiredAt,omitempty"`
@@ -59,6 +61,7 @@ func (s *SubscriptionStore) Subscribe(req CreateSubscriptionRequest) (Subscripti
 		existing.OrchestrationRequest = req.OrchestrationRequest
 		existing.NotifyInterface = req.NotifyInterface
 		existing.ExpiredAt = req.ExpiredAt
+		existing.ServiceDefinition = req.ServiceDefinition
 		s.byID[existingID] = existing
 		return existing, false
 	}
@@ -66,6 +69,7 @@ func (s *SubscriptionStore) Subscribe(req CreateSubscriptionRequest) (Subscripti
 		ID:                   uuid.NewString(),
 		OwnerSystemName:      req.OwnerSystemName,
 		TargetSystemName:     req.TargetSystemName,
+		ServiceDefinition:    req.ServiceDefinition,
 		OrchestrationRequest: req.OrchestrationRequest,
 		NotifyInterface:      req.NotifyInterface,
 		ExpiredAt:            req.ExpiredAt,

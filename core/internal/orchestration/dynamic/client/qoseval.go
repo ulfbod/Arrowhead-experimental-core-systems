@@ -9,9 +9,21 @@ import (
 	"net/http"
 )
 
+// QoSRecord is the full set of QoS measurements returned by a FullMeasure call.
+type QoSRecord struct {
+	LatencyMs    int64   `json:"latencyMs"`
+	Reachable    bool    `json:"reachable"`
+	BandwidthBps int64   `json:"bandwidthBps"`
+	JitterMs     int64   `json:"jitterMs"`
+	PacketLoss   float64 `json:"packetLoss"`
+}
+
 // QoSEvaluatorClient describes what DynamicOrchestration needs from the Device QoS Evaluator.
 type QoSEvaluatorClient interface {
+	// Measure returns latency and reachability (legacy, latency-only path).
 	Measure(ctx context.Context, host, port string) (latencyMs int64, reachable bool, err error)
+	// FullMeasure returns the full QoS record including bandwidth, jitter, and packet loss.
+	FullMeasure(ctx context.Context, host, port string) (QoSRecord, error)
 }
 
 // NopQoSClient always returns reachable=true (fail-open). Used when no QoS evaluator is configured.
@@ -20,6 +32,11 @@ type NopQoSClient struct{}
 // Measure implements QoSEvaluatorClient. Always succeeds (fail-open).
 func (NopQoSClient) Measure(_ context.Context, _, _ string) (int64, bool, error) {
 	return 0, true, nil
+}
+
+// FullMeasure implements QoSEvaluatorClient. Always succeeds (fail-open) with zero values.
+func (NopQoSClient) FullMeasure(_ context.Context, _, _ string) (QoSRecord, error) {
+	return QoSRecord{Reachable: true}, nil
 }
 
 // HTTPQoSEvaluatorClient calls a real Device QoS Evaluator over HTTP.
@@ -38,28 +55,34 @@ func NewHTTPQoSEvaluatorClient(baseURL string, c *http.Client) *HTTPQoSEvaluator
 
 // Measure calls POST <baseURL>/deviceqosevaluator/quality-evaluation/measure and returns latency+reachability.
 func (c *HTTPQoSEvaluatorClient) Measure(ctx context.Context, host, port string) (int64, bool, error) {
+	rec, err := c.FullMeasure(ctx, host, port)
+	if err != nil {
+		return 0, false, err
+	}
+	return rec.LatencyMs, rec.Reachable, nil
+}
+
+// FullMeasure calls POST <baseURL>/deviceqosevaluator/quality-evaluation/measure and returns the full QoS record.
+func (c *HTTPQoSEvaluatorClient) FullMeasure(ctx context.Context, host, port string) (QoSRecord, error) {
 	body, _ := json.Marshal(map[string]string{"host": host, "port": port})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/deviceqosevaluator/quality-evaluation/measure",
 		bytes.NewReader(body))
 	if err != nil {
-		return 0, false, err
+		return QoSRecord{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return 0, false, err
+		return QoSRecord{}, err
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
-		return 0, false, fmt.Errorf("qos evaluator returned %d", resp.StatusCode)
+		return QoSRecord{}, fmt.Errorf("qos evaluator returned %d", resp.StatusCode)
 	}
-	var rec struct {
-		LatencyMs int64 `json:"latencyMs"`
-		Reachable bool  `json:"reachable"`
-	}
+	var rec QoSRecord
 	if err := json.NewDecoder(resp.Body).Decode(&rec); err != nil {
-		return 0, false, err
+		return QoSRecord{}, err
 	}
-	return rec.LatencyMs, rec.Reachable, nil
+	return rec, nil
 }

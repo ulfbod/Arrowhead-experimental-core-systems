@@ -91,6 +91,54 @@ func NewHTTPClient(tlsCfg *tls.Config) *http.Client {
 	}
 }
 
+// ServeHTTPS starts HTTP and/or HTTPS listeners according to the httpsOnly flag.
+//
+// When httpsOnly is false OR tlsCfg is nil (fail-safe):
+//   - If tlsCfg is non-nil, a TLS listener is started in a goroutine on tlsAddr.
+//   - The function blocks on plain HTTP at plainAddr.
+//
+// When httpsOnly is true AND tlsCfg is non-nil:
+//   - A health-only mux is started in a goroutine on plainAddr.
+//     /health → 200 {"status":"UP"}; all other paths → 451 (plain HTTP disabled).
+//   - The function blocks on TLS at tlsAddr.
+func ServeHTTPS(plainAddr, tlsAddr string, handler http.Handler, tlsCfg *tls.Config, httpsOnly bool) error {
+	if httpsOnly && tlsCfg != nil {
+		// Start health-only plain listener in goroutine.
+		healthMux := http.NewServeMux()
+		healthMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"UP"}`)) //nolint:errcheck
+		})
+		healthMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnavailableForLegalReasons)
+			w.Write([]byte(`{"errorMessage":"plain HTTP disabled; use HTTPS port","origin":"security"}`)) //nolint:errcheck
+		})
+		go http.ListenAndServe(plainAddr, healthMux) //nolint:errcheck
+
+		// Block on TLS listener.
+		srv := &http.Server{
+			Addr:      tlsAddr,
+			Handler:   handler,
+			TLSConfig: tlsCfg,
+		}
+		return srv.ListenAndServeTLS("", "")
+	}
+
+	// Default path: optional TLS in goroutine, block on plain HTTP.
+	if tlsCfg != nil && tlsAddr != "" {
+		go func() {
+			ln, err := tls.Listen("tcp", tlsAddr, tlsCfg)
+			if err != nil {
+				return
+			}
+			http.Serve(ln, handler) //nolint:errcheck
+		}()
+	}
+	return http.ListenAndServe(plainAddr, handler)
+}
+
 // loadCertPool reads a PEM file and returns an x509.CertPool containing it.
 func loadCertPool(caFile string) (*x509.CertPool, error) {
 	data, err := os.ReadFile(caFile)

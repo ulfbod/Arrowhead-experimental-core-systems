@@ -16,10 +16,9 @@ Documentation sources (reviewed May 2026 — full site traversal):
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/communication_profiles/
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/general_management/
 
-**Implementation status (as of May 2026):** Phases 1, 2, 3, and 4 complete (Steps 1–49, E1–E5).
-Resolved: G2, G3, G5, G7, G8, G10, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G23, G24, G25, G26, G27, G28, G29, G30, G34, G35, G36, G37, G38, G39, G40, G41, G42, G43, G44, G45, G46, G48, G49, G50, G51, G52.
-Partial: G4 (mTLS experiment-7 only; default transport is plain HTTP), G6 (optional coupling via ENABLE_IDENTITY_CHECK; ConsumerAuth does not require a prior Authentication token), G23 (JWT variants still 501), G26 (manual push trigger only; no provider-change auto-polling), G34 (plain MQTT adapter only; MQTTS unimplemented).
-Open (Phase 5): G4 (completion), G6 (completion), G23 (JWT completion), G34 (MQTTS), G47, G53.
+**Implementation status (as of May 2026):** Phases 1–5 complete (Steps 1–56, E1–E5).
+Resolved: G2, G3, G4, G5, G6, G7, G8, G10, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G23, G24, G25, G26, G27, G28, G29, G30, G34, G35, G36, G37, G38, G39, G40, G41, G42, G43, G44, G45, G46, G47, G48, G49, G50, G51, G52, G53.
+Open: none.
 Design decisions (not conformance gaps): G1 (FlexibleStore — no spec), G9 (CA — intentional extension).
 
 ---
@@ -75,7 +74,7 @@ only the Docker healthchecks and the one-shot seed container use plain HTTP. The
 plain HTTP (bootstrapping constraint: services must reach it to get their own certificates).
 See `experiments/experiment-7/DIAGRAMS.md` for full coverage details.
 
-**Status:** Partial — mTLS available in `core/` systems via `TLS_PORT`/`TLS_CERT_FILE`/`TLS_KEY_FILE`/`TLS_CA_FILE` env vars (experiment-7). CA remains plain HTTP (bootstrapping constraint). Full AH5 production mTLS across all systems is Phase 3 work.
+**Status: Resolved in Step 52** — All core binaries now use `tlsutil.ServeHTTPS`, which honours `HTTPS_ONLY=true`. When `HTTPS_ONLY` is set and a TLS port is configured, plain HTTP serves only `/health` (200 OK) and rejects all other paths with 451 Unavailable For Legal Reasons, directing clients to the TLS listener. The CA remains on plain HTTP (bootstrapping constraint). mTLS available via experiment-7 env vars.
 
 ---
 
@@ -98,7 +97,7 @@ The Authentication system issues identity tokens (who are you?). The ConsumerAut
 
 However, DynamicOrchestration now connects the two when `ENABLE_IDENTITY_CHECK=true`: the identity token from the Authentication system is verified before the ConsumerAuthorization check, and the verified systemName from the token is used as the consumer identity. This partial coupling closes the impersonation gap (see D8). A5 covers remaining ambiguities about the full AH5 token-relay mechanism.
 
-**Status:** Partial — optional identity-to-authorization coupling via `ENABLE_IDENTITY_CHECK` (DynamicOrchestration only). Full AH5 token relay (ConsumerAuth requires prior Authentication token) is not enforced.
+**Status: Resolved in Step 50** — ConsumerAuthorization `POST /consumerauthorization/authorization/token/generate` now enforces identity verification when `TOKEN_AUTH_URL` is set. The Bearer token in the request is verified against the Authentication system before the CA authorization check; on identity mismatch the endpoint returns 403. This completes the AH5 token-relay chain: Authentication → ConsumerAuth → orchestrated service. `ENABLE_IDENTITY_CHECK` (DynamicOrchestration) and `TOKEN_AUTH_URL` (ConsumerAuth) are the two knobs that together close G6.
 
 ---
 
@@ -360,9 +359,11 @@ AH5 ConsumerAuthorization provides a typed token lifecycle under `authorizationT
 - `POST /consumerauthorization/authorization-token/encryption-key` — register a per-provider encryption key
 - `DELETE /consumerauthorization/authorization-token/encryption-key` — remove an encryption key
 
-All five endpoints are now implemented. `TIME_LIMITED_TOKEN` is fully functional: generates a UUID token stored in memory with a 1-hour expiry, verifiable via the verify endpoint. `USAGE_LIMITED_TOKEN` is implemented: token expires after `maxUsageCount` verifications. `BASE64_SELF_CONTAINED` is implemented: HMAC-SHA256-signed JSON payload verifiable without server state using `HMAC_SECRET` env var. JWT variants and `TRANSLATION_BRIDGE_TOKEN` return `501 Not Implemented`. The `public-key` endpoint returns 404 (JWT signing not implemented). Encryption keys are stored in memory only — there is no JWT signing integration.
+All five endpoints are now implemented. `TIME_LIMITED_TOKEN` is fully functional: generates a UUID token stored in memory with a 1-hour expiry, verifiable via the verify endpoint. `USAGE_LIMITED_TOKEN` is implemented: token expires after `maxUsageCount` verifications. `BASE64_SELF_CONTAINED` is implemented: HMAC-SHA256-signed JSON payload verifiable without server state using `HMAC_SECRET` env var.
 
-**Resolved in Step 34 (G23):** `USAGE_LIMITED_TOKEN` and `BASE64_SELF_CONTAINED` variants are now fully implemented.
+**Resolved in Step 34 (G23 partial):** `USAGE_LIMITED_TOKEN` and `BASE64_SELF_CONTAINED` variants are now fully implemented.
+
+**Resolved in Step 51 (G47 / G23 completion):** `RSA_SHA256_JSON_WEB_TOKEN` (RS256), `RSA_SHA512_JSON_WEB_TOKEN` (RS512), and `TRANSLATION_BRIDGE_TOKEN` JWT variants are now fully implemented using Go stdlib `crypto/rsa` + RSASSA-PKCS1-v1_5. An RSA-2048 key pair is generated at startup (or loaded from `JWT_PRIVATE_KEY_FILE`). The `/authorization-token/public-key` endpoint returns the public key in PEM format. See G47 for implementation details.
 
 ---
 
@@ -424,7 +425,7 @@ AH5 defines a push-style orchestration alongside pull:
 - URL extracted from `notifyInterface` map: tries `"notifyUri"`, then `"uri"`, then assembles from `"address"` + `"port"` + `"path"`.
 - Same delivery logic implemented in `core-evol/internal/orchestration/handler.go`.
 
-**Remaining sub-gap:** Background provider-change polling (automatic push when registry changes) is not implemented — triggers must be fired manually via `mgmt/push/trigger`.
+**Resolved in Step 54 (G26 completion):** Background auto-push polling is now implemented. `NewHandlerWithPoller` starts a goroutine that polls the ServiceRegistry every `PUSH_POLL_INTERVAL_SECONDS` (default: 30) for each subscription that has a `serviceDefinition` set. When the sorted set of provider names changes between polls, a push trigger is fired automatically. Fail-open: SR unreachable on a given tick → skip that tick. `SR_POLL_URL` env var controls which SR endpoint is used for polling (defaults to disabled when unset).
 
 ---
 
@@ -508,7 +509,7 @@ This implementation registers all systems with `interfaces: ["HTTP-INSECURE-JSON
 
 **Fix:** Requires MQTT broker (e.g., Mosquitto), per-service topic routing, and request/response mapping. High effort. For research and teaching purposes, document the gap explicitly rather than leaving it implicit.
 
-**Status:** Resolved in Step 38 — `core/internal/mqttutil` package provides `MQTTAdapter` with subscribe/publish support using paho.mqtt.golang. The `MQTTInterfaceName = "MQTT-INSECURE-JSON"` constant is defined. Full cross-cutting integration across all systems requires a running MQTT broker (e.g. Mosquitto); the adapter architecture is in place. MQTTS (TLS) remains unimplemented.
+**Status: Resolved in Steps 38 and 55** — `core/internal/mqttutil` package provides `MQTTAdapter` with subscribe/publish support using paho.mqtt.golang. The `MQTTInterfaceName = "MQTT-INSECURE-JSON"` and `MQTTSecureInterfaceName = "MQTT-SECURE-JSON"` constants are defined. `NewMQTTAdapterWithTLS(brokerURL, clientID, topic string, tlsCfg *tls.Config)` creates an MQTTS-capable adapter when a non-nil `*tls.Config` is provided. For testing, `NewMQTTAdapterWithTLSClient` accepts an injected mock client alongside the TLS config. Full cross-cutting integration across all systems requires a running MQTTS broker (e.g. Mosquitto with TLS configuration); the adapter architecture is in place.
 
 ---
 
@@ -705,13 +706,15 @@ Three token variants defined by AH5 are not implemented:
 - `RSA_SHA512_JSON_WEB_TOKEN` — RSA-4096 + SHA-512 signed JWT
 - `TRANSLATION_BRIDGE_TOKEN` — token conveying translation metadata for cross-format calls
 
-All three return `501 Not Implemented` from `GenerateAuthToken`. The `/authorization-token/public-key` endpoint returns 404 (JWT key pair never generated). No RSA key pair is managed at startup.
+**Status: Resolved in Step 51** — All three JWT variants are now fully implemented using Go stdlib `crypto/rsa` with RSASSA-PKCS1-v1_5 signing (no external JWT library):
 
-**Impact (Endpoint%, Model%):** Three of the six defined token variants are non-functional. Providers that verify tokens by fetching the public key cannot validate any token issued by this implementation.
-
-**Dependency:** A Go JWT library (e.g., `github.com/golang-jwt/jwt/v5`) or standard `crypto/rsa` + `encoding/pem` key generation. The `TRANSLATION_BRIDGE_TOKEN` also requires coordination with the Translation Manager (G36).
-
-**Status:** Open (Phase 5) — JWT key management requires a non-trivial crypto bootstrap; deferred after Phase 4 correctness work.
+- RSA-2048 key pair generated at startup via `rsa.GenerateKey(rand.Reader, 2048)` (ephemeral) or loaded from `JWT_PRIVATE_KEY_FILE` (PEM PKCS1 or PKCS8).
+- `buildJWT(alg, payload)` constructs standard 3-part JWT (`header.payload.signature`) with `base64.RawURLEncoding`. RS256 uses `crypto.SHA256`; RS512 uses `crypto.SHA512`.
+- `verifyJWT(token)` reverifies the signature and checks `exp` claim.
+- `TRANSLATION_BRIDGE_TOKEN` generates an RS256 JWT with additional `bridgeId`, `fromInterface`, `toInterface` claims (from the `TokenGenerateRequest` model).
+- `GET /consumerauthorization/authorization-token/public-key` returns the RSA public key as PEM (`PKIX` format) — providers can fetch and cache it for offline verification.
+- `VerifyAuthToken` detects JWTs by checking for 3 dot-separated sections and `"typ":"JWT"` in the header, then verifies the signature using the stored RSA key.
+- Constants `TokenVariantRSA256`, `TokenVariantRSA512`, `TokenVariantTranslationBridge` defined in `consumerauth/model/types.go`.
 
 ---
 
@@ -771,11 +774,13 @@ All three return `501 Not Implemented` from `GenerateAuthToken`. The `/authoriza
 
 The Device QoS Evaluator (G35) implements only TCP RTT measurement via `net.DialTimeout`. AH5 defines `qualityRequirements` that include latency, bandwidth, and jitter dimensions. The `QoSRecord` model has no `bandwidthBps`, `jitterMs`, or `packetLoss` fields. The `QoSRequirement` model (used in orchestration requests) has only `maxLatencyMs`.
 
-**Impact (Endpoint%, Model%, Behavior%):** Consumers that specify bandwidth or jitter requirements in their orchestration request cannot be served correctly. The Device QoS Evaluator cannot function as a complete AH5-compliant support system.
+**Status: Resolved in Step 53** — Full multi-dimensional QoS measurement implemented:
 
-**Scope:** Medium — requires additional probe logic (e.g., iPerf-style bandwidth probe or ICMP jitter), model extension, and wire format alignment. Probe timeout is also not configurable via env var.
-
-**Status:** Open (Phase 5) — deferred; latency filtering is the most common use case and is already implemented.
+- `QoSRecord` model extended with `BandwidthBps int64`, `JitterMs int64`, `PacketLoss float64`.
+- `QoSRequirement` model extended with `MaxBandwidthBps int64` (minimum threshold — counter-intuitive spec naming), `MaxJitterMs int64`, `MaxPacketLoss float64`.
+- Device QoS Evaluator `Measure` now performs 5 TCP probes: computes mean RTT (latencyMs), jitter (stddev of RTT samples), packet-loss fraction, and a TCP bandwidth probe (64 KB write + timing → bytes/sec). `QOS_PROBE_TIMEOUT_SECONDS` env var (default: 5) controls per-probe timeout.
+- `QoSEvaluatorClient` interface extended with `FullMeasure(ctx, host, port) (QoSRecord, error)`. `NopQoSClient` returns `QoSRecord{Reachable: true}` (fail-open). `HTTPQoSEvaluatorClient.Measure` delegates to `FullMeasure`.
+- DynamicOrchestration filter (Step 4.5): when any non-latency threshold is present in `qualityRequirements`, uses `FullMeasure` and applies all four dimensions; latency-only requests use the cheaper `Measure` path (backward-compatible).
 
 ---
 

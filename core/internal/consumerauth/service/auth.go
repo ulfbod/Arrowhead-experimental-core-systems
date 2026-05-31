@@ -3,13 +3,19 @@
 package service
 
 import (
+	"crypto"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -49,18 +55,186 @@ type encryptionKeyRecord struct {
 }
 
 type AuthService struct {
-	repo      repository.Repository
-	mu        sync.RWMutex
+	repo       repository.Repository
+	mu         sync.RWMutex
 	authTokens map[string]*authTokenRecord
 	encKeys    map[string]*encryptionKeyRecord
+	rsaKey     *rsa.PrivateKey // used for JWT signing; always non-nil (ephemeral if not configured)
 }
 
 func NewAuthService(repo repository.Repository) *AuthService {
+	// Generate an ephemeral RSA-2048 key pair at construction time.
+	// This ensures JWT endpoints always work, even without a configured key file.
+	// Call SetRSAKey to override with a persisted key.
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		// This should never fail in practice; panic to surface the error early.
+		panic(fmt.Sprintf("consumerauth: generate ephemeral RSA key: %v", err))
+	}
 	return &AuthService{
 		repo:       repo,
 		authTokens: make(map[string]*authTokenRecord),
 		encKeys:    make(map[string]*encryptionKeyRecord),
+		rsaKey:     key,
 	}
+}
+
+// ParseRSAPrivateKey decodes a PEM block and returns an *rsa.PrivateKey.
+// Supports PKCS#1 (RSA PRIVATE KEY) and PKCS#8 (PRIVATE KEY) formats.
+func ParseRSAPrivateKey(keyPEM []byte) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode(keyPEM)
+	if block == nil {
+		return nil, fmt.Errorf("no PEM block found")
+	}
+	switch block.Type {
+	case "RSA PRIVATE KEY":
+		return x509.ParsePKCS1PrivateKey(block.Bytes)
+	case "PRIVATE KEY":
+		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		rsaKey, ok := key.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("PKCS8 key is not RSA")
+		}
+		return rsaKey, nil
+	default:
+		return nil, fmt.Errorf("unsupported PEM block type: %s", block.Type)
+	}
+}
+
+// SetRSAKey overrides the ephemeral key with a loaded key (e.g., from JWT_PRIVATE_KEY_FILE).
+func (s *AuthService) SetRSAKey(key *rsa.PrivateKey) {
+	s.mu.Lock()
+	s.rsaKey = key
+	s.mu.Unlock()
+}
+
+// PublicKeyPEM returns the RSA public key as a PKIX PEM string.
+func (s *AuthService) PublicKeyPEM() string {
+	s.mu.RLock()
+	key := s.rsaKey
+	s.mu.RUnlock()
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		return ""
+	}
+	block := &pem.Block{Type: "PUBLIC KEY", Bytes: der}
+	return string(pem.EncodeToMemory(block))
+}
+
+// buildJWT constructs a JWT token string using RSASSA-PKCS1-v1_5.
+// alg must be "RS256" or "RS512".
+func (s *AuthService) buildJWT(alg string, payload map[string]any) (string, error) {
+	header := map[string]string{"alg": alg, "typ": "JWT"}
+	headerBytes, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	headerB64 := base64.RawURLEncoding.EncodeToString(headerBytes)
+	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadBytes)
+	signingInput := headerB64 + "." + payloadB64
+
+	s.mu.RLock()
+	key := s.rsaKey
+	s.mu.RUnlock()
+
+	var hashAlg crypto.Hash
+	switch alg {
+	case "RS256":
+		hashAlg = crypto.SHA256
+	case "RS512":
+		hashAlg = crypto.SHA512
+	default:
+		return "", fmt.Errorf("unsupported alg: %s", alg)
+	}
+
+	var digest []byte
+	switch hashAlg {
+	case crypto.SHA256:
+		h := sha256.Sum256([]byte(signingInput))
+		digest = h[:]
+	case crypto.SHA512:
+		h := sha512.Sum512([]byte(signingInput))
+		digest = h[:]
+	}
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, hashAlg, digest)
+	if err != nil {
+		return "", err
+	}
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
+// verifyJWT checks the RSA signature of a JWT and returns the payload map.
+func (s *AuthService) verifyJWT(token string) (map[string]any, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, false
+	}
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, false
+	}
+	var header struct {
+		Alg string `json:"alg"`
+		Typ string `json:"typ"`
+	}
+	if err := json.Unmarshal(headerBytes, &header); err != nil || header.Typ != "JWT" {
+		return nil, false
+	}
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, false
+	}
+	sigBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return nil, false
+	}
+
+	signingInput := parts[0] + "." + parts[1]
+	s.mu.RLock()
+	key := s.rsaKey
+	s.mu.RUnlock()
+
+	var hashAlg crypto.Hash
+	switch header.Alg {
+	case "RS256":
+		hashAlg = crypto.SHA256
+	case "RS512":
+		hashAlg = crypto.SHA512
+	default:
+		return nil, false
+	}
+
+	var digest []byte
+	switch hashAlg {
+	case crypto.SHA256:
+		h := sha256.Sum256([]byte(signingInput))
+		digest = h[:]
+	case crypto.SHA512:
+		h := sha512.Sum512([]byte(signingInput))
+		digest = h[:]
+	}
+	if err := rsa.VerifyPKCS1v15(&key.PublicKey, hashAlg, digest, sigBytes); err != nil {
+		return nil, false
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return nil, false
+	}
+	// Check expiry
+	if exp, ok := payload["exp"].(float64); ok {
+		if time.Now().Unix() > int64(exp) {
+			return nil, false
+		}
+	}
+	return payload, true
 }
 
 func generateToken() string {
@@ -303,6 +477,37 @@ func (s *AuthService) GenerateAuthToken(req model.TokenGenerateRequest) (model.T
 			ExpiresAt:  expiresAt.Format(time.RFC3339),
 		}, nil
 
+	case model.TokenVariantRSA256, model.TokenVariantRSA512, model.TokenVariantTranslationBridge:
+		expiresAt := time.Now().UTC().Add(time.Hour)
+		alg := "RS256"
+		if req.TokenVariant == model.TokenVariantRSA512 {
+			alg = "RS512"
+		}
+		payload := map[string]any{
+			"iss":        "arrowhead",
+			"consumer":   req.Consumer,
+			"provider":   req.Provider,
+			"target":     req.Target,
+			"targetType": req.TargetType,
+			"scope":      req.Scope,
+			"exp":        expiresAt.Unix(),
+		}
+		if req.TokenVariant == model.TokenVariantTranslationBridge {
+			payload["bridgeId"] = req.BridgeID
+			payload["fromInterface"] = req.FromInterface
+			payload["toInterface"] = req.ToInterface
+		}
+		token, err := s.buildJWT(alg, payload)
+		if err != nil {
+			return model.TokenDescriptor{}, err
+		}
+		return model.TokenDescriptor{
+			TokenType:  req.TokenVariant,
+			TargetType: req.TargetType,
+			Token:      token,
+			ExpiresAt:  expiresAt.Format(time.RFC3339),
+		}, nil
+
 	default:
 		return model.TokenDescriptor{}, ErrUnsupportedVariant
 	}
@@ -310,8 +515,39 @@ func (s *AuthService) GenerateAuthToken(req model.TokenGenerateRequest) (model.T
 
 // VerifyAuthToken checks if the token is valid and not expired.
 // Supports TIME_LIMITED_TOKEN (map lookup), USAGE_LIMITED_TOKEN (counter check),
-// and BASE64_SELF_CONTAINED (HMAC verify, no map lookup needed).
+// BASE64_SELF_CONTAINED (HMAC verify), and JWT variants (RSA signature verify).
 func (s *AuthService) VerifyAuthToken(accessToken string) (model.TokenVerifyResponse, bool) {
+	// Detect JWT tokens: exactly 3 "." sections where the first decodes to a JSON header with typ=JWT.
+	if jwtParts := strings.Split(accessToken, "."); len(jwtParts) == 3 {
+		headerBytes, err := base64.RawURLEncoding.DecodeString(jwtParts[0])
+		if err == nil {
+			var hdr struct {
+				Typ string `json:"typ"`
+			}
+			if json.Unmarshal(headerBytes, &hdr) == nil && hdr.Typ == "JWT" {
+				payload, ok := s.verifyJWT(accessToken)
+				if !ok {
+					return model.TokenVerifyResponse{}, false
+				}
+				consumer, _ := payload["consumer"].(string)
+				target, _ := payload["target"].(string)
+				targetType, _ := payload["targetType"].(string)
+				scope := payload["scope"]
+				if s, ok := scope.(string); ok && s == "" {
+					scope = nil
+				}
+				return model.TokenVerifyResponse{
+					Verified:      true,
+					ConsumerCloud: "LOCAL",
+					Consumer:      consumer,
+					TargetType:    targetType,
+					Target:        target,
+					Scope:         scope,
+				}, true
+			}
+		}
+	}
+
 	// Detect BASE64_SELF_CONTAINED tokens: they contain exactly one "." separating
 	// the base64 payload from the HMAC signature.
 	if parts := strings.SplitN(accessToken, ".", 2); len(parts) == 2 {

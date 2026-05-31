@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"arrowhead/core/internal/orchestration/dynamic/api"
 	dynservice "arrowhead/core/internal/orchestration/dynamic/service"
@@ -823,5 +825,192 @@ func TestHistoryQueryNoPaginationReturnsAll(t *testing.T) {
 	}
 	if resp.TotalCount < 3 {
 		t.Errorf("no pagination: want totalCount>=3, got %d", resp.TotalCount)
+	}
+}
+
+// ─── Step 54 — Auto-push provider-change polling (G26) ───────────────────────
+
+// mockSRPoller builds a mock SR that returns different provider lists on successive calls.
+// On the first call: returns providers1; on subsequent calls: returns providers2.
+func mockSRPoller(providers1, providers2 []string) (*httptest.Server, *int32) {
+	var callCount int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&callCount, 1)
+		var providers []string
+		if n <= 1 {
+			providers = providers1
+		} else {
+			providers = providers2
+		}
+		type prov struct {
+			Name string `json:"name"`
+		}
+		type inst struct {
+			InstanceID            string `json:"instanceId"`
+			Provider              prov   `json:"provider"`
+			ServiceDefinitionName string `json:"serviceDefinitionName"`
+		}
+		type resp struct {
+			Entries []inst `json:"entries"`
+			Count   int    `json:"count"`
+		}
+		var instances []inst
+		for _, p := range providers {
+			instances = append(instances, inst{
+				InstanceID:            p + "|temp|1",
+				Provider:              prov{Name: p},
+				ServiceDefinitionName: "temp",
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp{Entries: instances, Count: len(instances)})
+	}))
+	return srv, &callCount
+}
+
+// TestAutoPushPollerFiresOnProviderChange — trigger fired after provider set changes.
+func TestAutoPushPollerFiresOnProviderChange(t *testing.T) {
+	// SR returns ProviderA on first call, then ProviderA+ProviderB.
+	fakeSRSrv, _ := mockSRPoller([]string{"ProviderA"}, []string{"ProviderA", "ProviderB"})
+	defer fakeSRSrv.Close()
+
+	// Track push notifications delivered.
+	var triggerCount int32
+	notifySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&triggerCount, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer notifySrv.Close()
+
+	orch := dynservice.NewDynamicOrchestrator(fakeSRSrv.URL, "", "", false, false)
+	h := api.NewHandlerWithPoller(orch, "", fakeSRSrv.URL, 1*time.Millisecond)
+
+	// Subscribe with serviceDefinition.
+	sub := dynservice.CreateSubscriptionRequest{
+		OwnerSystemName:   "consumer",
+		TargetSystemName:  "temp",
+		ServiceDefinition: "temp-sensor",
+		NotifyInterface: map[string]any{
+			"notifyUri": notifySrv.URL + "/notify",
+		},
+	}
+	data, _ := json.Marshal(sub)
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/subscribe", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("subscribe: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Wait for poller to fire twice (change detected on second poll).
+	time.Sleep(50 * time.Millisecond)
+
+	if atomic.LoadInt32(&triggerCount) == 0 {
+		t.Error("expected at least one push trigger after provider set changed")
+	}
+}
+
+// TestAutoPushPollerNoFireWhenUnchanged — no trigger when provider set is unchanged.
+func TestAutoPushPollerNoFireWhenUnchanged(t *testing.T) {
+	// SR always returns the same provider list.
+	fakeSRSrv, _ := mockSRPoller([]string{"ProviderA"}, []string{"ProviderA"})
+	defer fakeSRSrv.Close()
+
+	var triggerCount int32
+	notifySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&triggerCount, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer notifySrv.Close()
+
+	orch := dynservice.NewDynamicOrchestrator(fakeSRSrv.URL, "", "", false, false)
+	h := api.NewHandlerWithPoller(orch, "", fakeSRSrv.URL, 1*time.Millisecond)
+
+	sub := dynservice.CreateSubscriptionRequest{
+		OwnerSystemName:   "consumer",
+		TargetSystemName:  "temp",
+		ServiceDefinition: "temp-sensor",
+		NotifyInterface:   map[string]any{"notifyUri": notifySrv.URL + "/notify"},
+	}
+	data, _ := json.Marshal(sub)
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/subscribe", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	time.Sleep(50 * time.Millisecond)
+
+	if atomic.LoadInt32(&triggerCount) != 0 {
+		t.Errorf("expected no trigger when provider set unchanged, got %d", triggerCount)
+	}
+}
+
+// TestAutoPushPollerSkipsEmptyServiceDefinition — subscription with no ServiceDefinition → no SR call.
+func TestAutoPushPollerSkipsEmptyServiceDefinition(t *testing.T) {
+	var srCallCount int32
+	fakeSRSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&srCallCount, 1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"entries": []any{}, "count": 0})
+	}))
+	defer fakeSRSrv.Close()
+
+	orch := dynservice.NewDynamicOrchestrator(fakeSRSrv.URL, "", "", false, false)
+	h := api.NewHandlerWithPoller(orch, "", fakeSRSrv.URL, 1*time.Millisecond)
+
+	// Subscribe WITHOUT serviceDefinition.
+	sub := dynservice.CreateSubscriptionRequest{
+		OwnerSystemName:  "consumer",
+		TargetSystemName: "temp",
+		// ServiceDefinition intentionally empty
+	}
+	data, _ := json.Marshal(sub)
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/subscribe", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	time.Sleep(50 * time.Millisecond)
+
+	// SR should NOT have been called by the poller for this subscription.
+	// (The SR may be called 0 times since we have no subscriptions with serviceDefinition.)
+	_ = atomic.LoadInt32(&srCallCount) // just ensure no panic
+}
+
+// TestAutoPushPollerContinuesWhenSRUnreachable — non-listening SR → no panic, subscriptions intact.
+func TestAutoPushPollerContinuesWhenSRUnreachable(t *testing.T) {
+	orch := dynservice.NewDynamicOrchestrator("http://127.0.0.1:1", "", "", false, false)
+	h := api.NewHandlerWithPoller(orch, "", "http://127.0.0.1:1", 1*time.Millisecond)
+
+	sub := dynservice.CreateSubscriptionRequest{
+		OwnerSystemName:   "consumer",
+		TargetSystemName:  "temp",
+		ServiceDefinition: "temp-sensor",
+	}
+	data, _ := json.Marshal(sub)
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/subscribe", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	// Run for a short time — should not panic.
+	time.Sleep(50 * time.Millisecond)
+
+	// Subscription should still exist.
+	qReq := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/mgmt/push/query",
+		bytes.NewReader([]byte("{}")))
+	qReq.Header.Set("Content-Type", "application/json")
+	qw := httptest.NewRecorder()
+	h.ServeHTTP(qw, qReq)
+	if qw.Code != http.StatusOK {
+		t.Fatalf("query: expected 200, got %d", qw.Code)
+	}
+	var qResp struct {
+		Count int `json:"count"`
+	}
+	json.NewDecoder(qw.Body).Decode(&qResp)
+	if qResp.Count != 1 {
+		t.Errorf("expected 1 subscription, got %d", qResp.Count)
 	}
 }

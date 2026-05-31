@@ -9,6 +9,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -244,5 +246,87 @@ func TestNewHTTPClient_WithTLS(t *testing.T) {
 	}
 	if client.Transport == nil {
 		t.Error("expected non-nil transport for TLS client")
+	}
+}
+
+// ── ServeHTTPS ────────────────────────────────────────────────────────────────
+
+// TestServeHTTPSFalseStartsPlainHTTP — httpsOnly=false, tlsCfg=nil → plain HTTP.
+// The function should invoke the plain HTTP path (we verify it doesn't panic).
+func TestServeHTTPSFalseStartsPlainHTTP(t *testing.T) {
+	// We cannot actually block on ListenAndServe in a unit test, so we verify
+	// the function signature and basic argument routing by passing a bad addr
+	// that fails immediately — the important thing is no panic on nil tlsCfg.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	err := tlsutil.ServeHTTPS("bad-addr-will-fail:0", "", handler, nil, false)
+	// An error is expected (bad addr), but no panic.
+	if err == nil {
+		t.Error("expected error from bad plain addr")
+	}
+}
+
+// TestServeHTTPSOnlyWithoutTLSFallsBack — httpsOnly=true, tlsCfg=nil → falls back to plain HTTP.
+func TestServeHTTPSOnlyWithoutTLSFallsBack(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	// httpsOnly=true but tlsCfg=nil → fail-safe: use plain HTTP, which fails on bad addr.
+	err := tlsutil.ServeHTTPS("bad-addr-will-fail:0", "", handler, nil, true)
+	if err == nil {
+		t.Error("expected error from bad plain addr (fail-safe)")
+	}
+}
+
+// TestServeHTTPSOnlyHealthOnlyOnPlainPort — with TLS config, plain port serves /health only.
+func TestServeHTTPSOnlyHealthOnlyOnPlainPort(t *testing.T) {
+	certs := writeTestCerts(t)
+	serverTLS, err := tlsutil.LoadServerTLSConfig(certs.certFile, certs.keyFile, "")
+	if err != nil {
+		t.Fatalf("LoadServerTLSConfig: %v", err)
+	}
+
+	// Start a real HTTP listener on a random port (plain port).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	plainAddr := ln.Addr().String()
+	ln.Close() // Release port; ServeHTTPS will rebind it
+
+	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("main-handler"))
+	})
+
+	// Run ServeHTTPS in background — it will start the health-only plain listener
+	// and attempt TLS on a bad port (will fail, but plain port should be up).
+	done := make(chan error, 1)
+	go func() {
+		done <- tlsutil.ServeHTTPS(plainAddr, "127.0.0.1:0", mainHandler, serverTLS, true)
+	}()
+
+	// Give the goroutine a moment to start.
+	time.Sleep(50 * time.Millisecond)
+
+	// /health on plain port → 200
+	resp, err := http.Get("http://" + plainAddr + "/health")
+	if err != nil {
+		t.Fatalf("/health request: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("/health: want 200, got %d", resp.StatusCode)
+	}
+
+	// /other on plain port → 451
+	resp2, err := http.Get("http://" + plainAddr + "/other")
+	if err != nil {
+		t.Fatalf("/other request: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnavailableForLegalReasons {
+		t.Errorf("/other: want 451, got %d", resp2.StatusCode)
 	}
 }

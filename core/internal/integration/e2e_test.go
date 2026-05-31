@@ -138,7 +138,7 @@ func startAuth(t *testing.T) *httptest.Server {
 
 func startCA(t *testing.T) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(caapi.NewHandler(casvc.NewAuthService(carepo.NewMemoryRepository()), "", blclient.NopClient{}))
+	return httptest.NewServer(caapi.NewHandler(casvc.NewAuthService(carepo.NewMemoryRepository()), "", blclient.NopClient{}, ""))
 }
 
 func startDynOrch(t *testing.T, srURL, caURL, authSysURL string, checkAuth, checkIdentity bool) *httptest.Server {

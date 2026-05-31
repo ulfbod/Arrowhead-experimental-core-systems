@@ -1,6 +1,6 @@
 # AH5 Conformance Update Plan
 
-**Status:** Phases 1–4 complete (Steps 1–49, E1–E5); Phase 5 planned (Steps 50–56)  
+**Status:** Phases 1–5 complete (Steps 1–56, E1–E5)  
 **Scope:** `core/`, `core-evol/`, all active experiments  
 **Source of truth for gaps:** `core/GAP_ANALYSIS.md` (gaps G1–G53)  
 **Source of truth for API spec:** `core/SPEC.md` and `core/GAP_ANALYSIS.md`  
@@ -7533,4 +7533,876 @@ Run after all Phase 4 steps are complete (Steps 40–48):
 | `cd core && go test -race ./...` | All Phase 4 |
 | `bash core/test-system.sh` | All Phase 4 |
 | `go build ./...` (workspace root) | All Phase 4 |
+
+---
+
+## Phase 5 — Full protocol compliance (Steps 50–56) — **COMPLETE**
+
+**Goal:** Reach ≥90% across all dimensions for every spec-defined system. Covers high-effort
+crypto, transport, and protocol gaps. Each step has significant design complexity or external
+considerations; prerequisite management is required.
+
+**Status:** All steps completed. All tests pass with race detection (`go test -race ./...` from `core/`).
+
+**No new external Go dependencies added in this phase.** All crypto uses Go stdlib
+(`crypto/rsa`, `crypto/sha256`, `crypto/sha512`, `encoding/pem`, `crypto/rand`) or
+already-imported modules (`golang.org/x/crypto` is already in `core/go.mod`).
+MQTTS uses the existing `paho.mqtt.golang` client's TLS support.
+
+**Order:**
+- Step 50 (G6) first — builds directly on the `VerifyTokenIdentity` pattern from G10 (Phase 3)
+  and uses the same `httputil` helper; no other Phase 5 step depends on it.
+- Step 51 (G47) — JWT crypto; independent; establishes the RSA key pair used by G6
+  only if TRANSLATION_BRIDGE variant needs JWT signing (it does).
+- Step 52 (G4) — mTLS enforcement; independent; all binaries already have optional TLS;
+  this step adds the `HTTPS_ONLY` mode and a shared `tlsutil.Serve` helper.
+- Step 53 (G53) — QoS dimensions; independent; extends DeviceQoSEvaluator and orchestration model.
+- Step 54 (G26) — auto-push; independent; extends DynamicOrchestration with SR polling goroutine.
+- Step 55 (G34) — MQTTS; independent; extends mqttutil with TLS option.
+- Step 56 — documentation sweep; apply after Steps 50–55 all pass.
+
+---
+
+## Step 50 — ConsumerAuthorization token relay requires Authentication identity (G6)
+
+**Gap addressed:**
+- **G6** — `POST /consumerauthorization/authorization-token/generate` does not require or
+  validate a prior identity token from the Authentication system. Any caller can request a
+  token for any `consumer` without proving that identity. The DynamicOrchestration identity
+  check (`ENABLE_IDENTITY_CHECK`) provides partial coupling, but the ConsumerAuth token endpoint
+  itself is open.
+
+**Why first:** High priority. Builds directly on the `VerifyTokenIdentity` pattern already
+implemented in `core/internal/httputil/respond.go` for G10 (Step 33). The code change is
+small and follows an established pattern.
+
+**Design:** Add `TOKEN_AUTH_URL` env var to ConsumerAuthorization. When set, `handleTokenGenerate`
+extracts the `Authorization: Bearer <token>` header, calls
+`GET <TOKEN_AUTH_URL>/authentication/identity/verify/<token>`, and asserts the returned
+`systemName` matches `req.Consumer`. Fail-closed: missing token → 401; name mismatch → 403;
+auth system unreachable → 503.
+
+This mirrors the `REGISTER_AUTH_URL` pattern from G10 exactly: open (development mode) when
+the env var is unset; enforced when set.
+
+**Prerequisites:** Pre-flight check passes. `core/CLAUDE.md` read before starting.
+
+**Files to modify (core/):**
+- `core/internal/consumerauth/api/handler.go` — add `tokenAuthURL string` field to `Handler`;
+  update `NewHandler` to accept it; in `handleTokenGenerate`: when `tokenAuthURL != ""`, call
+  `httputil.VerifyTokenIdentity(r, tokenAuthURL)` and assert result matches `req.Consumer`
+- `core/cmd/consumerauth/main.go` — read `TOKEN_AUTH_URL` env var; pass to `NewHandler`
+- `core/internal/consumerauth/api/handler_test.go` — add token relay tests
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `TOKEN_AUTH_URL` | *(unset)* | When set, `POST /authorization-token/generate` requires a valid Bearer token whose `systemName` matches the request `consumer` field. Unset = open access (development mode). |
+
+---
+
+### TDD cycle 50.1 — Token generation without TOKEN_AUTH_URL succeeds unconditionally
+
+**Test:** `TestTokenGenerateNoAuthURLSucceeds`
+
+No `TOKEN_AUTH_URL` set. POST generate with no Authorization header → assert 201 Created.
+This is the backward-compatible regression guard — must pass before and after implementation.
+
+---
+
+### TDD cycle 50.2 — Token generation with TOKEN_AUTH_URL requires Bearer token
+
+**Test:** `TestTokenGenerateAuthURLRequiresBearer`
+
+`TOKEN_AUTH_URL` set to a mock auth server. POST generate with no Authorization header →
+assert 401 Unauthorized.
+
+**Expected failure before implementation:** 201 (token generated without auth check).
+
+---
+
+### TDD cycle 50.3 — Token generation succeeds when identity matches consumer
+
+**Test:** `TestTokenGenerateIdentityMatchesConsumer`
+
+Mock auth server returns `{"systemName": "ConsumerA"}` for the provided token. POST generate
+with `consumer: "ConsumerA"` and matching Bearer token → assert 201 Created.
+
+---
+
+### TDD cycle 50.4 — Token generation fails when identity mismatches consumer
+
+**Test:** `TestTokenGenerateIdentityMismatchRejects`
+
+Mock auth server returns `{"systemName": "ConsumerA"}`. POST generate with `consumer: "ConsumerB"`
+→ assert 403 Forbidden.
+
+---
+
+### TDD cycle 50.5 — Auth system unreachable returns 503
+
+**Test:** `TestTokenGenerateAuthUnreachableReturns503`
+
+`TOKEN_AUTH_URL` set to a non-listening address. POST generate with any Bearer token →
+assert 503 Service Unavailable.
+
+---
+
+### System test
+
+Start ConsumerAuth with `TOKEN_AUTH_URL=http://localhost:8081`. Start Authentication.
+Create an identity `ConsumerA`. Login to get a token. Generate an authorization token with
+`consumer: "ConsumerA"` and Bearer token → assert 201. Generate with `consumer: "ConsumerB"`
+and same token → assert 403.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/consumerauth/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/consumerauth/`.
+
+### Documentation updates (after Step 50)
+
+- `core/GAP_ANALYSIS.md` — update G6: mark resolved; describe TOKEN_AUTH_URL; note remaining
+  gap completion (full relay now enforced when env var is set)
+- `core/SPEC.md` — add `TOKEN_AUTH_URL` to ConsumerAuthorization configuration table;
+  document 401/403/503 responses on the token generate endpoint
+- `README.md` — add `TOKEN_AUTH_URL` to ConsumerAuthorization configuration section
+- `CONFORMANCE.md` — move G6 from Partial → Resolved with Step 50; update ConsumerAuthorization ratings
+
+### Completion criteria
+
+- [ ] `TestTokenGenerateNoAuthURLSucceeds` passes (regression guard)
+- [ ] `TestTokenGenerateAuthURLRequiresBearer` passes
+- [ ] `TestTokenGenerateIdentityMatchesConsumer` passes
+- [ ] `TestTokenGenerateIdentityMismatchRejects` passes
+- [ ] `TestTokenGenerateAuthUnreachableReturns503` passes
+- [ ] All existing ConsumerAuth token tests still pass
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on `internal/consumerauth/`
+
+---
+
+## Step 51 — JWT token variants: RSA signing infrastructure (G47)
+
+**Gap addressed:**
+- **G47** — `RSA_SHA256_JSON_WEB_TOKEN`, `RSA_SHA512_JSON_WEB_TOKEN`, and
+  `TRANSLATION_BRIDGE_TOKEN` return 501. The `/authorization-token/public-key` endpoint returns
+  404. No RSA key pair is managed at startup.
+
+**Design:** Use Go stdlib only — `crypto/rsa`, `crypto/sha256`, `crypto/sha512`, `encoding/pem`,
+`crypto/rand`. No external JWT library added.
+
+JWT format (manual encoding, RFC 7519 compliant):
+```
+base64url(header) + "." + base64url(payload) + "." + base64url(signature)
+```
+- Header: `{"alg":"RS256","typ":"JWT"}` or `{"alg":"RS512","typ":"JWT"}`
+- Payload: standard claims (`iss`, `sub`, `aud`, `exp`) + AH5 fields
+  (`consumer`, `provider`, `target`, `targetType`, `scope`)
+- Signature: `RSASSA-PKCS1-v1_5` over SHA-256/SHA-512 of `header.payload`
+
+RSA key management:
+- `JWT_PRIVATE_KEY_FILE` env var: load RSA private key from PEM file at startup
+- If unset: generate an ephemeral RSA-2048 key pair at startup (not persisted)
+- Single key pair serves both RSA_SHA256 and RSA_SHA512 variants (algorithm differs, key is the same)
+
+`TRANSLATION_BRIDGE_TOKEN`: RSA_SHA256 JWT with additional payload fields:
+`bridgeId string`, `fromInterface string`, `toInterface string`.
+Request body must include these fields (extend `TokenGenerateRequest`).
+
+`GET /authorization-token/public-key`: returns `{"publicKey": "<PEM string>"}` with the
+RSA public key, enabling providers to verify tokens without calling this server.
+
+**Prerequisites:** Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/consumerauth/service/auth.go` — add RSA key pair field to `AuthService`;
+  add `InitJWTKeyPair(privateKeyPEM []byte)` and `GenerateEphemeralKeyPair()` helpers;
+  add `RSA_SHA256`, `RSA_SHA512`, and `TRANSLATION_BRIDGE` cases to `GenerateAuthToken`;
+  add `VerifyJWTAuthToken(accessToken string)` path in `VerifyAuthToken`
+- `core/internal/consumerauth/model/types.go` — extend `TokenGenerateRequest` with
+  `BridgeID`, `FromInterface`, `ToInterface` fields for TRANSLATION_BRIDGE variant;
+  add `TokenVariantRSA256`, `TokenVariantRSA512`, `TokenVariantTranslationBridge` constants
+- `core/internal/consumerauth/api/handler.go` — update `handleTokenPublicKey` to return PEM;
+  update `statusFor` to map new error types
+- `core/cmd/consumerauth/main.go` — read `JWT_PRIVATE_KEY_FILE`; call `InitJWTKeyPair` or
+  `GenerateEphemeralKeyPair`
+- `core/internal/consumerauth/service/auth_test.go` and `handler_test.go` — add JWT tests
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `JWT_PRIVATE_KEY_FILE` | *(unset)* | Path to PEM-encoded RSA private key for JWT signing. When unset, an ephemeral RSA-2048 key pair is generated at startup (tokens are valid only for the current process lifetime). |
+
+---
+
+### TDD cycle 51.1 — RSA_SHA256 token generates a valid JWT
+
+**Test:** `TestGenerateRSA256Token`
+
+Generate token with variant `RSA_SHA256_JSON_WEB_TOKEN`. Assert response contains a token
+with three `.`-separated base64url sections. Decode header → assert `{"alg":"RS256","typ":"JWT"}`.
+Decode payload → assert `consumer`, `provider`, `exp` fields present and `exp` is in the future.
+
+**Expected failure before implementation:** 501 Not Implemented.
+
+---
+
+### TDD cycle 51.2 — RSA_SHA256 token verifies successfully
+
+**Test:** `TestVerifyRSA256Token`
+
+Generate RSA_SHA256 token. Call `GET /authorization-token/verify/<token>` → assert 200 and
+correct `consumer`/`provider` fields in response.
+
+---
+
+### TDD cycle 51.3 — RSA_SHA512 token generates with RS512 header
+
+**Test:** `TestGenerateRSA512Token`
+
+Generate with `RSA_SHA512_JSON_WEB_TOKEN`. Decode header → assert `"alg":"RS512"`. Verify
+token → assert 200.
+
+---
+
+### TDD cycle 51.4 — public-key endpoint returns PEM
+
+**Test:** `TestPublicKeyEndpointReturnsPEM`
+
+`GET /authorization-token/public-key` → assert 200, body contains `"publicKey"` field with
+string starting `"-----BEGIN PUBLIC KEY-----"` or `"-----BEGIN RSA PUBLIC KEY-----"`.
+
+**Expected failure before implementation:** 404 Not Found.
+
+---
+
+### TDD cycle 51.5 — TRANSLATION_BRIDGE token includes bridge fields
+
+**Test:** `TestGenerateTranslationBridgeToken`
+
+Generate with variant `TRANSLATION_BRIDGE_TOKEN`, `bridgeId: "bridge-1"`,
+`fromInterface: "HTTP-INSECURE-JSON"`, `toInterface: "MQTT-INSECURE-JSON"`. Decode payload →
+assert `bridgeId`, `fromInterface`, `toInterface` present. Verify → assert 200.
+
+---
+
+### TDD cycle 51.6 — Tampered JWT fails verification
+
+**Test:** `TestTamperedJWTFailsVerification`
+
+Generate RSA_SHA256 token. Modify the payload section (re-base64url without resigning).
+Verify → assert 404 (invalid token).
+
+---
+
+### System test
+
+Start ConsumerAuth (optionally with `JWT_PRIVATE_KEY_FILE`). Generate RSA_SHA256 token via
+API. Call public-key endpoint and retrieve PEM. Manually verify the JWT signature using
+the returned public key (e.g., with `openssl` or a small Go snippet).
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/consumerauth/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/consumerauth/`.
+
+### Documentation updates (after Step 51)
+
+- `core/GAP_ANALYSIS.md` — mark G47 resolved; describe key management (ephemeral vs file-backed);
+  list JWT variants implemented; note TRANSLATION_BRIDGE_TOKEN fields
+- `core/SPEC.md` — add `JWT_PRIVATE_KEY_FILE` to ConsumerAuthorization configuration;
+  add `RSA_SHA256_JSON_WEB_TOKEN`, `RSA_SHA512_JSON_WEB_TOKEN`, `TRANSLATION_BRIDGE_TOKEN`
+  to token variant table; document `GET /authorization-token/public-key` response shape;
+  document `TokenGenerateRequest` bridge fields
+- `core/EXAMPLES.md` — add example: RSA_SHA256 token generation, public-key fetch, verify
+- `CONFORMANCE.md` — move G47 from Open → Resolved with Step 51;
+  update ConsumerAuthorization ratings (significant Endpoint% and Model% gain)
+
+### Completion criteria
+
+- [ ] `TestGenerateRSA256Token` passes
+- [ ] `TestVerifyRSA256Token` passes
+- [ ] `TestGenerateRSA512Token` passes
+- [ ] `TestPublicKeyEndpointReturnsPEM` passes
+- [ ] `TestGenerateTranslationBridgeToken` passes
+- [ ] `TestTamperedJWTFailsVerification` passes
+- [ ] All existing ConsumerAuth token tests still pass (TIME_LIMITED, USAGE_LIMITED, BASE64_SELF_CONTAINED)
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on `internal/consumerauth/`
+
+---
+
+## Step 52 — mTLS default enforcement (G4)
+
+**Gap addressed:**
+- **G4** — All systems support optional mTLS via `TLS_PORT`/`TLS_CERT_FILE`/`TLS_KEY_FILE`/
+  `TLS_CA_FILE` (experiment-7 pattern). However, plain HTTP remains the *primary* listener;
+  TLS is additive. AH5 production deployments require TLS as the default transport.
+
+**Design:** Add `HTTPS_ONLY` env var. When `true`:
+1. The TLS listener (on `TLS_PORT`) becomes the sole full-service listener.
+2. The plain HTTP listener (on `PORT`) serves *only* `/health` — all other paths return 451
+   (Unavailable For Legal Reasons) or 308 Redirect to the HTTPS port.
+3. If `HTTPS_ONLY=true` but `TLS_PORT` is unset or `TLS_CERT_FILE`/`TLS_KEY_FILE` are missing,
+   the binary logs a warning and continues with plain HTTP (fail-safe, not fail-closed — avoids
+   breaking development environments).
+
+Abstracted into a shared `tlsutil.ServeHTTPS(plainAddr, tlsAddr, handler, tlsCfg, httpsOnly bool)`
+helper to avoid duplicating this logic across all 9+ binaries.
+
+**Prerequisites:** Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/tlsutil/tlsutil.go` — add `ServeHTTPS(plainAddr, tlsAddr string, handler http.Handler, tlsCfg *tls.Config, httpsOnly bool) error` function;
+  when `httpsOnly && tlsCfg != nil`: serve health-only mux on `plainAddr` in goroutine, block on TLS;
+  when `!httpsOnly || tlsCfg == nil`: start optional TLS in goroutine (if configured), block on plain HTTP
+- `core/internal/tlsutil/tlsutil_test.go` — add tests for `ServeHTTPS` logic
+- Each `core/cmd/*/main.go` — replace the current dual-listener pattern with a call to
+  `tlsutil.ServeHTTPS(plainAddr, tlsAddr, handler, tlsCfg, httpsOnly)`
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `HTTPS_ONLY` | `false` | When `true` and `TLS_PORT`/`TLS_CERT_FILE`/`TLS_KEY_FILE` are set, the plain HTTP listener serves only `/health`; all full-service traffic must use the TLS port. Silently ignored when TLS is not fully configured. |
+
+---
+
+### TDD cycle 52.1 — ServeHTTPS with HTTPS_ONLY=false starts plain HTTP (regression guard)
+
+**Test:** `TestServeHTTPSFalseStartsPlainHTTP`
+
+Call `ServeHTTPS` with `httpsOnly=false` and `tlsCfg=nil`. Confirm the plain HTTP path is
+taken (observable via the handler or an in-process listener). This is the existing behaviour;
+must pass before and after implementation.
+
+---
+
+### TDD cycle 52.2 — HTTPS_ONLY=true without TLS config falls back to plain HTTP with warning
+
+**Test:** `TestServeHTTPSOnlyWithoutTLSFallsBack`
+
+`httpsOnly=true`, `tlsCfg=nil`. Assert plain HTTP listener is used (fail-safe behaviour).
+No panic or fatal exit.
+
+---
+
+### TDD cycle 52.3 — HTTPS_ONLY=true with TLS config restricts plain HTTP to health only
+
+**Test:** `TestServeHTTPSOnlyHealthOnlyOnPlainPort`
+
+`httpsOnly=true`, `tlsCfg` non-nil (use test TLS config). Start servers. Plain HTTP request
+to `/health` → 200. Plain HTTP request to `/serviceregistry/service-discovery/register` →
+non-200 (451 or 308). TLS request to full endpoint → 200.
+
+This test requires a test TLS certificate; use a self-signed cert generated in test setup
+(`tlsutil_test.go` can generate one via `crypto/tls.Generate`).
+
+---
+
+### System test
+
+Generate a self-signed CA + server cert + client cert (script in `core/test-system.sh` or
+inline). Start ServiceRegistry with `HTTPS_ONLY=true`, `TLS_PORT=8480`, `TLS_CERT_FILE=...`,
+`TLS_KEY_FILE=...`, `TLS_CA_FILE=...`. Assert plain HTTP `/health` returns 200. Assert plain
+HTTP service-discovery endpoint returns non-200. Assert mTLS service-discovery call with
+valid client cert returns 200.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/tlsutil/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/tlsutil/`.
+
+### Documentation updates (after Step 52)
+
+- `core/GAP_ANALYSIS.md` — update G4: mark resolved; describe `HTTPS_ONLY` semantics and
+  fail-safe fallback; note CA still on plain HTTP (bootstrapping constraint remains)
+- `core/SPEC.md` — add `HTTPS_ONLY` to all system configuration tables; document
+  health-only plain HTTP fallback when `HTTPS_ONLY=true`
+- `README.md` — add `HTTPS_ONLY` to Configuration section
+- `CONFORMANCE.md` — move G4 from Partial → Resolved with Step 52;
+  update all system ratings (Behavior% gain across all systems)
+
+### Completion criteria
+
+- [ ] `TestServeHTTPSFalseStartsPlainHTTP` passes (regression guard)
+- [ ] `TestServeHTTPSOnlyWithoutTLSFallsBack` passes
+- [ ] `TestServeHTTPSOnlyHealthOnlyOnPlainPort` passes
+- [ ] All existing TLS tests still pass
+- [ ] All existing non-TLS tests still pass (no regression from `main.go` changes)
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on `internal/tlsutil/`
+
+---
+
+## Step 53 — QoS full model: bandwidth, jitter, packet-loss dimensions (G53)
+
+**Gap addressed:**
+- **G53** — `QoSRecord` has only `latencyMs` and `reachable`. AH5 defines `qualityRequirements`
+  that include bandwidth and jitter. Consumers cannot specify bandwidth or jitter requirements.
+
+**Design:**
+- **Jitter** (stddev of RTT): measure 5 TCP RTT samples; compute standard deviation of the
+  latency values in milliseconds. Inexpensive — reuses existing TCP dial logic.
+- **Bandwidth** (approximate): open TCP connection; send 64 KB of data and measure throughput
+  in bytes/second. `BandwidthBps` is an approximation suitable for research/teaching; not a
+  substitute for iPerf.
+- **PacketLoss** (percentage): attempt N probes; count failures; `PacketLoss = failures/N * 100`.
+- **Probe timeout**: `QOS_PROBE_TIMEOUT_SECONDS` env var (default 5 s) limits each individual
+  probe. Total measurement time is bounded by `PROBE_SAMPLES * QOS_PROBE_TIMEOUT_SECONDS`.
+
+DynamicOrchestration filter extension: when `maxBandwidthBps`, `maxJitterMs`, or
+`maxPacketLoss` are set in a `QoSRequirement`, the QoS evaluator filter applies them in
+addition to `maxLatencyMs`.
+
+**Prerequisites:** Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/deviceqoseval/model/types.go` — add `BandwidthBps int64`, `JitterMs int64`,
+  `PacketLoss float64` to `QoSRecord`; add `MaxBandwidthBps int64`, `MaxJitterMs int64`,
+  `MaxPacketLoss float64` to `QoSRequirement` in `orchestration/model/types.go`
+- `core/internal/deviceqoseval/service/evaluator.go` — update `Measure` to run 5-sample RTT
+  (for jitter), bandwidth probe, and packet-loss count; read `QOS_PROBE_TIMEOUT_SECONDS`
+- `core/internal/orchestration/dynamic/service/orchestrator.go` — extend QoS filter to check
+  `BandwidthBps`, `JitterMs`, `PacketLoss` against the new `QoSRequirement` thresholds
+- `core/internal/deviceqoseval/` (tests) — add multi-dimension measurement tests
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `QOS_PROBE_TIMEOUT_SECONDS` | `5` | Timeout for each individual QoS probe (RTT dial, bandwidth transfer). Total measurement time ≤ `5 × QOS_PROBE_TIMEOUT_SECONDS`. |
+
+---
+
+### TDD cycle 53.1 — QoS record includes jitter and bandwidth fields
+
+**Test:** `TestQoSRecordHasJitterAndBandwidthFields`
+
+Use an in-process TCP echo server. Call `Measure`. Assert returned `QoSRecord` has non-zero
+`JitterMs` (≥ 0), `BandwidthBps` (> 0 for reachable host), and `PacketLoss` (≥ 0.0).
+
+**Expected failure before implementation:** `QoSRecord` has no such fields → compile error.
+
+---
+
+### TDD cycle 53.2 — Jitter is zero for consistently fast loopback
+
+**Test:** `TestQoSJitterLoopbackIsLow`
+
+Measure 5 RTT samples against loopback (127.0.0.1). Assert `JitterMs < 10` (loopback is
+consistent; stddev should be near zero in a test environment).
+
+---
+
+### TDD cycle 53.3 — OrchestrationRequest accepts maxBandwidthBps requirement
+
+**Test:** `TestOrchestrationQoSBandwidthRequirement`
+
+Two fake providers. QoS evaluator returns `BandwidthBps: 1000000` for provider A,
+`BandwidthBps: 100` for provider B. Request has `qualityRequirements: [{"maxBandwidthBps": 500000}]`
+— this means minimum bandwidth is 500 KB/s. Assert only provider A in results.
+
+Note: `maxBandwidthBps` in the requirement is a *minimum* threshold for inclusion (counter-intuitive
+naming from the spec); document this explicitly.
+
+---
+
+### TDD cycle 53.4 — No QoS requirements still passes all providers (regression guard)
+
+**Test:** `TestOrchestrationQoSNoRequirementsPassesAll`
+
+Existing test — must still pass after model changes. No `qualityRequirements` → all providers
+included regardless of QoS values.
+
+---
+
+### System test
+
+Start DeviceQoSEvaluator. Trigger a measurement to a fast endpoint (e.g., localhost) and a
+slow/unreachable endpoint. Query the measurement records → assert `jitterMs`, `bandwidthBps`,
+`packetLoss` fields are present and populated. Submit an orchestration request with
+`qualityRequirements: [{"maxBandwidthBps": 50000}]` → assert only the fast provider is returned.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out \
+  ./internal/deviceqoseval/... \
+  ./internal/orchestration/dynamic/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on all modified packages.
+
+### Documentation updates (after Step 53)
+
+- `core/GAP_ANALYSIS.md` — mark G53 resolved; describe jitter (5-sample RTT stddev), bandwidth
+  (TCP throughput), packet-loss (N-probe failure rate), and the maxBandwidthBps minimum-threshold semantics
+- `core/SPEC.md` — add `BandwidthBps`, `JitterMs`, `PacketLoss` to `QoSRecord`; add
+  `MaxBandwidthBps`, `MaxJitterMs`, `MaxPacketLoss` to `QoSRequirement`; add
+  `QOS_PROBE_TIMEOUT_SECONDS` to DeviceQoSEvaluator configuration; document minimum-threshold semantics
+- `core/EXAMPLES.md` — add example: orchestration with `maxBandwidthBps` requirement
+- `CONFORMANCE.md` — move G53 from Open → Resolved with Step 53;
+  update DeviceQoSEvaluator ratings (all three dimensions gain)
+
+### Completion criteria
+
+- [ ] `TestQoSRecordHasJitterAndBandwidthFields` passes
+- [ ] `TestQoSJitterLoopbackIsLow` passes
+- [ ] `TestOrchestrationQoSBandwidthRequirement` passes
+- [ ] `TestOrchestrationQoSNoRequirementsPassesAll` passes (regression guard)
+- [ ] All existing QoS evaluator tests still pass
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 54 — Provider-change auto-push delivery (G26 residual)
+
+**Gap addressed:**
+- **G26** (residual) — Push orchestration subscriptions are in place (Step 19) and manual
+  trigger delivery works (Step 31). The remaining sub-gap: no automatic delivery when the
+  SR provider set changes. Triggers must be fired manually via `mgmt/push/trigger`.
+
+**Design:**
+Add a background goroutine to `DynamicOrchHandler` that polls the ServiceRegistry for each
+active subscription and fires push triggers automatically when the provider set changes.
+
+Poll strategy:
+1. On every tick (interval = `PUSH_POLL_INTERVAL_SECONDS`), for each subscription in
+   `SubscriptionStore`:
+   - POST `SR_POLL_URL/serviceregistry/service-discovery/lookup` with `serviceDefinition = sub.TargetSystemName` (or a new `ServiceDefinition` field on `Subscription` — see below)
+   - Compare the returned provider set (sorted list of provider names) against the last-known
+     set stored in a local `map[subscriptionID][]string`
+   - If changed: call `TriggerPush(sub)` on the orchestrator
+2. If SR is unreachable, skip this tick silently (fail-open — do not remove subscriptions).
+
+**Model change:** Add `ServiceDefinition string` to `CreateSubscriptionRequest` and `Subscription`
+so the poller knows what service to poll for. This is backward-compatible: existing subscriptions
+with empty `ServiceDefinition` are skipped by the poller.
+
+**Prerequisites:** Step 31 complete (push delivery in place). Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/orchestration/dynamic/service/subscription_store.go` — add `ServiceDefinition`
+  to `Subscription` and `CreateSubscriptionRequest`
+- `core/internal/orchestration/dynamic/api/handler.go` — add `srPollURL string` field;
+  start `startAutoPushPoller(ctx)` goroutine in handler constructor when
+  `PUSH_POLL_INTERVAL_SECONDS > 0` and `SR_POLL_URL` is set; implement polling loop
+- `core/cmd/dynamicorch/main.go` — read `SR_POLL_URL` and `PUSH_POLL_INTERVAL_SECONDS`;
+  pass to handler
+- `core/internal/orchestration/dynamic/api/handler_test.go` — add auto-push poller tests
+
+**New environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `SR_POLL_URL` | *(unset)* | ServiceRegistry base URL for auto-push polling. When unset, auto-push polling is disabled. |
+| `PUSH_POLL_INTERVAL_SECONDS` | `30` | Interval between provider-change poll cycles. Ignored when `SR_POLL_URL` is unset. |
+
+---
+
+### TDD cycle 54.1 — Poller fires trigger when provider set changes
+
+**Test:** `TestAutoPushPollerFiresOnProviderChange`
+
+Set up a subscription with `serviceDefinition: "temp-sensor"`. Configure a mock SR that
+returns `["ProviderA"]` on the first poll and `["ProviderA", "ProviderB"]` on the second.
+Assert that `TriggerPush` (or the delivery mechanism) is called after the second poll but
+not the first.
+
+Use a short poll interval (1 ms) and a mock HTTP SR to avoid real network calls.
+
+**Expected failure before implementation:** No trigger fired (poller not implemented).
+
+---
+
+### TDD cycle 54.2 — Poller does not fire when provider set is unchanged
+
+**Test:** `TestAutoPushPollerNoFireWhenUnchanged`
+
+Mock SR always returns the same provider list. After two poll cycles, assert no trigger fired.
+
+---
+
+### TDD cycle 54.3 — Poller skips subscriptions with empty ServiceDefinition
+
+**Test:** `TestAutoPushPollerSkipsEmptyServiceDefinition`
+
+Subscription with empty `ServiceDefinition`. After one poll cycle, assert no SR call is made
+for that subscription (log check or mock HTTP call count).
+
+---
+
+### TDD cycle 54.4 — Poller continues when SR is unreachable (fail-open)
+
+**Test:** `TestAutoPushPollerContinuesWhenSRUnreachable`
+
+SR URL points to a non-listening address. After two poll cycles, assert no panic or goroutine
+leak. Subscriptions remain intact.
+
+---
+
+### System test
+
+Start DynamicOrchestration with `SR_POLL_URL=http://localhost:8080` and
+`PUSH_POLL_INTERVAL_SECONDS=2`. Subscribe with `serviceDefinition: "light-sensor"` and a
+notify URL pointing to a local HTTP server. Register a new provider for `light-sensor` in SR.
+Wait 3 seconds. Assert the notify URL received a push notification.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/orchestration/dynamic/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on all modified packages.
+
+### Documentation updates (after Step 54)
+
+- `core/GAP_ANALYSIS.md` — mark G26 fully resolved; describe polling strategy, fail-open
+  semantics, and the `ServiceDefinition` field addition to Subscription
+- `core/SPEC.md` — add `SR_POLL_URL` and `PUSH_POLL_INTERVAL_SECONDS` to DynamicOrchestration
+  configuration; add `serviceDefinition` to `CreateSubscriptionRequest` shape; document auto-push
+  trigger semantics
+- `README.md` — add `SR_POLL_URL` and `PUSH_POLL_INTERVAL_SECONDS`
+- `CONFORMANCE.md` — move G26 from Partial → Resolved with Step 54;
+  update DynamicOrchestration Behavior% rating
+
+### Completion criteria
+
+- [ ] `TestAutoPushPollerFiresOnProviderChange` passes
+- [ ] `TestAutoPushPollerNoFireWhenUnchanged` passes
+- [ ] `TestAutoPushPollerSkipsEmptyServiceDefinition` passes
+- [ ] `TestAutoPushPollerContinuesWhenSRUnreachable` passes (fail-open)
+- [ ] All existing push/subscription tests still pass
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 55 — MQTTS: MQTT over TLS (G34 residual)
+
+**Gap addressed:**
+- **G34** (residual) — The MQTT adapter (`core/internal/mqttutil`) connects via plain TCP
+  (`tcp://host:1883`). MQTTS (MQTT over TLS, `ssl://host:8883`) is not implemented.
+  The `MQTT-SECURE-JSON` AH5 interface is not registered.
+
+**Design:**
+Extend `NewMQTTAdapter` with an optional `*tls.Config`. When non-nil, use `ssl://` scheme
+and load the TLS config into `paho.mqtt.golang` `ClientOptions`. Add a new constructor:
+
+```go
+func NewMQTTAdapterWithTLS(brokerURL, clientID, systemTopic string,
+    tlsCfg *tls.Config) (*MQTTAdapter, error)
+```
+
+When `MQTT_BROKER_TLS_CA_FILE` is set, load TLS config via `tlsutil.LoadClientTLSConfig`
+and use this constructor. Register `MQTT-SECURE-JSON` interface in SR alongside
+(or instead of) `MQTT-INSECURE-JSON` depending on whether TLS is configured.
+
+**New environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `MQTT_BROKER_TLS_CA_FILE` | *(unset)* | CA certificate for MQTT broker TLS verification. When set, MQTT connects via `ssl://` and registers `MQTT-SECURE-JSON`. |
+| `MQTT_BROKER_TLS_CERT_FILE` | *(unset)* | Client certificate for mutual MQTT TLS. Optional alongside `MQTT_BROKER_TLS_CA_FILE`. |
+| `MQTT_BROKER_TLS_KEY_FILE` | *(unset)* | Client private key for mutual MQTT TLS. Required when `MQTT_BROKER_TLS_CERT_FILE` is set. |
+
+**Prerequisites:** Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/mqttutil/broker.go` — add `MQTTSecureInterfaceName = "MQTT-SECURE-JSON"` constant;
+  add `NewMQTTAdapterWithTLS(brokerURL, clientID, topic string, tlsCfg *tls.Config) (*MQTTAdapter, error)`;
+  update `NewMQTTAdapter` to accept optional TLS via a `WithTLS(cfg *tls.Config) Option` pattern
+  or overload; set `ClientOptions.SetTLSConfig(tlsCfg)` when non-nil
+- Each `core/cmd/*/main.go` — read `MQTT_BROKER_TLS_CA_FILE`; if set, call
+  `tlsutil.LoadClientTLSConfig` and use `NewMQTTAdapterWithTLS`; register `MQTT-SECURE-JSON`
+  interface in SR registration call
+- `core/internal/mqttutil/broker_test.go` — add MQTTS constructor and interface name tests
+
+---
+
+### TDD cycle 55.1 — MQTTSecureInterfaceName constant is defined
+
+**Test:** `TestMQTTSecureInterfaceNameDefined`
+
+Assert `mqttutil.MQTTSecureInterfaceName == "MQTT-SECURE-JSON"`.
+
+**Expected failure before implementation:** Constant does not exist (compile error).
+
+---
+
+### TDD cycle 55.2 — NewMQTTAdapterWithTLS accepts a TLS config
+
+**Test:** `TestNewMQTTAdapterWithTLSAcceptsTLSConfig`
+
+Call `NewMQTTAdapterWithTLS` with a non-nil `*tls.Config` and a mock `MQTTClient`. Assert
+no error and the adapter is created. (Use `NewMQTTAdapterWithClient` pattern for mock injection.)
+
+The TLS config is set on `ClientOptions` before `Connect()`; verify by inspecting the options
+struct or using a mock client that captures the options.
+
+---
+
+### TDD cycle 55.3 — Nil TLS config falls back to insecure connection (regression guard)
+
+**Test:** `TestNewMQTTAdapterNilTLSFallsBackToInsecure`
+
+Call with `tlsCfg = nil`. Assert adapter created successfully and `MQTTInterfaceName` (not
+`MQTTSecureInterfaceName`) would be registered. This validates backward compatibility.
+
+---
+
+### System test
+
+Start a Mosquitto broker with TLS enabled (self-signed cert). Start ServiceRegistry with
+`MQTT_BROKER_URL=ssl://localhost:8883`, `MQTT_BROKER_TLS_CA_FILE=...`. Assert the system
+connects to the broker and subscribes to the request topic over TLS. Assert SR registration
+includes `MQTT-SECURE-JSON` in `interfaces`.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/mqttutil/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/mqttutil/`.
+
+### Documentation updates (after Step 55)
+
+- `core/GAP_ANALYSIS.md` — update G34: mark MQTTS sub-gap resolved; describe the TLS
+  constructor and the three new env vars
+- `core/SPEC.md` — add `MQTT_BROKER_TLS_CA_FILE`, `MQTT_BROKER_TLS_CERT_FILE`,
+  `MQTT_BROKER_TLS_KEY_FILE` to all system configuration tables (MQTT section);
+  add `MQTT-SECURE-JSON` interface to the interface registration behaviour description
+- `README.md` — add three new env vars to Configuration section
+- `CONFORMANCE.md` — move G34 residual from Partial → Resolved with Step 55;
+  update all system Endpoint% ratings (MQTT-SECURE-JSON interface now registered)
+
+### Completion criteria
+
+- [ ] `TestMQTTSecureInterfaceNameDefined` passes
+- [ ] `TestNewMQTTAdapterWithTLSAcceptsTLSConfig` passes
+- [ ] `TestNewMQTTAdapterNilTLSFallsBackToInsecure` passes (regression guard)
+- [ ] All existing MQTT adapter tests still pass
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] Coverage ≥ 80% on `internal/mqttutil/`
+
+---
+
+## Step 56 — Phase 5 documentation update
+
+**Purpose:** Ensures every authoritative document reflects the final implemented state of
+Phase 5. Apply after all Phase 5 implementation steps (50–55) are complete and passing.
+
+**Prerequisites:** Steps 50–55 all complete and passing. Pre-flight check passes.
+
+### `core/GAP_ANALYSIS.md`
+
+For each resolved gap add (if not done per-step):
+- A `**Status: Resolved in Step N**` line at the top of its section
+- An implementation summary paragraph
+
+Gaps to update: G4, G6, G23 (TRANSLATION_BRIDGE), G26 (residual), G34 (MQTTS), G47, G53.
+
+### `CONFORMANCE.md`
+
+1. Move all seven gaps (G4, G6, G23 residual, G26 residual, G34 residual, G47, G53) from
+   **Open/Partial Gaps** table → **Resolved Gaps** table with Step numbers 50–55.
+2. Update **Per-System Ratings** for all affected systems to match Phase 5 projected values.
+3. Update Phase Plan: mark Phase 5 as **Complete**.
+4. Update **last updated** timestamp.
+
+### `CONFORMANCE_UPDATE_PLAN.md`
+
+1. Tick all completion criteria checkboxes in Steps 50–55.
+2. Add Phase 5 regression matrix (section 16).
+3. Update status header: `Phases 1–5 complete`.
+
+### `core/SPEC.md`
+
+- Add `TOKEN_AUTH_URL` to ConsumerAuthorization configuration (Step 50)
+- Add `JWT_PRIVATE_KEY_FILE` to ConsumerAuthorization configuration;
+  document RSA_SHA256, RSA_SHA512, TRANSLATION_BRIDGE token variants (Step 51)
+- Add `HTTPS_ONLY` to all system configuration tables (Step 52)
+- Add `BandwidthBps`, `JitterMs`, `PacketLoss` to `QoSRecord`;
+  add `MaxBandwidthBps`, `MaxJitterMs`, `MaxPacketLoss` to `QoSRequirement`;
+  add `QOS_PROBE_TIMEOUT_SECONDS` (Step 53)
+- Add `SR_POLL_URL` and `PUSH_POLL_INTERVAL_SECONDS` to DynamicOrchestration;
+  add `serviceDefinition` to `CreateSubscriptionRequest` (Step 54)
+- Add `MQTT_BROKER_TLS_CA_FILE`, `MQTT_BROKER_TLS_CERT_FILE`, `MQTT_BROKER_TLS_KEY_FILE`
+  to all systems (Step 55)
+
+### `core/EXAMPLES.md`
+
+- Add example: ConsumerAuth token generation with `TOKEN_AUTH_URL` identity check (Step 50)
+- Add example: RSA_SHA256 JWT token generation, public-key fetch, and manual verify (Step 51)
+- Add example: HTTPS_ONLY deployment with curl mTLS flags (Step 52)
+- Add example: orchestration with `maxBandwidthBps` QoS requirement (Step 53)
+- Add example: subscription with `serviceDefinition` and auto-push trigger (Step 54)
+
+### `README.md`
+
+- Add `TOKEN_AUTH_URL` to ConsumerAuthorization
+- Add `JWT_PRIVATE_KEY_FILE` to ConsumerAuthorization
+- Add `HTTPS_ONLY` to all systems
+- Add `QOS_PROBE_TIMEOUT_SECONDS` to DeviceQoSEvaluator
+- Add `SR_POLL_URL` and `PUSH_POLL_INTERVAL_SECONDS` to DynamicOrchestration
+- Add `MQTT_BROKER_TLS_CA_FILE`, `MQTT_BROKER_TLS_CERT_FILE`, `MQTT_BROKER_TLS_KEY_FILE` to all systems
+
+### Completion criteria
+
+- [ ] All seven gaps (G4, G6, G23 residual, G26 residual, G34 residual, G47, G53) appear in
+  the Resolved Gaps table in `CONFORMANCE.md`
+- [ ] None of the seven gaps remain in the Open/Partial Gaps tables in `CONFORMANCE.md`
+- [ ] Phase Plan row for Phase 5 shows **Complete**
+- [ ] All Steps 50–55 completion criteria checkboxes are `[x]`
+- [ ] All new env vars documented in `core/SPEC.md` and `README.md`
+- [ ] All new/changed endpoints documented in `core/SPEC.md`
+- [ ] `core/EXAMPLES.md` updated with at least one example per Phase 5 step
+- [ ] `core/GAP_ANALYSIS.md` shows resolved status for all seven gaps
+
+---
+
+## 16. Phase 5 — Regression matrix
+
+Run after all Phase 5 steps are complete (Steps 50–55):
+
+| Check | Steps |
+|---|---|
+| `cd core && go build ./...` | All Phase 5 |
+| `cd core && go vet ./...` | All Phase 5 |
+| `cd core && go test -race ./...` | All Phase 5 |
+| `bash core/test-system.sh` | All Phase 5 |
+| `go build ./...` (workspace root) | All Phase 5 |
 

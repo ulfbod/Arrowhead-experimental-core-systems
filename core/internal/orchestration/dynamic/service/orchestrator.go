@@ -267,36 +267,76 @@ func (o *DynamicOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest, to
 		results = filtered
 	}
 
-	// Step 4.5: QoS filtering (G40). Applied only when qualityRequirements are specified.
+	// Step 4.5: QoS filtering (G40 + G53). Applied only when qualityRequirements are specified.
 	if len(req.QualityRequirements) > 0 {
 		qosClient := o.qosClient
 		if qosClient == nil {
 			qosClient = client.NopQoSClient{}
 		}
-		// Determine the strictest maxLatencyMs requirement.
+		// Collect the strictest thresholds across all requirements.
 		var maxLatencyMs int64 = -1
+		var maxBandwidthBps int64 // minimum bandwidth threshold (counter-intuitive spec naming)
+		var maxJitterMs int64 = -1
+		var maxPacketLoss float64 = -1
 		for _, qr := range req.QualityRequirements {
-			if maxLatencyMs < 0 || qr.MaxLatencyMs < maxLatencyMs {
+			if qr.MaxLatencyMs > 0 && (maxLatencyMs < 0 || qr.MaxLatencyMs < maxLatencyMs) {
 				maxLatencyMs = qr.MaxLatencyMs
 			}
+			if qr.MaxBandwidthBps > maxBandwidthBps {
+				maxBandwidthBps = qr.MaxBandwidthBps
+			}
+			if qr.MaxJitterMs > 0 && (maxJitterMs < 0 || qr.MaxJitterMs < maxJitterMs) {
+				maxJitterMs = qr.MaxJitterMs
+			}
+			if qr.MaxPacketLoss >= 0 && (maxPacketLoss < 0 || qr.MaxPacketLoss < maxPacketLoss) {
+				maxPacketLoss = qr.MaxPacketLoss
+			}
 		}
+
+		needFullMeasure := maxBandwidthBps > 0 || maxJitterMs >= 0 || maxPacketLoss >= 0
+
 		filtered := results[:0]
 		for _, r := range results {
-			latency, reachable, err := qosClient.Measure(ctx, r.ProviderAddress, strconv.Itoa(r.ProviderPort))
-			if err != nil {
-				// QoS evaluator unreachable → fail-open, include candidate.
+			if needFullMeasure {
+				// Use FullMeasure to get all QoS dimensions.
+				rec, err := qosClient.FullMeasure(ctx, r.ProviderAddress, strconv.Itoa(r.ProviderPort))
+				if err != nil {
+					// QoS evaluator unreachable → fail-open.
+					filtered = append(filtered, r)
+					continue
+				}
+				if !rec.Reachable {
+					continue
+				}
+				if maxLatencyMs >= 0 && rec.LatencyMs > maxLatencyMs {
+					continue
+				}
+				// MaxBandwidthBps is a *minimum* bandwidth requirement (spec naming quirk).
+				if maxBandwidthBps > 0 && rec.BandwidthBps < maxBandwidthBps {
+					continue
+				}
+				if maxJitterMs >= 0 && rec.JitterMs > maxJitterMs {
+					continue
+				}
+				if maxPacketLoss >= 0 && rec.PacketLoss > maxPacketLoss {
+					continue
+				}
 				filtered = append(filtered, r)
-				continue
+			} else {
+				// Latency-only path (backward-compatible with G40).
+				latency, reachable, err := qosClient.Measure(ctx, r.ProviderAddress, strconv.Itoa(r.ProviderPort))
+				if err != nil {
+					filtered = append(filtered, r)
+					continue
+				}
+				if !reachable {
+					continue
+				}
+				if maxLatencyMs >= 0 && latency > maxLatencyMs {
+					continue
+				}
+				filtered = append(filtered, r)
 			}
-			if !reachable {
-				// Provider unreachable → exclude.
-				continue
-			}
-			if maxLatencyMs >= 0 && latency > maxLatencyMs {
-				// Latency exceeds requirement → exclude.
-				continue
-			}
-			filtered = append(filtered, r)
 		}
 		results = filtered
 	}

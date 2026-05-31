@@ -91,6 +91,9 @@ const (
 	TokenVariantTimeLimited         = "TIME_LIMITED_TOKEN"
 	TokenVariantUsageLimited        = "USAGE_LIMITED_TOKEN"
 	TokenVariantBase64SelfContained = "BASE64_SELF_CONTAINED"
+	TokenVariantRSA256              = "RSA_SHA256_JSON_WEB_TOKEN"
+	TokenVariantRSA512              = "RSA_SHA512_JSON_WEB_TOKEN"
+	TokenVariantTranslationBridge   = "TRANSLATION_BRIDGE_TOKEN"
 )
 
 // TokenGenerateRequest is the body for POST /authorization-token/generate.
@@ -102,6 +105,10 @@ type TokenGenerateRequest struct {
 	Scope         string `json:"scope,omitempty"`
 	Consumer      string `json:"consumer,omitempty"`
 	MaxUsageCount int    `json:"maxUsageCount,omitempty"`
+	// TRANSLATION_BRIDGE_TOKEN fields (G47)
+	BridgeID      string `json:"bridgeId,omitempty"`
+	FromInterface string `json:"fromInterface,omitempty"`
+	ToInterface   string `json:"toInterface,omitempty"`
 }
 
 // TokenDescriptor is returned on successful token generation (AuthorizationTokenDescriptor).

@@ -12,6 +12,7 @@ import (
 	fsapi "arrowhead/core/internal/orchestration/flexiblestore/api"
 	fsrepo "arrowhead/core/internal/orchestration/flexiblestore/repository"
 	fssvc "arrowhead/core/internal/orchestration/flexiblestore/service"
+	"arrowhead/core/internal/tlsutil"
 )
 
 func main() {
@@ -46,6 +47,20 @@ func main() {
 	root.Handle("/serviceorchestration/orchestration/general/", mgmtHandler)
 	root.Handle("/", sysHandler)
 
+	tlsCfg, err := tlsutil.LoadServerTLSConfig(
+		os.Getenv("TLS_CERT_FILE"),
+		os.Getenv("TLS_KEY_FILE"),
+		os.Getenv("TLS_CA_FILE"),
+	)
+	if err != nil {
+		log.Fatalf("[FlexibleStoreOrchestration] TLS config: %v", err)
+	}
+	httpsOnly := os.Getenv("HTTPS_ONLY") == "true"
+	tlsAddr := ""
+	if tlsPort := os.Getenv("TLS_PORT"); tlsPort != "" {
+		tlsAddr = ":" + tlsPort
+	}
+
 	slog.Info("Listening", "system", "FlexibleStoreOrchestration", "port", port)
-	log.Fatal(http.ListenAndServe(":"+port, root))
+	log.Fatal(tlsutil.ServeHTTPS(":"+port, tlsAddr, root, tlsCfg, httpsOnly))
 }

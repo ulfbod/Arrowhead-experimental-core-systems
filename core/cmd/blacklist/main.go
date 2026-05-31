@@ -14,6 +14,7 @@ import (
 	blrepo "arrowhead/core/internal/blacklist/repository"
 	blsvc "arrowhead/core/internal/blacklist/service"
 	"arrowhead/core/internal/generalmgmt"
+	"arrowhead/core/internal/tlsutil"
 )
 
 func main() {
@@ -71,6 +72,20 @@ func main() {
 		}()
 	}
 
+	tlsCfg, err := tlsutil.LoadServerTLSConfig(
+		os.Getenv("TLS_CERT_FILE"),
+		os.Getenv("TLS_KEY_FILE"),
+		os.Getenv("TLS_CA_FILE"),
+	)
+	if err != nil {
+		log.Fatalf("[Blacklist] TLS config: %v", err)
+	}
+	httpsOnly := os.Getenv("HTTPS_ONLY") == "true"
+	tlsAddr := ""
+	if tlsPort := os.Getenv("TLS_PORT"); tlsPort != "" {
+		tlsAddr = ":" + tlsPort
+	}
+
 	slog.Info("Listening", "system", "Blacklist", "port", port)
-	log.Fatal(http.ListenAndServe(":"+port, root))
+	log.Fatal(tlsutil.ServeHTTPS(":"+port, tlsAddr, root, tlsCfg, httpsOnly))
 }

@@ -4,10 +4,14 @@
 package api
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
+	"time"
 
 	"arrowhead/core/internal/httputil"
 	coremodel "arrowhead/core/internal/model"
@@ -26,21 +30,39 @@ func pageReqOrZero(p *coremodel.PageRequest) coremodel.PageRequest {
 }
 
 type Handler struct {
-	orch        *service.DynamicOrchestrator
-	locks       *service.LockStore
-	subs        *service.SubscriptionStore
-	mgmtAuthURL string
+	orch             *service.DynamicOrchestrator
+	locks            *service.LockStore
+	subs             *service.SubscriptionStore
+	mgmtAuthURL      string
+	srPollURL        string
+	pushPollInterval time.Duration
 }
 
+// NewHandler creates a DynamicServiceOrchestration HTTP handler without auto-push polling.
 func NewHandler(orch *service.DynamicOrchestrator, mgmtAuthURL string) http.Handler {
+	return NewHandlerWithPoller(orch, mgmtAuthURL, "", 0)
+}
+
+// NewHandlerWithPoller creates a handler with auto-push polling enabled.
+// When srPollURL is non-empty and pushPollInterval > 0, a background goroutine polls the
+// ServiceRegistry for each subscription's service definition and fires push triggers when
+// the provider set changes. Fail-open: SR unreachable on a given tick → skip that tick.
+func NewHandlerWithPoller(orch *service.DynamicOrchestrator, mgmtAuthURL, srPollURL string, pushPollInterval time.Duration) http.Handler {
 	h := &Handler{
-		orch:        orch,
-		locks:       service.NewLockStore(),
-		subs:        service.NewSubscriptionStore(),
-		mgmtAuthURL: mgmtAuthURL,
+		orch:             orch,
+		locks:            service.NewLockStore(),
+		subs:             service.NewSubscriptionStore(),
+		mgmtAuthURL:      mgmtAuthURL,
+		srPollURL:        srPollURL,
+		pushPollInterval: pushPollInterval,
 	}
 	// Wire the lock store into the orchestrator so ONLY_EXCLUSIVE filtering works (G48).
 	orch.SetLockChecker(h.locks)
+
+	// Start auto-push poller if configured.
+	if srPollURL != "" && pushPollInterval > 0 {
+		go h.startAutoPushPoller(context.Background())
+	}
 	mux := http.NewServeMux()
 	// Pull orchestration
 	mux.HandleFunc("/serviceorchestration/orchestration/pull", h.handleOrchestrate)
@@ -311,4 +333,85 @@ func (h *Handler) handleHistoryQuery(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "dynamicorchestration"}, dynOrigin)
+}
+
+// startAutoPushPoller polls the ServiceRegistry for provider-set changes and fires
+// push triggers when the set changes for a subscription. Runs until ctx is cancelled.
+func (h *Handler) startAutoPushPoller(ctx context.Context) {
+	ticker := time.NewTicker(h.pushPollInterval)
+	defer ticker.Stop()
+
+	// lastKnown tracks the sorted provider list per subscription ID.
+	lastKnown := make(map[string]string) // subID → sorted comma-separated provider names
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			h.pollOnce(lastKnown)
+		}
+	}
+}
+
+// pollOnce performs one poll cycle for all subscriptions with a non-empty ServiceDefinition.
+func (h *Handler) pollOnce(lastKnown map[string]string) {
+	subs := h.subs.Query().Subscriptions
+	for _, sub := range subs {
+		if sub.ServiceDefinition == "" {
+			continue
+		}
+		providers, err := h.lookupProviders(sub.ServiceDefinition)
+		if err != nil {
+			// SR unreachable → skip this tick (fail-open).
+			continue
+		}
+		sort.Strings(providers)
+		key := strings.Join(providers, ",")
+		prev, seen := lastKnown[sub.ID]
+		if !seen {
+			// First poll — record baseline, no trigger.
+			lastKnown[sub.ID] = key
+			continue
+		}
+		if key != prev {
+			// Provider set changed → trigger push.
+			lastKnown[sub.ID] = key
+			h.orch.TriggerPush(sub)
+		}
+	}
+}
+
+// lookupProviders calls the SR lookup endpoint for the given service definition
+// and returns the list of provider names.
+func (h *Handler) lookupProviders(serviceDefinition string) ([]string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"serviceRequirement": map[string]any{
+			"serviceDefinition": serviceDefinition,
+		},
+	})
+	resp, err := http.Post( //nolint:noctx
+		h.srPollURL+"/serviceregistry/service-discovery/lookup",
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	var result struct {
+		Entries []struct {
+			Provider struct {
+				Name string `json:"name"`
+			} `json:"provider"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(result.Entries))
+	for _, e := range result.Entries {
+		names = append(names, e.Provider.Name)
+	}
+	return names, nil
 }

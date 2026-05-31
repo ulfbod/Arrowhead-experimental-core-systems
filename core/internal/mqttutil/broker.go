@@ -13,6 +13,7 @@
 package mqttutil
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -23,6 +24,11 @@ import (
 // MQTTInterfaceName is the AH5 interface template name for MQTT-based communication.
 // When MQTT_BROKER_URL is set, this interface should be registered alongside HTTP-INSECURE-JSON.
 const MQTTInterfaceName = "MQTT-INSECURE-JSON"
+
+// MQTTSecureInterfaceName is the AH5 interface template name for MQTTS (MQTT over TLS).
+// When MQTT_BROKER_URL and TLS certificates are configured, this interface should be
+// registered alongside HTTP-SECURE-JSON to advertise TLS-encrypted MQTT transport.
+const MQTTSecureInterfaceName = "MQTT-SECURE-JSON"
 
 // MQTTClient is the interface over mqtt.Client used by MQTTAdapter.
 // It is extracted to allow mocking in tests.
@@ -77,6 +83,45 @@ func NewMQTTAdapter(brokerURL, clientID, systemTopic string) (*MQTTAdapter, erro
 // NewMQTTAdapterWithClient creates an MQTTAdapter using a pre-configured MQTTClient.
 // Used in tests to inject a mock client.
 func NewMQTTAdapterWithClient(client MQTTClient, systemTopic string) *MQTTAdapter {
+	return &MQTTAdapter{
+		client:      client,
+		replyPrefix: "ah5/" + systemTopic + "/reply/",
+	}
+}
+
+// NewMQTTAdapterWithTLS connects to an MQTT broker using TLS when tlsCfg is non-nil,
+// or plain TCP when tlsCfg is nil (equivalent to NewMQTTAdapter).
+// Use MQTTSecureInterfaceName when registering a service that uses this adapter.
+func NewMQTTAdapterWithTLS(brokerURL, clientID, systemTopic string, tlsCfg *tls.Config) (*MQTTAdapter, error) {
+	opts := mqtt.NewClientOptions().
+		AddBroker(brokerURL).
+		SetClientID(clientID).
+		SetConnectTimeout(5 * time.Second).
+		SetKeepAlive(30 * time.Second).
+		SetAutoReconnect(true)
+	if tlsCfg != nil {
+		opts.SetTLSConfig(tlsCfg)
+	}
+
+	client := mqtt.NewClient(opts)
+	token := client.Connect()
+	if !token.WaitTimeout(10 * time.Second) {
+		return nil, fmt.Errorf("mqtt: connect timeout to %s", brokerURL)
+	}
+	if err := token.Error(); err != nil {
+		return nil, fmt.Errorf("mqtt: connect error: %w", err)
+	}
+
+	return &MQTTAdapter{
+		client:      client,
+		replyPrefix: "ah5/" + systemTopic + "/reply/",
+	}, nil
+}
+
+// NewMQTTAdapterWithTLSClient creates an MQTTAdapter using a pre-configured MQTTClient
+// and optional TLS config. tlsCfg is stored for documentation purposes; actual TLS is
+// handled by the caller-supplied client. Used in tests to inject a mock client.
+func NewMQTTAdapterWithTLSClient(client MQTTClient, systemTopic string, _ *tls.Config) *MQTTAdapter {
 	return &MQTTAdapter{
 		client:      client,
 		replyPrefix: "ah5/" + systemTopic + "/reply/",

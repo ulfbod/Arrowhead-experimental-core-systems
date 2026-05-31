@@ -28,16 +28,20 @@ func pageReqOrZero(p *coremodel.PageRequest) coremodel.PageRequest {
 }
 
 type Handler struct {
-	svc         *service.AuthService
-	mgmtAuthURL string
-	blClient    blclient.BlacklistClient
+	svc          *service.AuthService
+	mgmtAuthURL  string
+	blClient     blclient.BlacklistClient
+	tokenAuthURL string // when set, handleTokenGenerate requires Bearer identity check
 }
 
 // NewHandler creates a ConsumerAuthorization HTTP handler.
 // mgmtAuthURL guards management endpoints; blClient checks blacklist on grant/verify.
+// tokenAuthURL, when non-empty, enables identity relay: handleTokenGenerate requires a
+// Bearer token whose systemName (from <tokenAuthURL>/authentication/identity/verify/<token>)
+// matches the request consumer field. Pass "" to disable (open/development mode).
 // Pass blclient.NopClient{} to disable blacklist enforcement.
-func NewHandler(svc *service.AuthService, mgmtAuthURL string, blClient blclient.BlacklistClient) http.Handler {
-	h := &Handler{svc: svc, mgmtAuthURL: mgmtAuthURL, blClient: blClient}
+func NewHandler(svc *service.AuthService, mgmtAuthURL string, blClient blclient.BlacklistClient, tokenAuthURL string) http.Handler {
+	h := &Handler{svc: svc, mgmtAuthURL: mgmtAuthURL, blClient: blClient, tokenAuthURL: tokenAuthURL}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/consumerauthorization/authorization/grant", h.handleGrant)
 	mux.HandleFunc("/consumerauthorization/authorization/revoke/", h.handleRevoke)
@@ -276,6 +280,26 @@ func (h *Handler) handleTokenGenerate(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
+	// Identity relay (G6): when TOKEN_AUTH_URL is set, verify the caller's Bearer token
+	// and assert the returned systemName matches req.Consumer.
+	// Missing token → 401. Auth system unreachable → 503. Name mismatch → 403.
+	if h.tokenAuthURL != "" {
+		token := httputil.ExtractBearer(r)
+		if token == "" {
+			httputil.WriteError(w, http.StatusUnauthorized, "Authorization: Bearer token required", cauthOrigin)
+			return
+		}
+		ok, status := httputil.VerifyTokenIdentity(r, h.tokenAuthURL, req.Consumer)
+		if !ok {
+			if status == http.StatusUnauthorized {
+				// Auth system unreachable (token was present) → 503
+				httputil.WriteError(w, http.StatusServiceUnavailable, "authentication system unreachable", cauthOrigin)
+				return
+			}
+			httputil.WriteError(w, status, "consumer identity mismatch", cauthOrigin)
+			return
+		}
+	}
 	desc, err := h.svc.GenerateAuthToken(req)
 	if err != nil {
 		httputil.WriteError(w, statusFor(err), err.Error(), cauthOrigin)
@@ -303,9 +327,18 @@ func (h *Handler) handleTokenVerify(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, resp, cauthOrigin)
 }
 
-// GET /authorization-token/public-key — not implemented (returns 404)
+// GET /authorization-token/public-key — returns RSA public key as PEM.
 func (h *Handler) handleTokenPublicKey(w http.ResponseWriter, r *http.Request) {
-	httputil.WriteError(w, http.StatusNotFound, "public-key endpoint not implemented", cauthOrigin)
+	if r.Method != http.MethodGet {
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "GET required", cauthOrigin)
+		return
+	}
+	pem := h.svc.PublicKeyPEM()
+	if pem == "" {
+		httputil.WriteError(w, http.StatusInternalServerError, "public key unavailable", cauthOrigin)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"publicKey": pem}, cauthOrigin)
 }
 
 // POST /authorization-token/encryption-key — register key

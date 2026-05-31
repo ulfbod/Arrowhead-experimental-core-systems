@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +18,7 @@ import (
 
 func newTestHandler() http.Handler {
 	svc := service.NewAuthService(repository.NewMemoryRepository())
-	return api.NewHandler(svc, "", blclient.NopClient{})
+	return api.NewHandler(svc, "", blclient.NopClient{}, "")
 }
 
 func postJSON(t *testing.T, h http.Handler, path string, body any) *httptest.ResponseRecorder {
@@ -335,7 +336,7 @@ func TestHandlerHealth(t *testing.T) {
 
 func newConsumerAuthTestServer() *httptest.Server {
 	svc := service.NewAuthService(repository.NewMemoryRepository())
-	return httptest.NewServer(api.NewHandler(svc, "", blclient.NopClient{}))
+	return httptest.NewServer(api.NewHandler(svc, "", blclient.NopClient{}, ""))
 }
 
 func TestConsumerAuthOldPathReturns404(t *testing.T) {
@@ -487,7 +488,7 @@ func TestGrantBlacklistedProviderForbidden(t *testing.T) {
 	defer fakeBlacklist.Close()
 
 	svc := service.NewAuthService(repository.NewMemoryRepository())
-	h := api.NewHandler(svc, "", blclient.NewHTTPClient(fakeBlacklist.URL, http.DefaultClient))
+	h := api.NewHandler(svc, "", blclient.NewHTTPClient(fakeBlacklist.URL, http.DefaultClient), "")
 
 	body := `{"provider":"bad-provider","targetType":"SERVICE_DEF","target":"svc","defaultPolicy":{"policyType":"ALL"}}`
 	req := httptest.NewRequest(http.MethodPost, "/consumerauthorization/authorization/grant",
@@ -507,7 +508,7 @@ func TestVerifyBlacklistedConsumerReturnsFalse(t *testing.T) {
 	defer fakeBlacklist.Close()
 
 	svc := service.NewAuthService(repository.NewMemoryRepository())
-	h := api.NewHandler(svc, "", blclient.NewHTTPClient(fakeBlacklist.URL, http.DefaultClient))
+	h := api.NewHandler(svc, "", blclient.NewHTTPClient(fakeBlacklist.URL, http.DefaultClient), "")
 
 	// First grant a policy with a non-blacklisted check (NopClient would pass).
 	// Then verify — blacklist should short-circuit to false.
@@ -860,6 +861,322 @@ func TestVerifyEmptyScopeFallsBackToDefault(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&authorized)
 	if !authorized {
 		t.Errorf("empty scope: expected authorized=true via default ALLOW_ALL policy")
+	}
+}
+
+// ─── Step 50 — ConsumerAuth token relay (G6) ───────────────────────────────
+
+// newTestHandlerWithTokenAuthURL creates a handler with TOKEN_AUTH_URL set.
+func newTestHandlerWithTokenAuthURL(tokenAuthURL string) http.Handler {
+	svc := service.NewAuthService(repository.NewMemoryRepository())
+	return api.NewHandler(svc, "", blclient.NopClient{}, tokenAuthURL)
+}
+
+// postJSONWithBearer sends a POST with an optional Bearer token.
+func postJSONWithBearer(t *testing.T, h http.Handler, path string, body any, bearer string) *httptest.ResponseRecorder {
+	t.Helper()
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+// TestTokenGenerateNoAuthURLSucceeds — no TOKEN_AUTH_URL, no Authorization header → 201.
+func TestTokenGenerateNoAuthURLSucceeds(t *testing.T) {
+	h := newTestHandler() // no TOKEN_AUTH_URL
+	w := postJSONWithBearer(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+		"tokenVariant": "TIME_LIMITED_TOKEN",
+		"provider":     "ProviderA",
+		"targetType":   "SERVICE_DEF",
+		"target":       "svc",
+		"consumer":     "ConsumerA",
+	}, "") // no Bearer token
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestTokenGenerateAuthURLRequiresBearer — TOKEN_AUTH_URL set, no header → 401.
+func TestTokenGenerateAuthURLRequiresBearer(t *testing.T) {
+	mockAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "ConsumerA"})
+	}))
+	defer mockAuth.Close()
+	h := newTestHandlerWithTokenAuthURL(mockAuth.URL)
+	w := postJSONWithBearer(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+		"tokenVariant": "TIME_LIMITED_TOKEN",
+		"provider":     "ProviderA",
+		"targetType":   "SERVICE_DEF",
+		"target":       "svc",
+		"consumer":     "ConsumerA",
+	}, "") // no Bearer token
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestTokenGenerateIdentityMatchesConsumer — mock auth returns "ConsumerA", consumer="ConsumerA" → 201.
+func TestTokenGenerateIdentityMatchesConsumer(t *testing.T) {
+	mockAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "ConsumerA"})
+	}))
+	defer mockAuth.Close()
+	h := newTestHandlerWithTokenAuthURL(mockAuth.URL)
+	w := postJSONWithBearer(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+		"tokenVariant": "TIME_LIMITED_TOKEN",
+		"provider":     "ProviderA",
+		"targetType":   "SERVICE_DEF",
+		"target":       "svc",
+		"consumer":     "ConsumerA",
+	}, "valid-token")
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestTokenGenerateIdentityMismatchRejects — mock returns "ConsumerA", consumer="ConsumerB" → 403.
+func TestTokenGenerateIdentityMismatchRejects(t *testing.T) {
+	mockAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "ConsumerA"})
+	}))
+	defer mockAuth.Close()
+	h := newTestHandlerWithTokenAuthURL(mockAuth.URL)
+	w := postJSONWithBearer(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+		"tokenVariant": "TIME_LIMITED_TOKEN",
+		"provider":     "ProviderA",
+		"targetType":   "SERVICE_DEF",
+		"target":       "svc",
+		"consumer":     "ConsumerB",
+	}, "valid-token")
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestTokenGenerateAuthUnreachableReturns503 — TOKEN_AUTH_URL points nowhere → 503.
+func TestTokenGenerateAuthUnreachableReturns503(t *testing.T) {
+	h := newTestHandlerWithTokenAuthURL("http://127.0.0.1:1")
+	w := postJSONWithBearer(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+		"tokenVariant": "TIME_LIMITED_TOKEN",
+		"provider":     "ProviderA",
+		"targetType":   "SERVICE_DEF",
+		"target":       "svc",
+		"consumer":     "ConsumerA",
+	}, "some-token")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// ─── Step 51 — JWT token variants (G47) ────────────────────────────────────
+
+// TestGenerateRSA256Token — RSA_SHA256 token generates a valid JWT with three sections.
+func TestGenerateRSA256Token(t *testing.T) {
+	h := newTestHandler()
+	w := postJSON(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+		"tokenVariant": model.TokenVariantRSA256,
+		"provider":     "ProviderA",
+		"targetType":   "SERVICE_DEF",
+		"target":       "svc",
+		"consumer":     "ConsumerA",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var desc model.TokenDescriptor
+	json.NewDecoder(w.Body).Decode(&desc)
+	if desc.Token == "" {
+		t.Fatal("token is empty")
+	}
+	parts := strings.Split(desc.Token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 JWT sections, got %d: %s", len(parts), desc.Token)
+	}
+	// Decode header (base64url no padding)
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		t.Fatalf("decode header: %v", err)
+	}
+	var header map[string]string
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		t.Fatalf("unmarshal header: %v", err)
+	}
+	if header["alg"] != "RS256" {
+		t.Errorf("alg = %q, want RS256", header["alg"])
+	}
+	if header["typ"] != "JWT" {
+		t.Errorf("typ = %q, want JWT", header["typ"])
+	}
+	// Decode payload
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["consumer"] != "ConsumerA" {
+		t.Errorf("consumer = %v, want ConsumerA", payload["consumer"])
+	}
+	exp, ok := payload["exp"].(float64)
+	if !ok || exp <= 0 {
+		t.Errorf("exp = %v, want positive unix timestamp", payload["exp"])
+	}
+}
+
+// TestVerifyRSA256Token — generate RSA_SHA256 token then verify → 200.
+func TestVerifyRSA256Token(t *testing.T) {
+	h := newTestHandler()
+	w := postJSON(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+		"tokenVariant": model.TokenVariantRSA256,
+		"provider":     "ProviderA",
+		"targetType":   "SERVICE_DEF",
+		"target":       "svc",
+		"consumer":     "ConsumerA",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("generate: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var desc model.TokenDescriptor
+	json.NewDecoder(w.Body).Decode(&desc)
+
+	vw := getReq(t, h, "/consumerauthorization/authorization-token/verify/"+desc.Token)
+	if vw.Code != http.StatusOK {
+		t.Fatalf("verify: expected 200, got %d: %s", vw.Code, vw.Body.String())
+	}
+	var resp model.TokenVerifyResponse
+	json.NewDecoder(vw.Body).Decode(&resp)
+	if resp.Consumer != "ConsumerA" {
+		t.Errorf("consumer = %q, want ConsumerA", resp.Consumer)
+	}
+}
+
+// TestGenerateRSA512Token — RSA_SHA512 token has RS512 header.
+func TestGenerateRSA512Token(t *testing.T) {
+	h := newTestHandler()
+	w := postJSON(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+		"tokenVariant": model.TokenVariantRSA512,
+		"provider":     "ProviderA",
+		"targetType":   "SERVICE_DEF",
+		"target":       "svc",
+		"consumer":     "ConsumerA",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var desc model.TokenDescriptor
+	json.NewDecoder(w.Body).Decode(&desc)
+	parts := strings.Split(desc.Token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 JWT sections, got %d", len(parts))
+	}
+	headerBytes, _ := base64.RawURLEncoding.DecodeString(parts[0])
+	var header map[string]string
+	json.Unmarshal(headerBytes, &header)
+	if header["alg"] != "RS512" {
+		t.Errorf("alg = %q, want RS512", header["alg"])
+	}
+	// Verify works
+	vw := getReq(t, h, "/consumerauthorization/authorization-token/verify/"+desc.Token)
+	if vw.Code != http.StatusOK {
+		t.Errorf("verify RS512: expected 200, got %d", vw.Code)
+	}
+}
+
+// TestPublicKeyEndpointReturnsPEM — GET /authorization-token/public-key → 200 with PEM.
+func TestPublicKeyEndpointReturnsPEM(t *testing.T) {
+	h := newTestHandler()
+	w := getReq(t, h, "/consumerauthorization/authorization-token/public-key")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		PublicKey string `json:"publicKey"`
+	}
+	json.NewDecoder(w.Body).Decode(&body)
+	if !strings.HasPrefix(body.PublicKey, "-----BEGIN") {
+		t.Errorf("publicKey does not look like PEM: %q", body.PublicKey[:min(len(body.PublicKey), 50)])
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// TestGenerateTranslationBridgeToken — TRANSLATION_BRIDGE_TOKEN includes bridge fields.
+func TestGenerateTranslationBridgeToken(t *testing.T) {
+	h := newTestHandler()
+	w := postJSON(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+		"tokenVariant":  model.TokenVariantTranslationBridge,
+		"provider":      "ProviderA",
+		"targetType":    "SERVICE_DEF",
+		"target":        "svc",
+		"consumer":      "ConsumerA",
+		"bridgeId":      "bridge-1",
+		"fromInterface": "HTTP-INSECURE-JSON",
+		"toInterface":   "MQTT-INSECURE-JSON",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var desc model.TokenDescriptor
+	json.NewDecoder(w.Body).Decode(&desc)
+	parts := strings.Split(desc.Token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 JWT sections, got %d", len(parts))
+	}
+	payloadBytes, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	var payload map[string]any
+	json.Unmarshal(payloadBytes, &payload)
+	if payload["bridgeId"] != "bridge-1" {
+		t.Errorf("bridgeId = %v, want bridge-1", payload["bridgeId"])
+	}
+	if payload["fromInterface"] != "HTTP-INSECURE-JSON" {
+		t.Errorf("fromInterface = %v, want HTTP-INSECURE-JSON", payload["fromInterface"])
+	}
+	if payload["toInterface"] != "MQTT-INSECURE-JSON" {
+		t.Errorf("toInterface = %v, want MQTT-INSECURE-JSON", payload["toInterface"])
+	}
+	// Verify token
+	vw := getReq(t, h, "/consumerauthorization/authorization-token/verify/"+desc.Token)
+	if vw.Code != http.StatusOK {
+		t.Errorf("verify bridge token: expected 200, got %d", vw.Code)
+	}
+}
+
+// TestTamperedJWTFailsVerification — tampered payload fails verify → 404.
+func TestTamperedJWTFailsVerification(t *testing.T) {
+	h := newTestHandler()
+	w := postJSON(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+		"tokenVariant": model.TokenVariantRSA256,
+		"provider":     "ProviderA",
+		"targetType":   "SERVICE_DEF",
+		"target":       "svc",
+		"consumer":     "ConsumerA",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("generate: expected 201, got %d", w.Code)
+	}
+	var desc model.TokenDescriptor
+	json.NewDecoder(w.Body).Decode(&desc)
+
+	// Tamper: replace payload section with different content
+	parts := strings.Split(desc.Token, ".")
+	tamperedPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"consumer":"Attacker","exp":9999999999}`))
+	tampered := parts[0] + "." + tamperedPayload + "." + parts[2]
+
+	vw := getReq(t, h, "/consumerauthorization/authorization-token/verify/"+tampered)
+	if vw.Code != http.StatusNotFound {
+		t.Errorf("tampered JWT: expected 404, got %d: %s", vw.Code, vw.Body.String())
 	}
 }
 

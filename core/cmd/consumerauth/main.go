@@ -10,7 +10,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"log"
 	"log/slog"
 	"net/http"
@@ -23,6 +22,7 @@ import (
 	"arrowhead/core/internal/generalmgmt"
 	"arrowhead/core/internal/tlsutil"
 )
+
 
 func main() {
 	port := os.Getenv("PORT")
@@ -46,50 +46,55 @@ func main() {
 	}
 	svc := service.NewAuthService(repo)
 
+	// Optional RSA key pair for JWT signing (G47).
+	// When JWT_PRIVATE_KEY_FILE is set, load and use the PEM-encoded RSA private key.
+	// When unset, an ephemeral key (generated at startup) is used — tokens are valid only
+	// for the current process lifetime.
+	if keyFile := os.Getenv("JWT_PRIVATE_KEY_FILE"); keyFile != "" {
+		keyPEM, err := os.ReadFile(keyFile)
+		if err != nil {
+			log.Fatalf("[ConsumerAuthorization] read JWT_PRIVATE_KEY_FILE: %v", err)
+		}
+		rsaKey, err := service.ParseRSAPrivateKey(keyPEM)
+		if err != nil {
+			log.Fatalf("[ConsumerAuthorization] parse RSA private key: %v", err)
+		}
+		svc.SetRSAKey(rsaKey)
+	}
+
 	var blClient blclient.BlacklistClient = blclient.NopClient{}
 	if blURL := os.Getenv("BLACKLIST_URL"); blURL != "" {
 		blClient = blclient.NewHTTPClient(blURL, http.DefaultClient)
 	}
-	sysHandler := api.NewHandler(svc, os.Getenv("MGMT_AUTH_URL"), blClient)
+	sysHandler := api.NewHandler(svc, os.Getenv("MGMT_AUTH_URL"), blClient, os.Getenv("TOKEN_AUTH_URL"))
 
 	mgmtHandler := generalmgmt.NewHandler(buf, "authorization", map[string]string{
-		"PORT":          port,
-		"DB_PATH":       os.Getenv("DB_PATH"),
-		"TLS_PORT":      os.Getenv("TLS_PORT"),
-		"MGMT_AUTH_URL": os.Getenv("MGMT_AUTH_URL"),
+		"PORT":           port,
+		"DB_PATH":        os.Getenv("DB_PATH"),
+		"TLS_PORT":       os.Getenv("TLS_PORT"),
+		"MGMT_AUTH_URL":  os.Getenv("MGMT_AUTH_URL"),
 		"BLACKLIST_URL":  os.Getenv("BLACKLIST_URL"),
+		"TOKEN_AUTH_URL": os.Getenv("TOKEN_AUTH_URL"),
 	})
 
 	root := http.NewServeMux()
 	root.Handle("/authorization/general/", mgmtHandler)
 	root.Handle("/", sysHandler)
 
-	// Optional TLS listener on TLS_PORT.
+	tlsCfg, err := tlsutil.LoadServerTLSConfig(
+		os.Getenv("TLS_CERT_FILE"),
+		os.Getenv("TLS_KEY_FILE"),
+		os.Getenv("TLS_CA_FILE"),
+	)
+	if err != nil {
+		log.Fatalf("[ConsumerAuthorization] TLS config: %v", err)
+	}
+	httpsOnly := os.Getenv("HTTPS_ONLY") == "true"
+	tlsAddr := ""
 	if tlsPort := os.Getenv("TLS_PORT"); tlsPort != "" {
-		tlsCfg, err := tlsutil.LoadServerTLSConfig(
-			os.Getenv("TLS_CERT_FILE"),
-			os.Getenv("TLS_KEY_FILE"),
-			os.Getenv("TLS_CA_FILE"),
-		)
-		if err != nil {
-			log.Fatalf("[ConsumerAuthorization] TLS config: %v", err)
-		}
-		if tlsCfg != nil {
-			go startTLS(root, tlsPort, tlsCfg, "ConsumerAuthorization")
-		}
+		tlsAddr = ":" + tlsPort
 	}
 
 	slog.Info("Listening", "system", "ConsumerAuthorization", "port", port)
-	log.Fatal(http.ListenAndServe(":"+port, root))
-}
-
-func startTLS(handler http.Handler, port string, tlsCfg *tls.Config, name string) {
-	ln, err := tls.Listen("tcp", ":"+port, tlsCfg)
-	if err != nil {
-		log.Fatalf("[%s] TLS listen on :%s: %v", name, port, err)
-	}
-	slog.Info("Listening (HTTPS/mTLS)", "system", name, "port", port)
-	if err := http.Serve(ln, handler); err != nil {
-		log.Fatalf("[%s] TLS serve: %v", name, err)
-	}
+	log.Fatal(tlsutil.ServeHTTPS(":"+port, tlsAddr, root, tlsCfg, httpsOnly))
 }

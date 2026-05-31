@@ -9,12 +9,15 @@ type MeasurementRequest struct {
 
 // QoSRecord is a single QoS measurement result.
 type QoSRecord struct {
-	ID         string `json:"id"`
-	Host       string `json:"host"`
-	Port       string `json:"port"`
-	LatencyMs  int64  `json:"latencyMs"`
-	MeasuredAt string `json:"measuredAt"`
-	Reachable  bool   `json:"reachable"`
+	ID           string  `json:"id"`
+	Host         string  `json:"host"`
+	Port         string  `json:"port"`
+	LatencyMs    int64   `json:"latencyMs"`
+	MeasuredAt   string  `json:"measuredAt"`
+	Reachable    bool    `json:"reachable"`
+	BandwidthBps int64   `json:"bandwidthBps"` // approximate TCP throughput in bytes/sec
+	JitterMs     int64   `json:"jitterMs"`     // stddev of RTT samples in milliseconds
+	PacketLoss   float64 `json:"packetLoss"`   // percentage of probe failures (0.0–100.0)
 }
 
 // QueryRequest filters for POST /deviceqosevaluator/quality-evaluation/mgmt/query.

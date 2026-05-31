@@ -81,3 +81,66 @@ func TestMgmtQueryFilterByHost(t *testing.T) {
 		t.Errorf("host = %q, want host-a", records[0].Host)
 	}
 }
+
+// ─── Step 53 — QoS full model (G53) ─────────────────────────────────────────
+
+// TestQoSRecordHasJitterAndBandwidthFields — measure against loopback; assert new fields present.
+func TestQoSRecordHasJitterAndBandwidthFields(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	// Accept all connections in background.
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Accept 64KB write then close.
+			buf := make([]byte, 64*1024)
+			c.Read(buf) //nolint:errcheck
+			c.Close()   //nolint:errcheck
+		}
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	eval := newEvaluator()
+	rec := eval.Measure("127.0.0.1", port)
+	if rec == nil {
+		t.Fatal("expected non-nil record")
+	}
+	if rec.JitterMs < 0 {
+		t.Errorf("JitterMs = %d, want >= 0", rec.JitterMs)
+	}
+	if rec.BandwidthBps < 0 {
+		t.Errorf("BandwidthBps = %d, want >= 0", rec.BandwidthBps)
+	}
+	if rec.PacketLoss < 0 || rec.PacketLoss > 100 {
+		t.Errorf("PacketLoss = %f, want 0.0–100.0", rec.PacketLoss)
+	}
+}
+
+// TestQoSJitterLoopbackIsLow — loopback jitter should be less than 50ms.
+func TestQoSJitterLoopbackIsLow(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close() //nolint:errcheck
+		}
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	eval := newEvaluator()
+	rec := eval.Measure("127.0.0.1", port)
+	if rec.JitterMs >= 50 {
+		t.Errorf("JitterMs = %d, want < 50 for loopback", rec.JitterMs)
+	}
+}

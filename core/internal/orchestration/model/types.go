@@ -32,9 +32,14 @@ type OrchestrationFlags struct {
 	OnlyIntercloud   bool `json:"ONLY_INTERCLOUD"`   // stub
 }
 
-// QoSRequirement specifies a maximum acceptable latency for a provider.
+// QoSRequirement specifies quality thresholds for a provider.
+// Note on MaxBandwidthBps: despite the "max" prefix (per AH5 spec naming), this field
+// is a *minimum* threshold — providers must have BandwidthBps >= MaxBandwidthBps to be included.
 type QoSRequirement struct {
-	MaxLatencyMs int64 `json:"maxLatencyMs"`
+	MaxLatencyMs    int64   `json:"maxLatencyMs"`
+	MaxBandwidthBps int64   `json:"maxBandwidthBps"` // minimum acceptable bandwidth (bytes/sec)
+	MaxJitterMs     int64   `json:"maxJitterMs"`     // maximum acceptable jitter (ms)
+	MaxPacketLoss   float64 `json:"maxPacketLoss"`   // maximum acceptable packet loss (%)
 }
 
 // OrchestrationRequest is the pull request from a consumer to any orchestration system.
