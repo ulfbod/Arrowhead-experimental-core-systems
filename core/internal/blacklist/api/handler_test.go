@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,9 +14,16 @@ import (
 	"arrowhead/core/internal/blacklist/service"
 )
 
-func newTestHandler() http.Handler {
+func newTestHandler(t *testing.T) http.Handler {
+	t.Helper()
 	svc := service.NewBlacklistService(repository.NewMemoryRepository())
-	return api.NewHandler(svc)
+	return api.NewHandler(svc, "", "")
+}
+
+func newTestHandlerWithAuth(t *testing.T, authURL string) http.Handler {
+	t.Helper()
+	svc := service.NewBlacklistService(repository.NewMemoryRepository())
+	return api.NewHandler(svc, authURL, "")
 }
 
 func getReq(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
@@ -39,7 +47,7 @@ func postJSON(t *testing.T, h http.Handler, path string, body any) *httptest.Res
 // ---- Cycle 20.2: Discovery endpoints ----
 
 func TestCheckTrue(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	// Seed via mgmt endpoint.
 	postJSON(t, h, "/blacklist/mgmt/create", map[string]any{
 		"entries": []map[string]any{{"systemName": "bad", "reason": "test"}},
@@ -54,7 +62,7 @@ func TestCheckTrue(t *testing.T) {
 }
 
 func TestCheckFalse(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	w := getReq(t, h, "/blacklist/check/unknown")
 	if body := w.Body.String(); body != "false\n" && body != "false" {
 		t.Errorf("body = %q, want false", body)
@@ -67,7 +75,7 @@ func TestCheckExpiredEntry(t *testing.T) {
 	svc := service.NewBlacklistService(repo)
 	_ = time.Now() // reference to confirm time package is used
 	svc.Add("exp-sys", "temp", time.Now().Add(-time.Hour), "admin")
-	handler := api.NewHandler(svc)
+	handler := api.NewHandler(svc, "", "")
 	w := getReq(t, handler, "/blacklist/check/exp-sys")
 	if body := w.Body.String(); body != "false\n" && body != "false" {
 		t.Errorf("expired entry: body = %q, want false", body)
@@ -75,7 +83,7 @@ func TestCheckExpiredEntry(t *testing.T) {
 }
 
 func TestLookupReturnsActiveEntries(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	postJSON(t, h, "/blacklist/mgmt/create", map[string]any{
 		"entries": []map[string]any{{"systemName": "sys-x", "reason": "r"}},
 	})
@@ -95,7 +103,7 @@ func TestLookupReturnsActiveEntries(t *testing.T) {
 // ---- Cycle 20.3: Management endpoints ----
 
 func TestMgmtCreateMissingReason400(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	w := postJSON(t, h, "/blacklist/mgmt/create", map[string]any{
 		"entries": []map[string]any{{"systemName": "sys-without-reason"}},
 	})
@@ -105,7 +113,7 @@ func TestMgmtCreateMissingReason400(t *testing.T) {
 }
 
 func TestMgmtRemoveInactivates(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	postJSON(t, h, "/blacklist/mgmt/create", map[string]any{
 		"entries": []map[string]any{{"systemName": "removable", "reason": "test"}},
 	})
@@ -123,7 +131,7 @@ func TestMgmtRemoveInactivates(t *testing.T) {
 }
 
 func TestMgmtQueryReturnsAll(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	postJSON(t, h, "/blacklist/mgmt/create", map[string]any{
 		"entries": []map[string]any{
 			{"systemName": "a", "reason": "r1"},
@@ -144,11 +152,107 @@ func TestMgmtQueryReturnsAll(t *testing.T) {
 }
 
 func TestHealth(t *testing.T) {
-	h := newTestHandler()
+	h := newTestHandler(t)
 	for _, path := range []string{"/health", "/blacklist/health"} {
 		w := getReq(t, h, path)
 		if w.Code != http.StatusOK {
 			t.Errorf("%s: expected 200, got %d", path, w.Code)
 		}
+	}
+}
+
+// ─── Step B: Tests for Step 23 (bearer enforcement + query modes) ─────────────
+
+func TestLookupRequiresBearerWhenAuthConfigured(t *testing.T) {
+	fakeAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "caller"}) //nolint:errcheck
+	}))
+	defer fakeAuth.Close()
+
+	h := newTestHandlerWithAuth(t, fakeAuth.URL)
+
+	// no bearer → 401
+	req := httptest.NewRequest(http.MethodGet, "/blacklist/lookup", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("want 401, got %d", w.Code)
+	}
+
+	// with bearer → 200
+	req2 := httptest.NewRequest(http.MethodGet, "/blacklist/lookup", nil)
+	req2.Header.Set("Authorization", "Bearer mytoken")
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Errorf("want 200, got %d", w2.Code)
+	}
+}
+
+func TestCheckRequiresBearerWhenAuthConfigured(t *testing.T) {
+	fakeAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "caller"}) //nolint:errcheck
+	}))
+	defer fakeAuth.Close()
+
+	h := newTestHandlerWithAuth(t, fakeAuth.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/blacklist/check/somesystem", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("want 401, got %d", w.Code)
+	}
+}
+
+func TestMgmtQueryModeActives(t *testing.T) {
+	h := newTestHandler(t)
+	// add one active entry
+	body := `{"entries":[{"systemName":"sys1","reason":"test"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/blacklist/mgmt/create", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	// query with ACTIVES mode
+	req2 := httptest.NewRequest(http.MethodPost, "/blacklist/mgmt/query", strings.NewReader(`{"mode":"ACTIVES"}`))
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Errorf("want 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w2.Body).Decode(&resp) //nolint:errcheck
+	if resp["count"].(float64) < 1 {
+		t.Errorf("want at least 1 active entry, got %v", resp["count"])
+	}
+}
+
+func TestMgmtQueryModeAll(t *testing.T) {
+	h := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/blacklist/mgmt/query", strings.NewReader(`{"mode":"ALL"}`))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMgmtQueryModeInactives(t *testing.T) {
+	h := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/blacklist/mgmt/query", strings.NewReader(`{"mode":"INACTIVES"}`))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMgmtQueryModeInvalid(t *testing.T) {
+	h := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/blacklist/mgmt/query", strings.NewReader(`{"mode":"BOGUS"}`))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", w.Code)
 	}
 }

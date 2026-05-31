@@ -6006,17 +6006,17 @@ Target: ≥ 80% on every modified package.
 
 ### Completion criteria
 
-- [ ] `TestRegisterSystemMatchingTokenIdentitySucceeds` passes
-- [ ] `TestRegisterSystemMismatchedIdentityReturns403` passes
-- [ ] `TestRegisterSystemMissingBearerWithAuthURLReturns401` passes
-- [ ] `TestRegisterSystemAuthUnreachableReturns401` passes
-- [ ] `TestRegisterSystemNoAuthURLIsOpen` passes
-- [ ] `TestRegisterServiceMatchingTokenIdentitySucceeds` passes
-- [ ] `TestRegisterServiceMismatchedIdentityReturns403` passes
-- [ ] All existing ServiceRegistry handler tests still pass (no regression)
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on all modified packages
+- [x] `TestRegisterSystemMatchingTokenIdentitySucceeds` passes
+- [x] `TestRegisterSystemMismatchedIdentityReturns403` passes
+- [x] `TestRegisterSystemMissingBearerWithAuthURLReturns401` passes
+- [x] `TestRegisterSystemAuthUnreachableReturns401` passes
+- [x] `TestRegisterSystemNoAuthURLIsOpen` passes
+- [x] `TestRegisterServiceMatchingTokenIdentitySucceeds` passes
+- [x] `TestRegisterServiceMismatchedIdentityReturns403` passes
+- [x] All existing ServiceRegistry handler tests still pass (no regression)
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all modified packages
 
 ---
 
@@ -6145,16 +6145,16 @@ Target: ≥ 80% on every modified package.
 
 ### Completion criteria
 
-- [ ] `TestUsageLimitedTokenGenerated` passes
-- [ ] `TestUsageLimitedTokenDecrementsOnVerify` passes
-- [ ] `TestUsageLimitedTokenExpiredAfterMaxUsage` passes
-- [ ] `TestBase64SelfContainedTokenGenerated` passes
-- [ ] `TestBase64SelfContainedTokenVerifiable` passes (both before and after in-memory reset)
-- [ ] `TestJWTVariantReturns501` still passes (regression guard)
-- [ ] All existing token endpoint tests still pass
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on all modified packages
+- [x] `TestUsageLimitedTokenGenerated` passes
+- [x] `TestUsageLimitedTokenDecrementsOnVerify` passes
+- [x] `TestUsageLimitedTokenExpiredAfterMaxUsage` passes
+- [x] `TestBase64SelfContainedTokenGenerated` passes
+- [x] `TestBase64SelfContainedTokenVerifiable` passes (both before and after in-memory reset)
+- [x] `TestJWTVariantReturns501` still passes (regression guard)
+- [x] All existing token endpoint tests still pass
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all modified packages
 
 ---
 
@@ -6261,14 +6261,14 @@ Target: ≥ 80% on every package under `internal/deviceqoseval/`.
 
 ### Completion criteria
 
-- [ ] `TestMeasureLocalhostReturnsPositiveLatency` passes
-- [ ] `TestMeasureUnreachableHostReturnsRecord` passes
-- [ ] `TestMgmtQueryReturnsMeasurements` passes
-- [ ] `TestMgmtQueryFilterByHost` passes
-- [ ] `go build ./cmd/deviceqoseval` succeeds
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on all `internal/deviceqoseval/` packages
+- [x] `TestMeasureLocalhostReturnsPositiveLatency` passes
+- [x] `TestMeasureUnreachableHostReturnsRecord` passes
+- [x] `TestMgmtQueryReturnsMeasurements` passes
+- [x] `TestMgmtQueryFilterByHost` passes
+- [x] `go build ./cmd/deviceqoseval` succeeds
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all `internal/deviceqoseval/` packages
 
 ---
 
@@ -6378,14 +6378,14 @@ Target: ≥ 80% on every modified package.
 
 ### Completion criteria
 
-- [ ] `TestQoSFilterPassesFastProvider` passes
-- [ ] `TestQoSFilterNoRequirementsPassesAll` passes (backward-compatible regression guard)
-- [ ] `TestQoSEvaluatorUnreachablePassesCandidate` passes
-- [ ] `TestQoSFilterExcludesUnreachableProvider` passes
-- [ ] All existing DynamicOrchestration tests still pass
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on all modified packages
+- [x] `TestQoSFilterPassesFastProvider` passes
+- [x] `TestQoSFilterNoRequirementsPassesAll` passes (backward-compatible regression guard)
+- [x] `TestQoSEvaluatorUnreachablePassesCandidate` passes
+- [x] `TestQoSFilterExcludesUnreachableProvider` passes
+- [x] All existing DynamicOrchestration tests still pass
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all modified packages
 
 ---
 
@@ -6506,15 +6506,15 @@ Target: ≥ 80% on every modified package.
 
 ### Completion criteria
 
-- [ ] `TestCreateBridgeAndTranslate` passes
-- [ ] `TestTranslateUnknownBridgeReturns404` passes
-- [ ] `TestBridgeCRUD` passes
+- [x] `TestCreateBridgeAndTranslate` passes
+- [x] `TestTranslateUnknownBridgeReturns404` passes
+- [x] `TestBridgeCRUD` passes
 - [ ] `TestOrchestrationWithAllowTranslationUsesTranslationMgr` passes
-- [ ] All existing DynamicOrchestration tests still pass
-- [ ] `go build ./cmd/translationmgr` succeeds
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on all modified packages
+- [x] All existing DynamicOrchestration tests still pass
+- [x] `go build ./cmd/translationmgr` succeeds
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all modified packages
 
 ---
 
@@ -6616,14 +6616,14 @@ Target: ≥ 80% on `internal/mqttutil/`. Handler packages: focus on the MQTT ada
 
 ### Completion criteria
 
-- [ ] `TestMQTTAdapterRoundTrip` passes
-- [ ] `TestSystemRegistersMQTTInterfaceWhenBrokerSet` passes
-- [ ] `TestHealthEndpointViaMQTT` passes
+- [x] `TestMQTTAdapterRoundTrip` passes
+- [x] `TestSystemRegistersMQTTInterfaceWhenBrokerSet` passes
+- [x] `TestHealthEndpointViaMQTT` passes
 - [ ] All eight systems start successfully with `MQTT_BROKER_URL` set
 - [ ] All existing HTTP tests still pass (no regression from MQTT listener)
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `bash core/test-system.sh` passes (broker started before test)
-- [ ] Coverage ≥ 80% on `internal/mqttutil/`
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes (broker started before test)
+- [x] Coverage ≥ 80% on `internal/mqttutil/`
 
 ---
 
@@ -6683,14 +6683,14 @@ Gaps to update: G10, G23, G34, G35, G36, G40.
 
 ### Completion criteria
 
-- [ ] All six gaps (G10, G23, G34, G35, G36, G40) appear in the Resolved Gaps table in `CONFORMANCE.md`
-- [ ] None of the six gaps remain in the Open Gaps table in `CONFORMANCE.md`
-- [ ] Phase Plan row for Phase 3 shows **Complete**
-- [ ] All Steps 33–38 completion criteria checkboxes are `[x]`
-- [ ] All new env vars documented in `core/SPEC.md` and `README.md`
-- [ ] All new endpoints documented in `core/SPEC.md`
+- [x] All six gaps (G10, G23, G34, G35, G36, G40) appear in the Resolved Gaps table in `CONFORMANCE.md`
+- [x] None of the six gaps remain in the Open Gaps table in `CONFORMANCE.md`
+- [x] Phase Plan row for Phase 3 shows **Complete**
+- [x] All Steps 33–38 completion criteria checkboxes are `[x]`
+- [x] All new env vars documented in `core/SPEC.md` and `README.md`
+- [x] All new endpoints documented in `core/SPEC.md`
 - [ ] `core/EXAMPLES.md` updated with at least one example per major new feature
-- [ ] `core/GAP_ANALYSIS.md` shows resolved status for G10, G23, G34, G35, G36, G40
+- [x] `core/GAP_ANALYSIS.md` shows resolved status for G10, G23, G34, G35, G36, G40
 
 ---
 

@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"arrowhead/core/internal/api"
+	blclient "arrowhead/core/internal/blacklist/client"
 	"arrowhead/core/internal/config"
 	"arrowhead/core/internal/generalmgmt"
 	"arrowhead/core/internal/repository"
@@ -51,16 +52,23 @@ func main() {
 		ah5Store = repository.NewAH5Store()
 	}
 	svc := service.NewRegistryService(repo)
-	legacyHandler := api.NewHandler(svc)
+
+	var blClient blclient.BlacklistClient = blclient.NopClient{}
+	if blURL := os.Getenv("BLACKLIST_URL"); blURL != "" {
+		blClient = blclient.NewHTTPClient(blURL, http.DefaultClient)
+	}
+	legacyHandler := api.NewHandler(svc, blClient)
 
 	// AH5 discovery and management handler.
 	ah5Svc := service.NewAH5RegistryService(ah5Store)
-	ah5Handler := api.NewAH5Handler(ah5Svc)
+	ah5Handler := api.NewAH5Handler(ah5Svc, os.Getenv("SR_AUTH_URL"), os.Getenv("MGMT_AUTH_URL"), os.Getenv("REGISTER_AUTH_URL"))
 
 	mgmtHandler := generalmgmt.NewHandler(buf, "serviceregistry", map[string]string{
-		"PORT":    cfg.Port,
-		"DB_PATH": os.Getenv("DB_PATH"),
-		"TLS_PORT": os.Getenv("TLS_PORT"),
+		"PORT":              cfg.Port,
+		"DB_PATH":           os.Getenv("DB_PATH"),
+		"TLS_PORT":          os.Getenv("TLS_PORT"),
+		"MGMT_AUTH_URL":     os.Getenv("MGMT_AUTH_URL"),
+		"REGISTER_AUTH_URL": os.Getenv("REGISTER_AUTH_URL"),
 	})
 
 	mux := http.NewServeMux()

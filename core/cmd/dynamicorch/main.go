@@ -28,8 +28,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
+	blclient "arrowhead/core/internal/blacklist/client"
 	"arrowhead/core/internal/generalmgmt"
+	dynclient "arrowhead/core/internal/orchestration/dynamic/client"
 	dynapi "arrowhead/core/internal/orchestration/dynamic/api"
 	dynsvc "arrowhead/core/internal/orchestration/dynamic/service"
 	"arrowhead/core/internal/tlsutil"
@@ -69,17 +73,44 @@ func main() {
 	}
 	httpClient := tlsutil.NewHTTPClient(clientTLSCfg)
 
-	orch := dynsvc.NewDynamicOrchestratorWithClient(srURL, caURL, authSysURL, checkAuth, checkIdentity, httpClient)
-	sysHandler := dynapi.NewHandler(orch)
+	var bl blclient.BlacklistClient = blclient.NopClient{}
+	if blURL := os.Getenv("BLACKLIST_URL"); blURL != "" {
+		bl = blclient.NewHTTPClient(blURL, httpClient)
+	}
+
+	var idClient dynclient.IdentityClient
+	if checkIdentity {
+		idClient = dynclient.NewIdentityHTTPClient(authSysURL, httpClient)
+	}
+	orch := dynsvc.NewDynamicOrchestratorWithClients(
+		dynclient.NewSRHTTPClient(srURL, httpClient),
+		dynclient.NewCAHTTPClient(caURL, httpClient),
+		idClient,
+		bl,
+		checkAuth, checkIdentity,
+	)
+
+	pushTimeoutSec := 5
+	if v := os.Getenv("PUSH_DELIVERY_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			pushTimeoutSec = n
+		}
+	}
+	orch.SetPushClient(&http.Client{Timeout: time.Duration(pushTimeoutSec) * time.Second})
+
+	sysHandler := dynapi.NewHandler(orch, os.Getenv("MGMT_AUTH_URL"))
 
 	mgmtHandler := generalmgmt.NewHandler(buf, "serviceorchestration/orchestration", map[string]string{
-		"PORT":                 port,
-		"SERVICE_REGISTRY_URL": srURL,
-		"CONSUMER_AUTH_URL":    caURL,
-		"AUTH_SYSTEM_URL":      authSysURL,
-		"ENABLE_AUTH":          os.Getenv("ENABLE_AUTH"),
-		"ENABLE_IDENTITY_CHECK": os.Getenv("ENABLE_IDENTITY_CHECK"),
-		"TLS_PORT":             os.Getenv("TLS_PORT"),
+		"PORT":                  port,
+		"SERVICE_REGISTRY_URL":  srURL,
+		"CONSUMER_AUTH_URL":     caURL,
+		"AUTH_SYSTEM_URL":       authSysURL,
+		"ENABLE_AUTH":                   os.Getenv("ENABLE_AUTH"),
+		"ENABLE_IDENTITY_CHECK":         os.Getenv("ENABLE_IDENTITY_CHECK"),
+		"TLS_PORT":                      os.Getenv("TLS_PORT"),
+		"MGMT_AUTH_URL":                 os.Getenv("MGMT_AUTH_URL"),
+		"BLACKLIST_URL":                 os.Getenv("BLACKLIST_URL"),
+		"PUSH_DELIVERY_TIMEOUT_SECONDS": os.Getenv("PUSH_DELIVERY_TIMEOUT_SECONDS"),
 	})
 
 	root := http.NewServeMux()

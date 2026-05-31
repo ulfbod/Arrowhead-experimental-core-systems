@@ -14,6 +14,7 @@ import (
 	"time"
 
 	srapi "arrowhead/core/internal/api"
+	blclient "arrowhead/core/internal/blacklist/client"
 	srrepo "arrowhead/core/internal/repository"
 	srsvc "arrowhead/core/internal/service"
 
@@ -119,7 +120,7 @@ func itoa(n int) string { return fmt.Sprintf("%d", n) }
 
 func startSR(t *testing.T) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(srapi.NewHandler(srsvc.NewRegistryService(srrepo.NewMemoryRepository())))
+	return httptest.NewServer(srapi.NewHandler(srsvc.NewRegistryService(srrepo.NewMemoryRepository()), blclient.NopClient{}))
 }
 
 // startAH5SR starts a ServiceRegistry that serves the AH5 API endpoints.
@@ -127,32 +128,32 @@ func startSR(t *testing.T) *httptest.Server {
 // which is only available on the AH5 handler.
 func startAH5SR(t *testing.T) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(srapi.NewAH5Handler(srsvc.NewAH5RegistryService(srrepo.NewAH5Store())))
+	return httptest.NewServer(srapi.NewAH5Handler(srsvc.NewAH5RegistryService(srrepo.NewAH5Store()), "", "", ""))
 }
 
 func startAuth(t *testing.T) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(authapi.NewHandler(authsvc.NewAuthService(authrepo.NewMemoryRepository(), time.Hour)))
+	return httptest.NewServer(authapi.NewHandler(authsvc.NewAuthService(authrepo.NewMemoryRepository(), time.Hour), ""))
 }
 
 func startCA(t *testing.T) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(caapi.NewHandler(casvc.NewAuthService(carepo.NewMemoryRepository())))
+	return httptest.NewServer(caapi.NewHandler(casvc.NewAuthService(carepo.NewMemoryRepository()), "", blclient.NopClient{}))
 }
 
 func startDynOrch(t *testing.T, srURL, caURL, authSysURL string, checkAuth, checkIdentity bool) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(dynapi.NewHandler(dynsvc.NewDynamicOrchestrator(srURL, caURL, authSysURL, checkAuth, checkIdentity)))
+	return httptest.NewServer(dynapi.NewHandler(dynsvc.NewDynamicOrchestrator(srURL, caURL, authSysURL, checkAuth, checkIdentity), ""))
 }
 
 func startSimpleStore(t *testing.T) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(ssapi.NewHandler(sssvc.NewSimpleStoreOrchestrator(ssrepo.NewMemoryRepository())))
+	return httptest.NewServer(ssapi.NewHandler(sssvc.NewSimpleStoreOrchestrator(ssrepo.NewMemoryRepository()), ""))
 }
 
 func startFlexibleStore(t *testing.T) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(fsapi.NewHandler(fssvc.NewFlexibleStoreOrchestrator(fsrepo.NewMemoryRepository())))
+	return httptest.NewServer(fsapi.NewHandler(fssvc.NewFlexibleStoreOrchestrator(fsrepo.NewMemoryRepository()), ""))
 }
 
 // ── Common operations ─────────────────────────────────────────────────────────
@@ -621,7 +622,7 @@ func TestE2EIdentityCheckPreventsImpersonation(t *testing.T) {
 // ── AH5 423 Locked on device delete with dependent system (Step 3 / G18) ──────
 
 func TestAH5DeviceRevoke423WithDependentSystem(t *testing.T) {
-	ah5SR := httptest.NewServer(srapi.NewAH5Handler(srsvc.NewAH5RegistryService(srrepo.NewAH5Store())))
+	ah5SR := httptest.NewServer(srapi.NewAH5Handler(srsvc.NewAH5RegistryService(srrepo.NewAH5Store()), "", "", ""))
 	defer ah5SR.Close()
 
 	// Register device
@@ -649,7 +650,7 @@ func TestAH5DeviceRevoke423WithDependentSystem(t *testing.T) {
 }
 
 func TestAH5ServiceRegistrationCompositeInstanceID(t *testing.T) {
-	ah5SR := httptest.NewServer(srapi.NewAH5Handler(srsvc.NewAH5RegistryService(srrepo.NewAH5Store())))
+	ah5SR := httptest.NewServer(srapi.NewAH5Handler(srsvc.NewAH5RegistryService(srrepo.NewAH5Store()), "", "", ""))
 	defer ah5SR.Close()
 
 	body, _ := json.Marshal(map[string]any{

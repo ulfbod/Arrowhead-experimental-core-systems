@@ -15,12 +15,12 @@ import (
 
 func newTestHandler(srURL, caURL string, checkAuth bool) http.Handler {
 	orch := dynservice.NewDynamicOrchestrator(srURL, caURL, "", checkAuth, false)
-	return api.NewHandler(orch)
+	return api.NewHandler(orch, "")
 }
 
 func newTestHandlerWithIdentity(srURL, caURL, authSysURL string, checkAuth, checkIdentity bool) http.Handler {
 	orch := dynservice.NewDynamicOrchestrator(srURL, caURL, authSysURL, checkAuth, checkIdentity)
-	return api.NewHandler(orch)
+	return api.NewHandler(orch, "")
 }
 
 func fakeSR(providers ...string) *httptest.Server {
@@ -315,7 +315,7 @@ func TestHandlerOrchestrateIdentityTokenOverridesSelfReportedName(t *testing.T) 
 func newDynamicOrchTestServer() *httptest.Server {
 	sr := fakeSR("sensor-1", "sensor-2")
 	orch := dynservice.NewDynamicOrchestrator(sr.URL, "", "", false, false)
-	return httptest.NewServer(api.NewHandler(orch))
+	return httptest.NewServer(api.NewHandler(orch, ""))
 }
 
 func TestDynamicOrchNewPath(t *testing.T) {
@@ -684,5 +684,144 @@ func TestTriggerNotFoundReturns404(t *testing.T) {
 		map[string]any{"subscriptionId": "no-such-id"})
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for unknown subscription, got %d", w.Code)
+	}
+}
+
+// ─── Step B: Tests for Steps 24 + 25 ─────────────────────────────────────────
+
+func TestOrchestrationResultForwardsInterfaces(t *testing.T) {
+	sr := fakeSR("sensor-1")
+	defer sr.Close()
+	ca := fakeCA(true)
+	defer ca.Close()
+
+	h := newTestHandler(sr.URL, ca.URL, false)
+	w := postOrchestrate(t, h, validBody)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp orchmodel.OrchestrationResponse
+	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	if len(resp.Results[0].Interfaces) == 0 {
+		t.Errorf("Interfaces is empty, expected SR interfaces to be forwarded")
+	}
+}
+
+func TestAllowInterclouReturns501(t *testing.T) {
+	sr := fakeSR("sensor-1")
+	defer sr.Close()
+	ca := fakeCA(true)
+	defer ca.Close()
+
+	h := newTestHandler(sr.URL, ca.URL, false)
+	body := map[string]any{
+		"requesterSystem":    map[string]any{"systemName": "c", "address": "a", "port": 1},
+		"requestedService":   map[string]any{"serviceDefinition": "s"},
+		"orchestrationFlags": map[string]any{"ALLOW_INTERCLOUD": true},
+	}
+	w := postOrchestrate(t, h, body)
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("want 501, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestOnlyInterclouReturns501(t *testing.T) {
+	sr := fakeSR("sensor-1")
+	defer sr.Close()
+	ca := fakeCA(true)
+	defer ca.Close()
+
+	h := newTestHandler(sr.URL, ca.URL, false)
+	body := map[string]any{
+		"requesterSystem":    map[string]any{"systemName": "c", "address": "a", "port": 1},
+		"requestedService":   map[string]any{"serviceDefinition": "s"},
+		"orchestrationFlags": map[string]any{"ONLY_INTERCLOUD": true},
+	}
+	w := postOrchestrate(t, h, body)
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("want 501, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestLocalOrchestrationUnaffectedByInterclouChange(t *testing.T) {
+	sr := fakeSR("sensor-1")
+	defer sr.Close()
+	ca := fakeCA(true)
+	defer ca.Close()
+
+	h := newTestHandler(sr.URL, ca.URL, false)
+	// No intercloud flags → should succeed normally
+	w := postOrchestrate(t, h, validBody)
+	if w.Code != http.StatusOK {
+		t.Errorf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// ─── Step 29 (G20): Pagination on history/lock/push queries ──────────────────
+
+func TestHistoryQueryPagination(t *testing.T) {
+	sr := fakeSR("s1")
+	defer sr.Close()
+	ca := fakeCA(true)
+	defer ca.Close()
+
+	h := newTestHandler(sr.URL, ca.URL, false)
+	// Generate 3 history entries via 3 orchestration requests.
+	for range [3]struct{}{} {
+		postOrchestrate(t, h, validBody)
+	}
+
+	// Query history with pageSize=2.
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/mgmt/history/query",
+		strings.NewReader(`{"pagination":{"pageNumber":0,"pageSize":2}}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("history query: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Entries    []any `json:"entries"`
+		Count      int   `json:"count"`
+		TotalCount int   `json:"totalCount"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
+	if resp.Count != 2 {
+		t.Errorf("history page count: want 2, got %d", resp.Count)
+	}
+	if resp.TotalCount != 3 {
+		t.Errorf("history totalCount: want 3, got %d", resp.TotalCount)
+	}
+}
+
+func TestHistoryQueryNoPaginationReturnsAll(t *testing.T) {
+	sr := fakeSR("s1")
+	defer sr.Close()
+	ca := fakeCA(true)
+	defer ca.Close()
+
+	h := newTestHandler(sr.URL, ca.URL, false)
+	for range [3]struct{}{} {
+		postOrchestrate(t, h, validBody)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/serviceorchestration/orchestration/mgmt/history/query",
+		strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	var resp struct {
+		Count      int `json:"count"`
+		TotalCount int `json:"totalCount"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
+	if resp.Count < 3 {
+		t.Errorf("no pagination: want count>=3, got %d", resp.Count)
+	}
+	if resp.TotalCount < 3 {
+		t.Errorf("no pagination: want totalCount>=3, got %d", resp.TotalCount)
 	}
 }

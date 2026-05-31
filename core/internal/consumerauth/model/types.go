@@ -86,17 +86,22 @@ func EncodeInstanceID(id string) string {
 
 // ─── Authorization token types ─────────────────────────────────────────────────
 
-// TokenVariantTimeLimited is the only fully implemented token variant.
-const TokenVariantTimeLimited = "TIME_LIMITED_TOKEN"
+// Token variant constants.
+const (
+	TokenVariantTimeLimited         = "TIME_LIMITED_TOKEN"
+	TokenVariantUsageLimited        = "USAGE_LIMITED_TOKEN"
+	TokenVariantBase64SelfContained = "BASE64_SELF_CONTAINED"
+)
 
 // TokenGenerateRequest is the body for POST /authorization-token/generate.
 type TokenGenerateRequest struct {
-	TokenVariant string `json:"tokenVariant"`
-	Provider     string `json:"provider"`
-	TargetType   string `json:"targetType"`
-	Target       string `json:"target"`
-	Scope        string `json:"scope,omitempty"`
-	Consumer     string `json:"consumer,omitempty"`
+	TokenVariant  string `json:"tokenVariant"`
+	Provider      string `json:"provider"`
+	TargetType    string `json:"targetType"`
+	Target        string `json:"target"`
+	Scope         string `json:"scope,omitempty"`
+	Consumer      string `json:"consumer,omitempty"`
+	MaxUsageCount int    `json:"maxUsageCount,omitempty"`
 }
 
 // TokenDescriptor is returned on successful token generation (AuthorizationTokenDescriptor).
@@ -122,4 +127,71 @@ type EncryptionKeyRequest struct {
 	SystemName string `json:"systemName"`
 	Algorithm  string `json:"algorithm"`
 	Key        string `json:"key"`
+}
+
+// ─── Bulk management types (G38, G39) ─────────────────────────────────────────
+
+// BulkGrantRequest is the body for POST /authorization/mgmt/grant-policies.
+type BulkGrantRequest struct {
+	Policies []GrantRequest `json:"policies"`
+}
+
+// BulkGrantResult is one element of the grant-policies response.
+type BulkGrantResult struct {
+	InstanceID string    `json:"instanceId,omitempty"`
+	Policy     AuthPolicy `json:"policy,omitempty"`
+	Error      string    `json:"error,omitempty"`
+}
+
+// BulkRevokeRequest is the body for DELETE /authorization/mgmt/revoke-policies.
+type BulkRevokeRequest struct {
+	InstanceIDs []string `json:"instanceIds"`
+}
+
+// BulkCheckResult is one element of the check-policies response.
+type BulkCheckResult struct {
+	Consumer   string `json:"consumer"`
+	Provider   string `json:"provider,omitempty"`
+	Target     string `json:"target"`
+	TargetType string `json:"targetType"`
+	Scope      string `json:"scope,omitempty"`
+	Authorized bool   `json:"authorized"`
+}
+
+// TokenRecord represents a stored auth token for mgmt query responses.
+type TokenRecord struct {
+	Token      string `json:"token"`
+	TokenType  string `json:"tokenType"`
+	Provider   string `json:"provider"`
+	TargetType string `json:"targetType"`
+	Target     string `json:"target"`
+	Consumer   string `json:"consumer,omitempty"`
+	Scope      string `json:"scope,omitempty"`
+	ExpiresAt  string `json:"expiresAt"`
+}
+
+// BulkGenerateRequest is the body for POST /authorization-token/mgmt/generate-tokens.
+type BulkGenerateRequest struct {
+	Requests []TokenGenerateRequest `json:"requests"`
+}
+
+// BulkGenerateResult is one element of the generate-tokens response.
+type BulkGenerateResult struct {
+	Token TokenDescriptor `json:"token,omitempty"`
+	Error string          `json:"error,omitempty"`
+}
+
+// BulkRevokeTokensRequest is the body for DELETE /authorization-token/mgmt/revoke-tokens.
+type BulkRevokeTokensRequest struct {
+	Tokens []string `json:"tokens"`
+}
+
+// BulkEncryptionKeysRequest is the body for POST /authorization-token/mgmt/add-encryption-keys.
+type BulkEncryptionKeysRequest struct {
+	Keys []EncryptionKeyRequest `json:"keys"`
+}
+
+// BulkRemoveEncryptionKeysRequest is the body for DELETE /authorization-token/mgmt/remove-encryption-keys.
+type BulkRemoveEncryptionKeysRequest struct {
+	SystemNames []string `json:"systemNames"`
 }

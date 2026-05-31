@@ -227,3 +227,129 @@ func TestVerifyWithProvider(t *testing.T) {
 		t.Error("expected true: consumer-app is in whitelist for sensor-1")
 	}
 }
+
+// ─── Step 34 (G23): Token variants ───────────────────────────────────────────
+
+func TestUsageLimitedTokenGenerated(t *testing.T) {
+	svc := newAuthService()
+	req := model.TokenGenerateRequest{
+		TokenVariant:  model.TokenVariantUsageLimited,
+		Provider:      "provider-1",
+		TargetType:    model.TargetServiceDef,
+		Target:        "svc",
+		MaxUsageCount: 3,
+	}
+	desc, err := svc.GenerateAuthToken(req)
+	if err != nil {
+		t.Fatalf("generate USAGE_LIMITED_TOKEN: %v", err)
+	}
+	if desc.Token == "" {
+		t.Error("expected non-empty token")
+	}
+	if desc.TokenType != model.TokenVariantUsageLimited {
+		t.Errorf("token type = %q, want %q", desc.TokenType, model.TokenVariantUsageLimited)
+	}
+}
+
+func TestUsageLimitedTokenDecrementsOnVerify(t *testing.T) {
+	svc := newAuthService()
+	req := model.TokenGenerateRequest{
+		TokenVariant:  model.TokenVariantUsageLimited,
+		Provider:      "provider-1",
+		TargetType:    model.TargetServiceDef,
+		Target:        "svc",
+		MaxUsageCount: 2,
+	}
+	desc, err := svc.GenerateAuthToken(req)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	token := desc.Token
+	// First two verifications should succeed
+	for i := 0; i < 2; i++ {
+		_, ok := svc.VerifyAuthToken(token)
+		if !ok {
+			t.Errorf("verify #%d: want ok=true", i+1)
+		}
+	}
+	// Third should fail
+	_, ok := svc.VerifyAuthToken(token)
+	if ok {
+		t.Error("third verify: want ok=false (exhausted)")
+	}
+}
+
+func TestUsageLimitedTokenExpiredAfterMaxUsage(t *testing.T) {
+	svc := newAuthService()
+	req := model.TokenGenerateRequest{
+		TokenVariant:  model.TokenVariantUsageLimited,
+		Provider:      "provider-1",
+		TargetType:    model.TargetServiceDef,
+		Target:        "svc",
+		MaxUsageCount: 1,
+	}
+	desc, _ := svc.GenerateAuthToken(req)
+	token := desc.Token
+	svc.VerifyAuthToken(token) // exhausts
+	// After exhaustion, verify still returns false
+	_, ok := svc.VerifyAuthToken(token)
+	if ok {
+		t.Error("after exhaustion: want ok=false")
+	}
+}
+
+func TestBase64SelfContainedTokenGenerated(t *testing.T) {
+	svc := newAuthService()
+	req := model.TokenGenerateRequest{
+		TokenVariant: model.TokenVariantBase64SelfContained,
+		Provider:     "provider-1",
+		TargetType:   model.TargetServiceDef,
+		Target:       "svc",
+		Consumer:     "consumer-1",
+	}
+	desc, err := svc.GenerateAuthToken(req)
+	if err != nil {
+		t.Fatalf("generate BASE64_SELF_CONTAINED: %v", err)
+	}
+	if desc.Token == "" {
+		t.Error("expected non-empty token")
+	}
+	if desc.TokenType != model.TokenVariantBase64SelfContained {
+		t.Errorf("token type = %q", desc.TokenType)
+	}
+}
+
+func TestBase64SelfContainedTokenVerifiable(t *testing.T) {
+	svc := newAuthService()
+	req := model.TokenGenerateRequest{
+		TokenVariant: model.TokenVariantBase64SelfContained,
+		Provider:     "provider-1",
+		TargetType:   model.TargetServiceDef,
+		Target:       "svc",
+		Consumer:     "consumer-1",
+	}
+	desc, _ := svc.GenerateAuthToken(req)
+	// Create a new service (different instance) — token must still verify
+	svc2 := newAuthService()
+	resp, ok := svc2.VerifyAuthToken(desc.Token)
+	if !ok {
+		t.Fatal("BASE64_SELF_CONTAINED token should verify without server state")
+	}
+	if resp.Consumer != "consumer-1" {
+		t.Errorf("consumer = %q, want consumer-1", resp.Consumer)
+	}
+}
+
+func TestJWTVariantReturns501(t *testing.T) {
+	svc := newAuthService()
+	req := model.TokenGenerateRequest{
+		TokenVariant: "JWT_TOKEN",
+		Provider:     "provider-1",
+		TargetType:   model.TargetServiceDef,
+		Target:       "svc",
+	}
+	_, err := svc.GenerateAuthToken(req)
+	if err == nil {
+		t.Fatal("expected error for unsupported JWT variant")
+	}
+}

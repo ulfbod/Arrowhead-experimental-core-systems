@@ -42,8 +42,9 @@ func main() {
 	sysHandler := api.NewHandler(svc)
 
 	mgmtHandler := generalmgmt.NewHandler(buf, "ca", map[string]string{
-		"PORT":    port,
-		"DB_PATH": os.Getenv("DB_PATH"),
+		"PORT":         port,
+		"DB_PATH":      os.Getenv("DB_PATH"),
+		"MGMT_AUTH_URL": os.Getenv("MGMT_AUTH_URL"),
 	})
 
 	root := http.NewServeMux()

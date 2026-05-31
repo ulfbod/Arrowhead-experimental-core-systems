@@ -17,6 +17,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full structural overview.
 | SimpleStoreOrchestration | 8084 | `cmd/simplestoreorch` |
 | FlexibleStoreOrchestration | 8085 | `cmd/flexiblestoreorch` |
 | CertificateAuthority | 8086 | `cmd/ca` *(extension, not in AH5 spec)* |
+| DeviceQoSEvaluator | 8088 | `cmd/deviceqoseval` *(Phase 3 — G35)* |
+| TranslationManager | 8089 | `cmd/translationmgr` *(Phase 3 — G36)* |
 
 All systems default to in-memory storage. Set `DB_PATH` to a file path for SQLite-backed persistence across restarts (see [Configuration](#configuration)).
 
@@ -37,6 +39,8 @@ go run ./cmd/dynamicorch          # :8083
 go run ./cmd/simplestoreorch      # :8084
 go run ./cmd/flexiblestoreorch    # :8085
 go run ./cmd/ca                   # :8086  (CA extension)
+go run ./cmd/deviceqoseval        # :8088  (Device QoS Evaluator — Phase 3)
+go run ./cmd/translationmgr       # :8089  (Translation Manager — Phase 3)
 ```
 
 ### Dashboard (development mode)
@@ -146,6 +150,30 @@ All systems except the CA support an optional HTTPS listener alongside the plain
 | `TLS_KEY_FILE` | *(required with TLS_PORT)* | PEM private key file |
 | `TLS_CA_FILE` | *(optional)* | PEM CA certificate; when set, enforces mutual TLS (`RequireAndVerifyClientCert`) |
 
+### Management access policy (all systems)
+
+| Variable | Default | Description |
+|---|---|---|
+| `MGMT_AUTH_URL` | *(unset)* | When set, all `/mgmt/*` endpoints on every system require `Authorization: Bearer <token>` with `sysop: true`. Unset = open management (development mode). |
+
+### ServiceRegistry — registration identity enforcement (Phase 3 / G10)
+
+| Variable | Default | Description |
+|---|---|---|
+| `REGISTER_AUTH_URL` | *(unset)* | When set, system and service registration require `Authorization: Bearer <token>` whose verified `systemName` matches the `name`/`systemName` in the request body. Fail-closed: missing token → 401; network error → 401; name mismatch → 403. Unset = open registration (development mode). |
+
+### ConsumerAuthorization — BASE64_SELF_CONTAINED tokens (Phase 3 / G23)
+
+| Variable | Default | Description |
+|---|---|---|
+| `HMAC_SECRET` | `arrowhead-default-secret` | Secret used to sign `BASE64_SELF_CONTAINED` tokens (HMAC-SHA256). Set to a strong random value in production. |
+
+### Blacklist integration (ServiceRegistry, ConsumerAuthorization, DynamicOrchestration, CertificateAuthority)
+
+| Variable | Default | Description |
+|---|---|---|
+| `BLACKLIST_URL` | *(unset)* | When set, blacklisted systems are rejected at register/grant/orchestration/sign. Fail-closed: Blacklist unreachable is treated as blacklisted. |
+
 ### DynamicOrchestration
 
 | Variable | Default | Description |
@@ -155,14 +183,34 @@ All systems except the CA support an optional HTTPS listener alongside the plain
 | `AUTH_SYSTEM_URL` | `http://localhost:8081` | Authentication system base URL |
 | `ENABLE_AUTH` | `false` | Filter providers via ConsumerAuthorization |
 | `ENABLE_IDENTITY_CHECK` | `false` | Require a valid Bearer token; use verified identity for auth checks |
+| `PUSH_DELIVERY_TIMEOUT_SECONDS` | `5` | HTTP timeout (seconds) for each push notification delivery attempt via `mgmt/push/trigger` |
+| `QOS_EVALUATOR_URL` | *(unset)* | When set, DynamicOrchestration performs TCP RTT probes via the Device QoS Evaluator for candidates when `qualityRequirements[]` is present. Fail-open: evaluator unreachable → candidate included. |
+
+### MQTT (Phase 3 / G34)
+
+| Variable | Default | Description |
+|---|---|---|
+| `MQTT_BROKER_URL` | *(unset)* | When set (e.g. `tcp://localhost:1883`), the system subscribes to `ah5/<system>/request` and publishes replies to `ah5/<system>/reply/<correlationId>`. When empty, no MQTT listener is started. |
 
 `ENABLE_IDENTITY_CHECK` connects Authentication and DynamicOrchestration: consumers must log in first and present their token when orchestrating. The verified `systemName` from the token replaces the self-reported value in the request body, preventing impersonation. See `core/GAP_ANALYSIS.md` (D8) for full design rationale.
+
+### ServiceRegistry
+
+| Variable | Default | Description |
+|---|---|---|
+| `SR_AUTH_URL` | `http://localhost:8081` | Authentication system base URL used to verify Bearer tokens on `DELETE /system-discovery/revoke` |
 
 ### Authentication
 
 | Variable | Default | Description |
 |---|---|---|
 | `TOKEN_DURATION_SECONDS` | `3600` | Token lifetime |
+
+### Blacklist
+
+| Variable | Default | Description |
+|---|---|---|
+| `BLACKLIST_AUTH_URL` | *(unset)* | When set, `GET /blacklist/lookup` and `GET /blacklist/check/{name}` require `Authorization: Bearer <token>`. Unset = open access (development mode). |
 
 ### Deployment note — multi-host and DHCP environments
 

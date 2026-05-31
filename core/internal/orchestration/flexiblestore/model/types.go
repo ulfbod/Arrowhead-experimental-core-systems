@@ -35,6 +35,7 @@ type CreateFlexibleRuleRequest struct {
 
 // RulesResponse is returned by GET /orchestration/flexiblestore/rules.
 type RulesResponse struct {
-	Rules []FlexibleRule `json:"rules"`
-	Count int            `json:"count"`
+	Rules      []FlexibleRule `json:"rules"`
+	Count      int            `json:"count"`
+	TotalCount int            `json:"totalCount"`
 }

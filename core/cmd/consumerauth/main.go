@@ -19,6 +19,7 @@ import (
 	"arrowhead/core/internal/consumerauth/api"
 	"arrowhead/core/internal/consumerauth/repository"
 	"arrowhead/core/internal/consumerauth/service"
+	blclient "arrowhead/core/internal/blacklist/client"
 	"arrowhead/core/internal/generalmgmt"
 	"arrowhead/core/internal/tlsutil"
 )
@@ -44,12 +45,19 @@ func main() {
 		repo = repository.NewMemoryRepository()
 	}
 	svc := service.NewAuthService(repo)
-	sysHandler := api.NewHandler(svc)
+
+	var blClient blclient.BlacklistClient = blclient.NopClient{}
+	if blURL := os.Getenv("BLACKLIST_URL"); blURL != "" {
+		blClient = blclient.NewHTTPClient(blURL, http.DefaultClient)
+	}
+	sysHandler := api.NewHandler(svc, os.Getenv("MGMT_AUTH_URL"), blClient)
 
 	mgmtHandler := generalmgmt.NewHandler(buf, "authorization", map[string]string{
-		"PORT":    port,
-		"DB_PATH": os.Getenv("DB_PATH"),
-		"TLS_PORT": os.Getenv("TLS_PORT"),
+		"PORT":          port,
+		"DB_PATH":       os.Getenv("DB_PATH"),
+		"TLS_PORT":      os.Getenv("TLS_PORT"),
+		"MGMT_AUTH_URL": os.Getenv("MGMT_AUTH_URL"),
+		"BLACKLIST_URL":  os.Getenv("BLACKLIST_URL"),
 	})
 
 	root := http.NewServeMux()

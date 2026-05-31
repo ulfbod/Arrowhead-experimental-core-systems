@@ -2,13 +2,15 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
 	"arrowhead/core/internal/ca/model"
 	"arrowhead/core/internal/ca/service"
+	"arrowhead/core/internal/httputil"
 )
+
+const caOrigin = "ca"
 
 type Handler struct {
 	svc *service.CAService
@@ -27,82 +29,85 @@ func NewHandler(svc *service.CAService) http.Handler {
 	return mux
 }
 
+// statusFor maps sentinel errors to HTTP status codes.
+func statusFor(err error) int {
+	switch {
+	case errors.Is(err, service.ErrMissingSystemName):
+		return http.StatusBadRequest
+	case errors.Is(err, service.ErrMissingCertificate):
+		return http.StatusBadRequest
+	case errors.Is(err, service.ErrCertNotIssuedByCA):
+		return http.StatusBadRequest
+	default:
+		return http.StatusBadRequest
+	}
+}
+
 // POST /ca/certificate/issue
 func (h *Handler) handleIssue(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", caOrigin)
 		return
 	}
 	var req model.IssueRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
 	issued, err := h.svc.Issue(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, statusFor(err), err.Error(), caOrigin)
 		return
 	}
-	writeJSON(w, http.StatusCreated, issued)
+	httputil.WriteJSON(w, http.StatusCreated, issued, caOrigin)
 }
 
 // POST /ca/certificate/verify
 func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", caOrigin)
 		return
 	}
 	var req struct {
 		Certificate string `json:"certificate"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
 	systemName, valid, reason := h.svc.VerifyCert(req.Certificate)
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"valid":      valid,
 		"systemName": systemName,
 		"reason":     reason,
-	})
+	}, caOrigin)
 }
 
 // POST /ca/certificate/revoke
 func (h *Handler) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", caOrigin)
 		return
 	}
 	var req model.RevokeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
 	resp, err := h.svc.Revoke(req.Certificate)
 	if err != nil {
-		if errors.Is(err, service.ErrMissingCertificate) {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if errors.Is(err, service.ErrCertNotIssuedByCA) {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, statusFor(err), err.Error(), caOrigin)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	httputil.WriteJSON(w, http.StatusOK, resp, caOrigin)
 }
 
 // GET /ca/crl
 func (h *Handler) handleCRL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "GET required", caOrigin)
 		return
 	}
 	crlPEM, err := h.svc.CRL()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate CRL")
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to generate CRL", caOrigin)
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-pem-file")
@@ -113,46 +118,12 @@ func (h *Handler) handleCRL(w http.ResponseWriter, r *http.Request) {
 // GET /ca/info
 func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "GET required", caOrigin)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.svc.CAInfo())
+	httputil.WriteJSON(w, http.StatusOK, h.svc.CAInfo(), caOrigin)
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "ca"})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v) //nolint:errcheck
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	exType := errTypeForStatus(status)
-	type errBody struct {
-		ErrorMessage  string `json:"errorMessage"`
-		ErrorCode     int    `json:"errorCode"`
-		ExceptionType string `json:"exceptionType"`
-		Origin        string `json:"origin"`
-	}
-	writeJSON(w, status, errBody{ErrorMessage: msg, ErrorCode: status, ExceptionType: exType, Origin: "ca.certificate"})
-}
-
-func errTypeForStatus(status int) string {
-	switch status {
-	case http.StatusBadRequest, http.StatusMethodNotAllowed:
-		return "INVALID_PARAMETER"
-	case http.StatusUnauthorized:
-		return "AUTH"
-	case http.StatusForbidden:
-		return "FORBIDDEN"
-	case http.StatusNotFound:
-		return "DATA_NOT_FOUND"
-	case http.StatusLocked:
-		return "LOCKED"
-	default:
-		return "INTERNAL_SERVER_ERROR"
-	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "ca"}, caOrigin)
 }

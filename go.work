@@ -19,6 +19,16 @@ use (
 	./experiments/experiment-11/services/pap
 	./experiments/experiment-11/services/pip
 
+	// Experiment 13
+	./experiments/experiment-13/services/kafka-authz
+	./experiments/experiment-13/services/pip
+	./experiments/experiment-13/services/pki-rest-authz
+	./experiments/experiment-13/services/profile-ca
+	./experiments/experiment-13/services/topic-auth-xacml
+
+	// Experiment 14
+	./experiments/experiment-14/services/topic-auth-xacml
+
 	// Experiment 2
 	./experiments/experiment-2/services/consumer
 	./experiments/experiment-2/services/edge-adapter
@@ -60,16 +70,6 @@ use (
 	// Experiment 9
 	./experiments/experiment-9/services/portal-cloud-ml
 	./experiments/experiment-9/services/service-partner
-
-	// Experiment 13
-	./experiments/experiment-13/services/kafka-authz
-	./experiments/experiment-13/services/pki-rest-authz
-	./experiments/experiment-13/services/pip
-	./experiments/experiment-13/services/profile-ca
-	./experiments/experiment-13/services/topic-auth-xacml
-
-	// Experiment 14
-	./experiments/experiment-14/services/topic-auth-xacml
 
 	// Support modules
 	./support/authzforce

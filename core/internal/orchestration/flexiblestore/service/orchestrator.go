@@ -76,6 +76,7 @@ func (o *FlexibleStoreOrchestrator) Orchestrate(req orchmodel.OrchestrationReque
 			ServiceUri:        rule.ServiceUri,
 			Interfaces:        rule.Interfaces,
 			Priority:          rule.Priority,
+			CloudIdentifier:   "LOCAL",
 		})
 	}
 	return orchmodel.OrchestrationResponse{Results: results}, nil
@@ -122,7 +123,7 @@ func (o *FlexibleStoreOrchestrator) ListRules() model.RulesResponse {
 	if all == nil {
 		all = []model.FlexibleRule{}
 	}
-	return model.RulesResponse{Rules: all, Count: len(all)}
+	return model.RulesResponse{Rules: all, Count: len(all), TotalCount: len(all)}
 }
 
 // metadataSubset returns true if requestMeta contains all key-value pairs in filter.

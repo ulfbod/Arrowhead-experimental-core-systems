@@ -4,21 +4,35 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
+	"arrowhead/core/internal/httputil"
+	coremodel "arrowhead/core/internal/model"
 	orchmodel "arrowhead/core/internal/orchestration/model"
 	"arrowhead/core/internal/orchestration/simplestore/model"
 	"arrowhead/core/internal/orchestration/simplestore/service"
 )
 
-type Handler struct {
-	orch *service.SimpleStoreOrchestrator
-	subs *service.SubscriptionStore
+const ssOrigin = "serviceorchestration.orchestration.simplestore"
+
+// pageReqOrZero returns the dereferenced PageRequest, or a zero value if p is nil.
+func pageReqOrZero(p *coremodel.PageRequest) coremodel.PageRequest {
+	if p == nil {
+		return coremodel.PageRequest{}
+	}
+	return *p
 }
 
-func NewHandler(orch *service.SimpleStoreOrchestrator) http.Handler {
-	h := &Handler{orch: orch, subs: service.NewSubscriptionStore()}
+type Handler struct {
+	orch        *service.SimpleStoreOrchestrator
+	subs        *service.SubscriptionStore
+	mgmtAuthURL string
+}
+
+func NewHandler(orch *service.SimpleStoreOrchestrator, mgmtAuthURL string) http.Handler {
+	h := &Handler{orch: orch, subs: service.NewSubscriptionStore(), mgmtAuthURL: mgmtAuthURL}
 	mux := http.NewServeMux()
 	// Pull orchestration
 	mux.HandleFunc("/serviceorchestration/orchestration/pull", h.handleOrchestrate)
@@ -38,104 +52,143 @@ func NewHandler(orch *service.SimpleStoreOrchestrator) http.Handler {
 	return mux
 }
 
+// statusFor maps sentinel errors to HTTP status codes.
+func statusFor(err error) int {
+	switch {
+	case errors.Is(err, service.ErrRuleNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, service.ErrMissingConsumer):
+		return http.StatusBadRequest
+	case errors.Is(err, service.ErrMissingService):
+		return http.StatusBadRequest
+	case errors.Is(err, service.ErrMissingProvider):
+		return http.StatusBadRequest
+	case errors.Is(err, service.ErrMissingServiceUri):
+		return http.StatusBadRequest
+	case errors.Is(err, service.ErrMissingInterfaces):
+		return http.StatusBadRequest
+	case errors.Is(err, orchmodel.ErrInterclouNotSupported):
+		return http.StatusNotImplemented
+	default:
+		return http.StatusBadRequest
+	}
+}
+
 // POST /serviceorchestration/orchestration/pull
 func (h *Handler) handleOrchestrate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", ssOrigin)
 		return
 	}
 	var req orchmodel.OrchestrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
 	resp, err := h.orch.Orchestrate(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, statusFor(err), err.Error(), ssOrigin)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	httputil.WriteJSON(w, http.StatusOK, resp, ssOrigin)
 }
 
 // POST /serviceorchestration/orchestration/mgmt/simple-store/create
 func (h *Handler) handleMgmtCreate(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, ssOrigin) {
+		return
+	}
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", ssOrigin)
 		return
 	}
 	var req model.CreateRuleRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
 	rule, err := h.orch.CreateRule(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, statusFor(err), err.Error(), ssOrigin)
 		return
 	}
-	writeJSON(w, http.StatusCreated, rule)
+	httputil.WriteJSON(w, http.StatusCreated, rule, ssOrigin)
 }
 
 // POST /serviceorchestration/orchestration/mgmt/simple-store/query
 func (h *Handler) handleMgmtQuery(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, ssOrigin) {
 		return
 	}
-	// Body is a filter object (ignored for now — returns all rules)
-	writeJSON(w, http.StatusOK, h.orch.ListRules())
+	if r.Method != http.MethodPost {
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", ssOrigin)
+		return
+	}
+	var raw struct {
+		Pagination *coremodel.PageRequest `json:"pagination"`
+	}
+	json.NewDecoder(r.Body).Decode(&raw) //nolint:errcheck — empty body OK
+	all := h.orch.ListRules()
+	page, total := coremodel.Paginate(all.Rules, pageReqOrZero(raw.Pagination), func(r model.StoreRule) string { return r.ID })
+	httputil.WriteJSON(w, http.StatusOK, model.RulesResponse{Rules: page, Count: len(page), TotalCount: total}, ssOrigin)
 }
 
 // POST /serviceorchestration/orchestration/mgmt/simple-store/modify-priorities
 func (h *Handler) handleMgmtModifyPriorities(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, ssOrigin) {
+		return
+	}
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", ssOrigin)
 		return
 	}
 	var req model.ModifyPrioritiesRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
 	h.orch.ModifyPriorities(req)
-	writeJSON(w, http.StatusOK, h.orch.ListRules())
+	httputil.WriteJSON(w, http.StatusOK, h.orch.ListRules(), ssOrigin)
 }
 
 // Legacy alias: GET/POST /serviceorchestration/orchestration/simplestore/rules
 func (h *Handler) handleRules(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, ssOrigin) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, h.orch.ListRules())
+		all := h.orch.ListRules()
+		httputil.WriteJSON(w, http.StatusOK, model.RulesResponse{Rules: all.Rules, Count: len(all.Rules), TotalCount: all.TotalCount}, ssOrigin)
 	case http.MethodPost:
 		var req model.CreateRuleRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+		if !httputil.DecodeJSON(w, r, &req) {
 			return
 		}
 		rule, err := h.orch.CreateRule(req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			httputil.WriteError(w, statusFor(err), err.Error(), ssOrigin)
 			return
 		}
-		writeJSON(w, http.StatusCreated, rule)
+		httputil.WriteJSON(w, http.StatusCreated, rule, ssOrigin)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "GET or POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "GET or POST required", ssOrigin)
 	}
 }
 
 // Legacy alias: DELETE /serviceorchestration/orchestration/simplestore/rules/{id}
 func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, ssOrigin) {
+		return
+	}
 	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "DELETE required", ssOrigin)
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/serviceorchestration/orchestration/simplestore/rules/")
 	if id == "" {
-		writeError(w, http.StatusBadRequest, "id is required")
+		httputil.WriteError(w, http.StatusBadRequest, "id is required", ssOrigin)
 		return
 	}
 	if err := h.orch.DeleteRule(id); err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		httputil.WriteError(w, statusFor(err), err.Error(), ssOrigin)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -144,12 +197,11 @@ func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 // POST /serviceorchestration/orchestration/subscribe
 func (h *Handler) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", ssOrigin)
 		return
 	}
 	var req service.CreateSubscriptionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
 	sub, created := h.subs.Subscribe(req)
@@ -157,13 +209,13 @@ func (h *Handler) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if created {
 		status = http.StatusCreated
 	}
-	writeJSON(w, status, sub)
+	httputil.WriteJSON(w, status, sub, ssOrigin)
 }
 
 // DELETE /serviceorchestration/orchestration/unsubscribe/{subscriptionId}
 func (h *Handler) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "DELETE required", ssOrigin)
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/serviceorchestration/orchestration/unsubscribe/")
@@ -175,39 +227,5 @@ func (h *Handler) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "simplestoreorchestration"})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	exType := errTypeForStatus(status)
-	type errBody struct {
-		ErrorMessage  string `json:"errorMessage"`
-		ErrorCode     int    `json:"errorCode"`
-		ExceptionType string `json:"exceptionType"`
-		Origin        string `json:"origin"`
-	}
-	writeJSON(w, status, errBody{ErrorMessage: msg, ErrorCode: status, ExceptionType: exType, Origin: "serviceorchestration.orchestration.simplestore"})
-}
-
-func errTypeForStatus(status int) string {
-	switch status {
-	case http.StatusBadRequest, http.StatusMethodNotAllowed:
-		return "INVALID_PARAMETER"
-	case http.StatusUnauthorized:
-		return "AUTH"
-	case http.StatusForbidden:
-		return "FORBIDDEN"
-	case http.StatusNotFound:
-		return "DATA_NOT_FOUND"
-	case http.StatusLocked:
-		return "LOCKED"
-	default:
-		return "INTERNAL_SERVER_ERROR"
-	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "simplestoreorchestration"}, ssOrigin)
 }

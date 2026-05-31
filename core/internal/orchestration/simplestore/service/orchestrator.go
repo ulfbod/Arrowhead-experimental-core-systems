@@ -32,6 +32,9 @@ func NewSimpleStoreOrchestrator(repo repository.Repository) *SimpleStoreOrchestr
 
 // Orchestrate performs a pull: matches store rules to the consumer's request.
 func (o *SimpleStoreOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest) (orchmodel.OrchestrationResponse, error) {
+	if req.OrchestrationFlags.AllowIntercloud || req.OrchestrationFlags.OnlyIntercloud {
+		return orchmodel.OrchestrationResponse{}, orchmodel.ErrInterclouNotSupported
+	}
 	if req.RequesterSystem.SystemName == "" {
 		return orchmodel.OrchestrationResponse{}, errors.New("requesterSystem.systemName is required")
 	}
@@ -53,6 +56,7 @@ func (o *SimpleStoreOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest
 			ServiceUri:        rule.ServiceUri,
 			Interfaces:        rule.Interfaces,
 			Metadata:          rule.Metadata,
+			CloudIdentifier:   "LOCAL",
 		})
 	}
 	if results == nil {

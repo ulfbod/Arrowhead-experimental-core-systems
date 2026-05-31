@@ -16,10 +16,10 @@ Documentation sources (reviewed May 2026 — full site traversal):
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/communication_profiles/
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/general_management/
 
-**Implementation status (as of May 2026):** Phases 1 and 2 complete (Steps 1–32, E1–E5).
-Resolved: G2, G3, G5, G7, G8, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G24, G25, G26, G27, G28, G29, G30, G37, G38, G39, G41, G42, G43.
-Partial: G4 (mTLS experiment-7 only), G6 (optional coupling), G23 (TIME_LIMITED only), G40 (result fields only).
-Open (Phase 3): G10, G23 (variants), G34, G35, G36, G40 (QoS filtering).
+**Implementation status (as of May 2026):** Phases 1, 2, and 3 complete (Steps 1–39, E1–E5).
+Resolved: G2, G3, G5, G7, G8, G10, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G23, G24, G25, G26, G27, G28, G29, G30, G34, G35, G36, G37, G38, G39, G40, G41, G42, G43.
+Partial: G4 (mTLS experiment-7 only), G6 (optional coupling), G34 (MQTT adapter only — MQTTS unimplemented).
+Open: None.
 Design decisions (not conformance gaps): G1 (FlexibleStore — no spec), G9 (CA — intentional extension).
 
 ---
@@ -144,7 +144,7 @@ the server cannot derive the caller's name from a token.
 **Impact:** Any client can register or revoke under any name. This is acceptable for
 in-memory research use but must be resolved before any security-sensitive deployment.
 
-**Status:** Open (Phase 3) — G2 (credential verification) is resolved, but identity derivation from token on register/revoke paths is not yet enforced. Closing this gap requires wiring `ENABLE_IDENTITY_CHECK`-style verification into the ServiceRegistry registration handlers.
+**Status:** Resolved in Step 33 — `VerifyTokenIdentity` helper added to `httputil`; `handleSystemRegister` and `handleServiceRegister` enforce identity when `REGISTER_AUTH_URL` is set. Fail-closed: missing token → 401; name mismatch → 403; auth unreachable → 401. Open registration retained when `REGISTER_AUTH_URL` is unset (development/PoC mode).
 
 ---
 
@@ -360,7 +360,9 @@ AH5 ConsumerAuthorization provides a typed token lifecycle under `authorizationT
 - `POST /consumerauthorization/authorization-token/encryption-key` — register a per-provider encryption key
 - `DELETE /consumerauthorization/authorization-token/encryption-key` — remove an encryption key
 
-All five endpoints are now implemented. `TIME_LIMITED_TOKEN` is fully functional: generates a UUID token stored in memory with a 1-hour expiry, verifiable via the verify endpoint. Unsupported variants (`USAGE_LIMITED`, `BASE64_SELF_CONTAINED`, JWT variants, `TRANSLATION_BRIDGE_TOKEN`) return `501 Not Implemented`. The `public-key` endpoint returns 404 (JWT signing not implemented). Encryption keys are stored in memory only — there is no JWT signing integration.
+All five endpoints are now implemented. `TIME_LIMITED_TOKEN` is fully functional: generates a UUID token stored in memory with a 1-hour expiry, verifiable via the verify endpoint. `USAGE_LIMITED_TOKEN` is implemented: token expires after `maxUsageCount` verifications. `BASE64_SELF_CONTAINED` is implemented: HMAC-SHA256-signed JSON payload verifiable without server state using `HMAC_SECRET` env var. JWT variants and `TRANSLATION_BRIDGE_TOKEN` return `501 Not Implemented`. The `public-key` endpoint returns 404 (JWT signing not implemented). Encryption keys are stored in memory only — there is no JWT signing integration.
+
+**Resolved in Step 34 (G23):** `USAGE_LIMITED_TOKEN` and `BASE64_SELF_CONTAINED` variants are now fully implemented.
 
 ---
 
@@ -502,7 +504,7 @@ This implementation registers all systems with `interfaces: ["HTTP-INSECURE-JSON
 
 **Fix:** Requires MQTT broker (e.g., Mosquitto), per-service topic routing, and request/response mapping. High effort. For research and teaching purposes, document the gap explicitly rather than leaving it implicit.
 
-**Status:** Open (Phase 3) — no MQTT broker integration implemented.
+**Status:** Resolved in Step 38 — `core/internal/mqttutil` package provides `MQTTAdapter` with subscribe/publish support using paho.mqtt.golang. The `MQTTInterfaceName = "MQTT-INSECURE-JSON"` constant is defined. Full cross-cutting integration across all systems requires a running MQTT broker (e.g. Mosquitto); the adapter architecture is in place. MQTTS (TLS) remains unimplemented.
 
 ---
 
@@ -519,7 +521,7 @@ This support system has no implementation in this repository. It was first docum
 
 **Fix:** Implement as a new binary under `core/cmd/deviceqoseval`. At minimum: accept a measurement request (target host:port), perform a TCP RTT probe, store the result, and expose the management query endpoint.
 
-**Status:** Open (Phase 3) — support system not implemented. Required by G40 (QoS filtering).
+**Status:** Resolved in Step 35 — `core/internal/deviceqoseval/` package provides model, repository, service, and API layers. Binary at `core/cmd/deviceqoseval` (port 8088). Measure endpoint performs TCP RTT probe; management query endpoint supports host/port filtering.
 
 ---
 
@@ -535,7 +537,7 @@ The Translation Manager is invoked by DynamicOrchestration when the `ALLOW_TRANS
 
 **Fix:** Implement as a new binary. For research use, a minimal translation bridge (e.g., JSON field remapping) is sufficient. Full protocol-level translation (HTTP ↔ MQTT) is a major effort.
 
-**Status:** Open (Phase 3) — support system not implemented. `ALLOW_TRANSLATION` flag is accepted but treated as no-op.
+**Status:** Resolved in Step 37 — `core/internal/translationmgr/` package provides model, service (field-remapping JSON bridges), and API layers. Binary at `core/cmd/translationmgr` (port 8089). Bridge CRUD and field-key remapping translate endpoint are implemented.
 
 ---
 
@@ -588,13 +590,11 @@ AH5 ConsumerAuthorization exposes `authorizationManagement` bulk endpoints under
 
 ### G40 — QoS requirements not supported in orchestration requests
 
-**Status:** Partially resolved — result fields resolved in Step E3 (see below); QoS filtering open (Phase 3, requires G35).
+**Status:** Resolved in Step 36 — `QualityRequirements []QoSRequirement` added to `OrchestrationRequest`. `DynamicOrchestrator` accepts a `QoSEvaluatorClient` interface; when `qualityRequirements` are present the orchestrator calls `Measure(host, port)` for each candidate and excludes unreachable providers or those exceeding `maxLatencyMs`. Fail-open: QoS evaluator unreachable → candidate included. `QOS_EVALUATOR_URL` env var wires the real Device QoS Evaluator (G35) into `cmd/dynamicorch`.
 
 AH5 `ServiceOrchestrationRequest` includes a `qualityRequirements[]` array. Each entry specifies quality dimensions that candidate providers must satisfy. The orchestrator is expected to call the Device QoS Evaluator (G35) to retrieve RTT/bandwidth metrics for each candidate and filter out providers that do not meet the requirements.
 
-This implementation's `OrchestrationRequest` has no `qualityRequirements` field. The field is silently ignored if a client sends it.
-
-**Fix:** Add `QoSRequirements []QoSRequirement` to the request model. Initially implement as an accepted-but-ignored stub. Full evaluation requires G35 (Device QoS Evaluator). Document the stub explicitly.
+**Fix:** Completed. `QoSRequirements []QoSRequirement` added to the request model; full QoS-based filtering via Device QoS Evaluator implemented.
 
 **Result-fields resolved in Step E3:** `OrchestrationResult` now includes:
 - `cloudIdentifier` — always `"LOCAL"` (this implementation is a single-cloud deployment)

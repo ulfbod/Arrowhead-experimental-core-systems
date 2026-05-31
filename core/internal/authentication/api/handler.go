@@ -10,14 +10,27 @@ import (
 
 	"arrowhead/core/internal/authentication/model"
 	"arrowhead/core/internal/authentication/service"
+	"arrowhead/core/internal/httputil"
+	coremodel "arrowhead/core/internal/model"
 )
 
-type Handler struct {
-	svc *service.AuthService
+const authOrigin = "authentication"
+
+// pageReqOrZero returns the dereferenced PageRequest, or a zero value if p is nil.
+func pageReqOrZero(p *coremodel.PageRequest) coremodel.PageRequest {
+	if p == nil {
+		return coremodel.PageRequest{}
+	}
+	return *p
 }
 
-func NewHandler(svc *service.AuthService) http.Handler {
-	h := &Handler{svc: svc}
+type Handler struct {
+	svc         *service.AuthService
+	mgmtAuthURL string
+}
+
+func NewHandler(svc *service.AuthService, mgmtAuthURL string) http.Handler {
+	h := &Handler{svc: svc, mgmtAuthURL: mgmtAuthURL}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/authentication/identity/login", h.handleLogin)
 	mux.HandleFunc("/authentication/identity/logout", h.handleLogout)
@@ -31,10 +44,24 @@ func NewHandler(svc *service.AuthService) http.Handler {
 	return mux
 }
 
+// statusFor maps sentinel errors to HTTP status codes.
+func statusFor(err error) int {
+	switch {
+	case errors.Is(err, service.ErrInvalidCredentials):
+		return http.StatusUnauthorized
+	case errors.Is(err, service.ErrInvalidToken):
+		return http.StatusUnauthorized
+	case errors.Is(err, service.ErrMissingSystemName):
+		return http.StatusBadRequest
+	default:
+		return http.StatusBadRequest
+	}
+}
+
 // POST /authentication/identity/login
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", authOrigin)
 		return
 	}
 	var raw struct {
@@ -42,20 +69,36 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Credentials json.RawMessage `json:"credentials,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", authOrigin)
 		return
 	}
 	req := model.LoginRequest{
 		SystemName:     raw.SystemName,
 		CredentialsMap: make(map[string]string),
 	}
-	if len(raw.Credentials) > 0 {
-		// Try as object: {"password": "..."}
+	// When an identity repo is configured, credentials must be a JSON object
+	// with a "password" field. Plain strings and null are rejected (G43).
+	if h.svc.HasIdentityRepo() {
+		if len(raw.Credentials) == 0 || string(raw.Credentials) == "null" {
+			httputil.WriteError(w, http.StatusBadRequest, "credentials must be a JSON object with a 'password' field", authOrigin)
+			return
+		}
+		var m map[string]string
+		if err := json.Unmarshal(raw.Credentials, &m); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "credentials must be a JSON object with a 'password' field", authOrigin)
+			return
+		}
+		if _, ok := m["password"]; !ok {
+			httputil.WriteError(w, http.StatusBadRequest, "credentials object must contain a 'password' field", authOrigin)
+			return
+		}
+		req.CredentialsMap = m
+	} else if len(raw.Credentials) > 0 {
+		// No identity repo — accept object or string for backward compat.
 		var m map[string]string
 		if err := json.Unmarshal(raw.Credentials, &m); err == nil {
 			req.CredentialsMap = m
 		} else {
-			// Try as plain string (legacy)
 			var s string
 			if err := json.Unmarshal(raw.Credentials, &s); err == nil {
 				req.CredentialsMap["password"] = s
@@ -64,30 +107,26 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.svc.Login(req)
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidCredentials) {
-			writeError(w, http.StatusUnauthorized, err.Error())
-			return
-		}
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, statusFor(err), err.Error(), authOrigin)
 		return
 	}
-	writeJSON(w, http.StatusCreated, resp)
+	httputil.WriteJSON(w, http.StatusCreated, resp, authOrigin)
 }
 
 // POST /authentication/identity/logout
 // Authorization: Bearer <token>
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", authOrigin)
 		return
 	}
-	token := extractBearer(r)
+	token := httputil.ExtractBearer(r)
 	if token == "" {
-		writeError(w, http.StatusUnauthorized, "missing Authorization: Bearer token")
+		httputil.WriteError(w, http.StatusUnauthorized, "missing Authorization: Bearer token", authOrigin)
 		return
 	}
 	if err := h.svc.Logout(token); err != nil {
-		writeError(w, http.StatusUnauthorized, err.Error())
+		httputil.WriteError(w, http.StatusUnauthorized, err.Error(), authOrigin)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -96,26 +135,26 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 // GET /authentication/identity/verify/{token}
 func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "GET required", authOrigin)
 		return
 	}
 	token := strings.TrimPrefix(r.URL.Path, "/authentication/identity/verify/")
 	if token == "" {
-		writeJSON(w, http.StatusOK, model.VerifyResponse{Verified: false})
+		httputil.WriteJSON(w, http.StatusOK, model.VerifyResponse{Verified: false}, authOrigin)
 		return
 	}
 	resp, err := h.svc.Verify(token)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		httputil.WriteError(w, http.StatusInternalServerError, err.Error(), authOrigin)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	httputil.WriteJSON(w, http.StatusOK, resp, authOrigin)
 }
 
 // POST /authentication/identity/change
 func (h *Handler) handleChange(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", authOrigin)
 		return
 	}
 	var req struct {
@@ -124,11 +163,11 @@ func (h *Handler) handleChange(w http.ResponseWriter, r *http.Request) {
 		NewCredentials map[string]any `json:"newCredentials"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", authOrigin)
 		return
 	}
 	if err := h.svc.ChangeCredentials(req.SystemName); err != nil {
-		writeError(w, http.StatusUnauthorized, err.Error())
+		httputil.WriteError(w, http.StatusUnauthorized, err.Error(), authOrigin)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -136,19 +175,31 @@ func (h *Handler) handleChange(w http.ResponseWriter, r *http.Request) {
 
 // POST /authentication/mgmt/identities/query
 func (h *Handler) handleMgmtIdentitiesQuery(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, authOrigin) {
 		return
 	}
+	if r.Method != http.MethodPost {
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", authOrigin)
+		return
+	}
+	var raw struct {
+		Pagination *coremodel.PageRequest `json:"pagination"`
+	}
+	json.NewDecoder(r.Body).Decode(&raw) //nolint:errcheck — empty body OK
 	records := h.svc.QueryIdentities()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"identities": records,
-		"totalCount": len(records),
-	})
+	page, total := coremodel.Paginate(records, pageReqOrZero(raw.Pagination), func(r service.IdentityRecord) string { return r.SystemName })
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
+		"identities": page,
+		"count":      len(page),
+		"totalCount": total,
+	}, authOrigin)
 }
 
 // /authentication/mgmt/identities — dispatches on method
 func (h *Handler) handleMgmtIdentities(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, authOrigin) {
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 		h.mgmtIdentitiesCreate(w, r)
@@ -157,7 +208,7 @@ func (h *Handler) handleMgmtIdentities(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		h.mgmtIdentitiesDelete(w, r)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "POST, PUT, or DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST, PUT, or DELETE required", authOrigin)
 	}
 }
 
@@ -167,15 +218,15 @@ func (h *Handler) mgmtIdentitiesCreate(w http.ResponseWriter, r *http.Request) {
 		Identities           []service.CreateIdentityRequest `json:"identities"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", authOrigin)
 		return
 	}
 	records, err := h.svc.CreateIdentities(req.Identities)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, http.StatusBadRequest, err.Error(), authOrigin)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"identities": records})
+	httputil.WriteJSON(w, http.StatusCreated, map[string]any{"identities": records}, authOrigin)
 }
 
 func (h *Handler) mgmtIdentitiesUpdate(w http.ResponseWriter, r *http.Request) {
@@ -184,21 +235,21 @@ func (h *Handler) mgmtIdentitiesUpdate(w http.ResponseWriter, r *http.Request) {
 		Identities           []service.CreateIdentityRequest `json:"identities"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", authOrigin)
 		return
 	}
 	records, err := h.svc.UpdateIdentities(req.Identities)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, http.StatusBadRequest, err.Error(), authOrigin)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"identities": records})
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{"identities": records}, authOrigin)
 }
 
 func (h *Handler) mgmtIdentitiesDelete(w http.ResponseWriter, r *http.Request) {
 	namesParam := r.URL.Query().Get("names")
 	if namesParam == "" {
-		writeError(w, http.StatusBadRequest, "names query parameter required")
+		httputil.WriteError(w, http.StatusBadRequest, "names query parameter required", authOrigin)
 		return
 	}
 	names := strings.Split(namesParam, ",")
@@ -208,69 +259,36 @@ func (h *Handler) mgmtIdentitiesDelete(w http.ResponseWriter, r *http.Request) {
 
 // /authentication/mgmt/sessions — dispatches on method
 func (h *Handler) handleMgmtSessions(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, authOrigin) {
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
+		var raw struct {
+			Pagination *coremodel.PageRequest `json:"pagination"`
+		}
+		json.NewDecoder(r.Body).Decode(&raw) //nolint:errcheck — empty body OK
 		sessions := h.svc.QuerySessions()
-		writeJSON(w, http.StatusOK, map[string]any{
-			"sessions":   sessions,
-			"totalCount": len(sessions),
-		})
+		page, total := coremodel.Paginate(sessions, pageReqOrZero(raw.Pagination), func(s service.SessionRecord) string { return s.SystemName })
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
+			"sessions":   page,
+			"count":      len(page),
+			"totalCount": total,
+		}, authOrigin)
 	case http.MethodDelete:
 		namesParam := r.URL.Query().Get("names")
 		if namesParam == "" {
-			writeError(w, http.StatusBadRequest, "names query parameter required")
+			httputil.WriteError(w, http.StatusBadRequest, "names query parameter required", authOrigin)
 			return
 		}
 		names := strings.Split(namesParam, ",")
 		h.svc.RevokeSessions(names)
 		w.WriteHeader(http.StatusOK)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "POST or DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST or DELETE required", authOrigin)
 	}
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "authentication"})
-}
-
-func extractBearer(r *http.Request) string {
-	hdr := r.Header.Get("Authorization")
-	if after, ok := strings.CutPrefix(hdr, "Bearer "); ok {
-		return strings.TrimSpace(after)
-	}
-	return ""
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	exType := errTypeForStatus(status)
-	type errBody struct {
-		ErrorMessage  string `json:"errorMessage"`
-		ErrorCode     int    `json:"errorCode"`
-		ExceptionType string `json:"exceptionType"`
-		Origin        string `json:"origin"`
-	}
-	writeJSON(w, status, errBody{ErrorMessage: msg, ErrorCode: status, ExceptionType: exType, Origin: "authentication.identity"})
-}
-
-func errTypeForStatus(status int) string {
-	switch status {
-	case http.StatusBadRequest, http.StatusMethodNotAllowed:
-		return "INVALID_PARAMETER"
-	case http.StatusUnauthorized:
-		return "AUTH"
-	case http.StatusForbidden:
-		return "FORBIDDEN"
-	case http.StatusNotFound:
-		return "DATA_NOT_FOUND"
-	case http.StatusLocked:
-		return "LOCKED"
-	default:
-		return "INTERNAL_SERVER_ERROR"
-	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "authentication"}, authOrigin)
 }

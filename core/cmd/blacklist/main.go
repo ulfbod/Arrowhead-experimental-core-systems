@@ -35,11 +35,12 @@ func main() {
 	}
 
 	svc := blsvc.NewBlacklistService(repo)
-	sysHandler := blapi.NewHandler(svc)
+	sysHandler := blapi.NewHandler(svc, os.Getenv("BLACKLIST_AUTH_URL"), os.Getenv("MGMT_AUTH_URL"))
 
 	mgmtHandler := generalmgmt.NewHandler(buf, "blacklist", map[string]string{
-		"PORT":    port,
-		"DB_PATH": os.Getenv("DB_PATH"),
+		"PORT":         port,
+		"DB_PATH":      os.Getenv("DB_PATH"),
+		"MGMT_AUTH_URL": os.Getenv("MGMT_AUTH_URL"),
 	})
 
 	root := http.NewServeMux()

@@ -5,24 +5,39 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
+	"arrowhead/core/internal/httputil"
+	coremodel "arrowhead/core/internal/model"
 	orchmodel "arrowhead/core/internal/orchestration/model"
 	"arrowhead/core/internal/orchestration/dynamic/service"
 )
 
-type Handler struct {
-	orch  *service.DynamicOrchestrator
-	locks *service.LockStore
-	subs  *service.SubscriptionStore
+const dynOrigin = "serviceorchestration.orchestration.pull"
+
+// pageReqOrZero returns the dereferenced PageRequest, or a zero value if p is nil.
+func pageReqOrZero(p *coremodel.PageRequest) coremodel.PageRequest {
+	if p == nil {
+		return coremodel.PageRequest{}
+	}
+	return *p
 }
 
-func NewHandler(orch *service.DynamicOrchestrator) http.Handler {
+type Handler struct {
+	orch        *service.DynamicOrchestrator
+	locks       *service.LockStore
+	subs        *service.SubscriptionStore
+	mgmtAuthURL string
+}
+
+func NewHandler(orch *service.DynamicOrchestrator, mgmtAuthURL string) http.Handler {
 	h := &Handler{
-		orch:  orch,
-		locks: service.NewLockStore(),
-		subs:  service.NewSubscriptionStore(),
+		orch:        orch,
+		locks:       service.NewLockStore(),
+		subs:        service.NewSubscriptionStore(),
+		mgmtAuthURL: mgmtAuthURL,
 	}
 	mux := http.NewServeMux()
 	// Pull orchestration
@@ -47,39 +62,51 @@ func NewHandler(orch *service.DynamicOrchestrator) http.Handler {
 	return mux
 }
 
+// statusFor maps sentinel errors to HTTP status codes.
+func statusFor(err error) int {
+	switch {
+	case errors.Is(err, service.ErrIdentityRequired):
+		return http.StatusUnauthorized
+	case errors.Is(err, service.ErrIdentityInvalid):
+		return http.StatusUnauthorized
+	case errors.Is(err, service.ErrMissingRequester):
+		return http.StatusBadRequest
+	case errors.Is(err, service.ErrMissingService):
+		return http.StatusBadRequest
+	case errors.Is(err, orchmodel.ErrInterclouNotSupported):
+		return http.StatusNotImplemented
+	default:
+		return http.StatusBadRequest
+	}
+}
+
 // POST /serviceorchestration/orchestration/pull
 func (h *Handler) handleOrchestrate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", dynOrigin)
 		return
 	}
 	var req orchmodel.OrchestrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
-	token := extractBearer(r)
+	token := httputil.ExtractBearer(r)
 	resp, err := h.orch.Orchestrate(req, token)
 	if err != nil {
-		if err == service.ErrIdentityRequired || err == service.ErrIdentityInvalid {
-			writeError(w, http.StatusUnauthorized, err.Error())
-			return
-		}
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, statusFor(err), err.Error(), dynOrigin)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	httputil.WriteJSON(w, http.StatusOK, resp, dynOrigin)
 }
 
 // POST /serviceorchestration/orchestration/subscribe
 func (h *Handler) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", dynOrigin)
 		return
 	}
 	var req service.CreateSubscriptionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
 	sub, created := h.subs.Subscribe(req)
@@ -87,13 +114,13 @@ func (h *Handler) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if created {
 		status = http.StatusCreated
 	}
-	writeJSON(w, status, sub)
+	httputil.WriteJSON(w, status, sub, dynOrigin)
 }
 
 // DELETE /serviceorchestration/orchestration/unsubscribe/{subscriptionId}
 func (h *Handler) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "DELETE required", dynOrigin)
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/serviceorchestration/orchestration/unsubscribe/")
@@ -106,13 +133,15 @@ func (h *Handler) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 
 // POST /serviceorchestration/orchestration/mgmt/push/subscribe
 func (h *Handler) handlePushMgmtSubscribe(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, dynOrigin) {
+		return
+	}
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", dynOrigin)
 		return
 	}
 	var req service.CreateSubscriptionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
 	sub, created := h.subs.Subscribe(req)
@@ -120,13 +149,16 @@ func (h *Handler) handlePushMgmtSubscribe(w http.ResponseWriter, r *http.Request
 	if created {
 		status = http.StatusCreated
 	}
-	writeJSON(w, status, sub)
+	httputil.WriteJSON(w, status, sub, dynOrigin)
 }
 
 // DELETE /serviceorchestration/orchestration/mgmt/push/unsubscribe?ids=uuid1,uuid2
 func (h *Handler) handlePushMgmtUnsubscribe(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, dynOrigin) {
+		return
+	}
 	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "DELETE required", dynOrigin)
 		return
 	}
 	idsParam := r.URL.Query().Get("ids")
@@ -139,70 +171,102 @@ func (h *Handler) handlePushMgmtUnsubscribe(w http.ResponseWriter, r *http.Reque
 
 // POST /serviceorchestration/orchestration/mgmt/push/trigger
 func (h *Handler) handlePushMgmtTrigger(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, dynOrigin) {
+		return
+	}
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", dynOrigin)
 		return
 	}
 	var body struct {
 		SubscriptionID string `json:"subscriptionId"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &body) {
 		return
 	}
 	sub, ok := h.subs.Get(body.SubscriptionID)
 	if !ok {
-		writeError(w, http.StatusNotFound, "subscription not found")
+		httputil.WriteError(w, http.StatusNotFound, "subscription not found", dynOrigin)
 		return
 	}
-	// Record a PENDING history entry for this push trigger.
-	// Delivery is a stub — notification is not actually sent.
-	h.orch.RecordPushHistory(sub.ID, sub.OwnerSystemName, "", "PENDING")
-	writeJSON(w, http.StatusOK, map[string]string{"status": "triggered", "subscriptionId": sub.ID})
+	// Record PENDING and asynchronously deliver to subscriber's notifyInterface.
+	h.orch.TriggerPush(sub)
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "triggered", "subscriptionId": sub.ID}, dynOrigin)
 }
 
 // POST /serviceorchestration/orchestration/mgmt/push/query
 func (h *Handler) handlePushMgmtQuery(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, dynOrigin) {
 		return
 	}
-	writeJSON(w, http.StatusOK, h.subs.Query())
+	if r.Method != http.MethodPost {
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", dynOrigin)
+		return
+	}
+	var raw struct {
+		Pagination *coremodel.PageRequest `json:"pagination"`
+	}
+	json.NewDecoder(r.Body).Decode(&raw) //nolint:errcheck — empty body OK
+	result := h.subs.Query()
+	page, total := coremodel.Paginate(result.Subscriptions, pageReqOrZero(raw.Pagination), func(s service.Subscription) string { return s.ID })
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
+		"subscriptions": page,
+		"count":         len(page),
+		"totalCount":    total,
+	}, dynOrigin)
 }
 
 // POST /serviceorchestration/orchestration/mgmt/lock/create
 func (h *Handler) handleLockCreate(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, dynOrigin) {
+		return
+	}
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", dynOrigin)
 		return
 	}
 	var req service.CreateLockRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
 	lock := h.locks.Create(req)
-	writeJSON(w, http.StatusCreated, lock)
+	httputil.WriteJSON(w, http.StatusCreated, lock, dynOrigin)
 }
 
 // POST /serviceorchestration/orchestration/mgmt/lock/query
 func (h *Handler) handleLockQuery(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, dynOrigin) {
 		return
 	}
-	writeJSON(w, http.StatusOK, h.locks.Query())
+	if r.Method != http.MethodPost {
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", dynOrigin)
+		return
+	}
+	var raw struct {
+		Pagination *coremodel.PageRequest `json:"pagination"`
+	}
+	json.NewDecoder(r.Body).Decode(&raw) //nolint:errcheck — empty body OK
+	result := h.locks.Query()
+	page, total := coremodel.Paginate(result.Locks, pageReqOrZero(raw.Pagination), func(l service.Lock) string { return l.Owner })
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
+		"locks":      page,
+		"count":      len(page),
+		"totalCount": total,
+	}, dynOrigin)
 }
 
 // DELETE /serviceorchestration/orchestration/mgmt/lock/remove/{owner}
 func (h *Handler) handleLockRemove(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, dynOrigin) {
+		return
+	}
 	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "DELETE required", dynOrigin)
 		return
 	}
 	owner := strings.TrimPrefix(r.URL.Path, "/serviceorchestration/orchestration/mgmt/lock/remove/")
 	if owner == "" {
-		writeError(w, http.StatusBadRequest, "owner is required")
+		httputil.WriteError(w, http.StatusBadRequest, "owner is required", dynOrigin)
 		return
 	}
 	h.locks.RemoveByOwner(owner)
@@ -211,55 +275,26 @@ func (h *Handler) handleLockRemove(w http.ResponseWriter, r *http.Request) {
 
 // POST /serviceorchestration/orchestration/mgmt/history/query
 func (h *Handler) handleHistoryQuery(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, dynOrigin) {
 		return
 	}
-	writeJSON(w, http.StatusOK, h.orch.QueryHistory())
+	if r.Method != http.MethodPost {
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", dynOrigin)
+		return
+	}
+	var raw struct {
+		Pagination *coremodel.PageRequest `json:"pagination"`
+	}
+	json.NewDecoder(r.Body).Decode(&raw) //nolint:errcheck — empty body OK
+	result := h.orch.QueryHistory()
+	page, total := coremodel.Paginate(result.Entries, pageReqOrZero(raw.Pagination), func(e service.HistoryEntry) string { return e.ID })
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
+		"entries":    page,
+		"count":      len(page),
+		"totalCount": total,
+	}, dynOrigin)
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "dynamicorchestration"})
-}
-
-func extractBearer(r *http.Request) string {
-	hdr := r.Header.Get("Authorization")
-	if after, ok := strings.CutPrefix(hdr, "Bearer "); ok {
-		return strings.TrimSpace(after)
-	}
-	return ""
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	exType := errTypeForStatus(status)
-	type errBody struct {
-		ErrorMessage  string `json:"errorMessage"`
-		ErrorCode     int    `json:"errorCode"`
-		ExceptionType string `json:"exceptionType"`
-		Origin        string `json:"origin"`
-	}
-	writeJSON(w, status, errBody{ErrorMessage: msg, ErrorCode: status, ExceptionType: exType, Origin: "serviceorchestration.orchestration.pull"})
-}
-
-func errTypeForStatus(status int) string {
-	switch status {
-	case http.StatusBadRequest, http.StatusMethodNotAllowed:
-		return "INVALID_PARAMETER"
-	case http.StatusUnauthorized:
-		return "AUTH"
-	case http.StatusForbidden:
-		return "FORBIDDEN"
-	case http.StatusNotFound:
-		return "DATA_NOT_FOUND"
-	case http.StatusLocked:
-		return "LOCKED"
-	default:
-		return "INTERNAL_SERVER_ERROR"
-	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "dynamicorchestration"}, dynOrigin)
 }

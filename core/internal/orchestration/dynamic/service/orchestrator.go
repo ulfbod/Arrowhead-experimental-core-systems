@@ -8,13 +8,15 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
-	"time"
+	"strconv"
 
+	blclient "arrowhead/core/internal/blacklist/client"
+	"arrowhead/core/internal/orchestration/dynamic/client"
 	orchmodel "arrowhead/core/internal/orchestration/model"
 )
 
@@ -27,104 +29,123 @@ var (
 	ErrIdentityInvalid = errors.New("identity token is invalid or expired")
 )
 
-// srLookupRequest is the body for POST /serviceregistry/service-discovery/lookup (AH5).
-type srLookupRequest struct {
-	ServiceDefinitionNames []string `json:"serviceDefinitionNames"`
-	ProviderNames          []string `json:"providerNames,omitempty"`
-}
-
-// srAH5System mirrors the provider system in an AH5 service instance response.
-type srAH5System struct {
-	Name string `json:"name"`
-}
-
-// srAH5Interface mirrors the interface entry in an AH5 service instance response.
-type srAH5Interface struct {
-	TemplateName string `json:"templateName"`
-}
-
-// srAH5ServiceInstance mirrors the AH5 service instance response shape.
-type srAH5ServiceInstance struct {
-	InstanceID            string           `json:"instanceId"`
-	Provider              *srAH5System     `json:"provider,omitempty"`
-	ServiceDefinitionName string           `json:"serviceDefinitionName"`
-	Version               string           `json:"version,omitempty"`
-	ExpiresAt             string           `json:"expiresAt,omitempty"`
-	Interfaces            []srAH5Interface `json:"interfaces,omitempty"`
-}
-
-// srAH5LookupResponse mirrors POST /serviceregistry/service-discovery/lookup response.
-type srAH5LookupResponse struct {
-	Entries []*srAH5ServiceInstance `json:"entries"`
-	Count   int                     `json:"count"`
-}
-
-// caVerifyRequest mirrors the ConsumerAuthorization verify body (AH5 model).
-// Provider is included so the check is scoped to the specific provider's policy.
-type caVerifyRequest struct {
-	Consumer   string `json:"consumer"`
-	Provider   string `json:"provider,omitempty"`
-	Target     string `json:"target"`
-	TargetType string `json:"targetType"`
-}
-
-// authSysVerifyResponse mirrors the Authentication identity/verify response.
-type authSysVerifyResponse struct {
-	Verified   bool   `json:"verified"`
-	SystemName string `json:"systemName"`
-}
-
 // DynamicOrchestrator performs real-time orchestration.
 type DynamicOrchestrator struct {
-	srURL         string
-	caURL         string // ConsumerAuthorization base URL
-	authSysURL    string // Authentication system base URL
+	srClient      client.ServiceRegistryClient
+	caClient      client.ConsumerAuthClient
+	idClient      client.IdentityClient // nil when checkIdentity=false
+	blClient      blclient.BlacklistClient
+	qosClient     client.QoSEvaluatorClient // nil → NopQoSClient (fail-open)
 	checkAuth     bool
 	checkIdentity bool
-	httpClient    *http.Client
 	hist          *historyStore
+	pushClient    *http.Client // used for push notification delivery; nil → http.DefaultClient
 }
 
-// NewDynamicOrchestrator creates a new orchestrator with a default http.Client.
-//
-//   - srURL:         ServiceRegistry base URL
-//   - caURL:         ConsumerAuthorization base URL (used when checkAuth=true)
-//   - authSysURL:    Authentication system base URL (used when checkIdentity=true)
-//   - checkAuth:     when true, filters providers through ConsumerAuthorization
-//   - checkIdentity: when true, requires a valid Bearer token and uses the verified
-//     systemName from the token instead of the self-reported requesterSystem.systemName
-func NewDynamicOrchestrator(srURL, caURL, authSysURL string, checkAuth, checkIdentity bool) *DynamicOrchestrator {
-	return NewDynamicOrchestratorWithClient(srURL, caURL, authSysURL, checkAuth, checkIdentity,
-		&http.Client{Timeout: 5 * time.Second})
-}
-
-// NewDynamicOrchestratorWithClient creates a new orchestrator with a custom
-// http.Client.  Use this when the upstream core services are behind TLS and
-// the caller must present a client certificate (mutual TLS).
-func NewDynamicOrchestratorWithClient(srURL, caURL, authSysURL string, checkAuth, checkIdentity bool, client *http.Client) *DynamicOrchestrator {
+// NewDynamicOrchestratorWithClients creates a new orchestrator with injected interface
+// implementations. Use in tests and for dependency injection.
+// blClient is consulted to exclude blacklisted providers and reject blacklisted requesters.
+// Pass blclient.NopClient{} to disable blacklist filtering.
+func NewDynamicOrchestratorWithClients(
+	srClient client.ServiceRegistryClient,
+	caClient client.ConsumerAuthClient,
+	idClient client.IdentityClient,
+	blClient blclient.BlacklistClient,
+	checkAuth, checkIdentity bool,
+) *DynamicOrchestrator {
 	return &DynamicOrchestrator{
-		srURL:         srURL,
-		caURL:         caURL,
-		authSysURL:    authSysURL,
+		srClient:      srClient,
+		caClient:      caClient,
+		idClient:      idClient,
+		blClient:      blClient,
+		qosClient:     client.NopQoSClient{},
 		checkAuth:     checkAuth,
 		checkIdentity: checkIdentity,
-		httpClient:    client,
 		hist:          newHistoryStore(),
 	}
 }
+
+// SetQoSClient configures the QoS evaluator client used for latency-based filtering.
+// Pass client.NopQoSClient{} to disable QoS filtering (fail-open).
+func (o *DynamicOrchestrator) SetQoSClient(c client.QoSEvaluatorClient) { o.qosClient = c }
+
+// SetPushClient configures the HTTP client used for push notification delivery.
+// Pass a client with the desired timeout (e.g. derived from PUSH_DELIVERY_TIMEOUT_SECONDS).
+func (o *DynamicOrchestrator) SetPushClient(c *http.Client) { o.pushClient = c }
 
 // QueryHistory returns all recorded orchestration history entries.
 func (o *DynamicOrchestrator) QueryHistory() HistoryQueryResponse {
 	return o.hist.query()
 }
 
-// RecordPushHistory adds a PUSH-type history entry. Used by the trigger handler.
-func (o *DynamicOrchestrator) RecordPushHistory(subscriptionID, requester, service, status string) {
-	o.hist.add(newHistoryEntryTyped(
-		requester, service, status,
-		"triggered for subscription "+subscriptionID,
+// TriggerPush records a PUSH/PENDING history entry and asynchronously delivers
+// the push notification to the subscriber's notifyInterface URL.
+// Returns immediately; delivery happens in a goroutine.
+func (o *DynamicOrchestrator) TriggerPush(sub Subscription) {
+	entryID := o.hist.add(newHistoryEntryTyped(
+		sub.OwnerSystemName, sub.TargetSystemName, "PENDING",
+		"triggered for subscription "+sub.ID,
 		"PUSH",
 	))
+	go o.deliverPush(sub, entryID)
+}
+
+// deliverPush posts the orchestration result to the subscriber's notify URL and
+// updates the history entry to DELIVERED or FAILED.
+func (o *DynamicOrchestrator) deliverPush(sub Subscription, entryID string) {
+	notifyURL := extractNotifyURL(sub.NotifyInterface)
+	if notifyURL == "" {
+		o.hist.updateStatus(entryID, "FAILED")
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"subscriptionId":  sub.ID,
+		"ownerSystemName": sub.OwnerSystemName,
+		"targetSystemName": sub.TargetSystemName,
+	})
+	httpClient := o.pushClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Post(notifyURL, "application/json", bytes.NewReader(payload))
+	if err != nil {
+		o.hist.updateStatus(entryID, "FAILED")
+		return
+	}
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		o.hist.updateStatus(entryID, "FAILED")
+		return
+	}
+	o.hist.updateStatus(entryID, "DELIVERED")
+}
+
+// extractNotifyURL returns the delivery URL from a notifyInterface map.
+// Tries "notifyUri", then "uri", then assembles from "address"+"port"+"path".
+func extractNotifyURL(ni map[string]any) string {
+	for _, key := range []string{"notifyUri", "uri"} {
+		if v, ok := ni[key]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	addr, _ := ni["address"].(string)
+	path, _ := ni["path"].(string)
+	if addr == "" {
+		return ""
+	}
+	port := ""
+	switch p := ni["port"].(type) {
+	case float64:
+		port = strconv.Itoa(int(p))
+	case string:
+		port = p
+	}
+	if port == "" {
+		return "http://" + addr + path
+	}
+	return "http://" + addr + ":" + port + path
 }
 
 // Orchestrate performs the pull operation: optionally verify identity, query SR,
@@ -135,12 +156,14 @@ func (o *DynamicOrchestrator) RecordPushHistory(subscriptionID, requester, servi
 // or expired token returns ErrIdentityInvalid. On success, the verified systemName
 // from the token replaces req.RequesterSystem.SystemName for all downstream checks.
 func (o *DynamicOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest, token string) (orchmodel.OrchestrationResponse, error) {
+	ctx := context.Background()
+
 	// Step 1: Identity verification (beyond AH5 spec — see GAP_ANALYSIS.md D8).
 	if o.checkIdentity {
 		if token == "" {
 			return orchmodel.OrchestrationResponse{}, ErrIdentityRequired
 		}
-		verifiedName, err := o.verifyIdentity(token)
+		verifiedName, err := o.idClient.VerifyToken(ctx, token)
 		if err != nil {
 			return orchmodel.OrchestrationResponse{}, ErrIdentityInvalid
 		}
@@ -149,6 +172,9 @@ func (o *DynamicOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest, to
 	}
 
 	// Step 2: Validate request fields.
+	if req.OrchestrationFlags.AllowIntercloud || req.OrchestrationFlags.OnlyIntercloud {
+		return orchmodel.OrchestrationResponse{}, orchmodel.ErrInterclouNotSupported
+	}
 	if req.RequesterSystem.SystemName == "" {
 		return orchmodel.OrchestrationResponse{}, ErrMissingRequester
 	}
@@ -156,40 +182,68 @@ func (o *DynamicOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest, to
 		return orchmodel.OrchestrationResponse{}, ErrMissingService
 	}
 
-	// Step 3: Query Service Registry (AH5 service-discovery/lookup endpoint).
-	srResp, err := o.querySR(req.RequestedService)
+	// Step 2.5: Reject blacklisted requester (fail-closed).
+	if blacklisted, _ := o.blClient.IsBlacklisted(ctx, req.RequesterSystem.SystemName); blacklisted {
+		return orchmodel.OrchestrationResponse{}, fmt.Errorf("requester system is blacklisted")
+	}
+
+	// Step 3: Query Service Registry via SR client interface.
+	srResults, err := o.srClient.LookupServices(ctx, req)
 	if err != nil {
 		return orchmodel.OrchestrationResponse{}, fmt.Errorf("service registry unreachable: %w", err)
 	}
 
-	// Step 4: Filter by ConsumerAuthorization (optional).
+	// Step 4: Filter by ConsumerAuthorization (optional) and blacklist.
 	var results []orchmodel.OrchestrationResult
-	for _, inst := range srResp.Entries {
-		providerName := ""
-		if inst.Provider != nil {
-			providerName = inst.Provider.Name
-		}
+	for _, r := range srResults {
 		if o.checkAuth {
-			ok, err := o.checkAuthorized(req.RequesterSystem.SystemName, providerName, inst.ServiceDefinitionName)
+			ok, err := o.caClient.IsAuthorized(ctx, req.RequesterSystem.SystemName, r.ProviderName, r.ServiceDefinition)
 			if err != nil || !ok {
 				continue
 			}
 		}
-		// Extract interface template names.
-		ifaceNames := make([]string, 0, len(inst.Interfaces))
-		for _, ifc := range inst.Interfaces {
-			ifaceNames = append(ifaceNames, ifc.TemplateName)
+		// Exclude blacklisted providers (fail-closed).
+		if blacklisted, _ := o.blClient.IsBlacklisted(ctx, r.ProviderName); blacklisted {
+			continue
 		}
-		results = append(results, orchmodel.OrchestrationResult{
-			ProviderName:      providerName,
-			ServiceDefinition: inst.ServiceDefinitionName,
-			ServiceInstanceId: inst.InstanceID,
-			Interfaces:        ifaceNames,
-			AliveUntil:        inst.ExpiresAt,
-		})
+		results = append(results, r)
 	}
 	if results == nil {
 		results = []orchmodel.OrchestrationResult{}
+	}
+
+	// Step 4.5: QoS filtering (G40). Applied only when qualityRequirements are specified.
+	if len(req.QualityRequirements) > 0 {
+		qosClient := o.qosClient
+		if qosClient == nil {
+			qosClient = client.NopQoSClient{}
+		}
+		// Determine the strictest maxLatencyMs requirement.
+		var maxLatencyMs int64 = -1
+		for _, qr := range req.QualityRequirements {
+			if maxLatencyMs < 0 || qr.MaxLatencyMs < maxLatencyMs {
+				maxLatencyMs = qr.MaxLatencyMs
+			}
+		}
+		filtered := results[:0]
+		for _, r := range results {
+			latency, reachable, err := qosClient.Measure(ctx, r.ProviderAddress, strconv.Itoa(r.ProviderPort))
+			if err != nil {
+				// QoS evaluator unreachable → fail-open, include candidate.
+				filtered = append(filtered, r)
+				continue
+			}
+			if !reachable {
+				// Provider unreachable → exclude.
+				continue
+			}
+			if maxLatencyMs >= 0 && latency > maxLatencyMs {
+				// Latency exceeds requirement → exclude.
+				continue
+			}
+			filtered = append(filtered, r)
+		}
+		results = filtered
 	}
 
 	// Step 5: Apply orchestration flags.
@@ -218,66 +272,4 @@ func (o *DynamicOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest, to
 		"DONE", "",
 	))
 	return resp, nil
-}
-
-// verifyIdentity calls the Authentication system to validate the token.
-// Returns the verified systemName on success, or an error (fail-closed on network errors).
-func (o *DynamicOrchestrator) verifyIdentity(token string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet,
-		o.authSysURL+"/authentication/identity/verify/"+url.PathEscape(token), nil)
-	if err != nil {
-		return "", ErrIdentityInvalid
-	}
-	resp, err := o.httpClient.Do(req)
-	if err != nil {
-		// Auth system unreachable — fail-closed.
-		return "", ErrIdentityInvalid
-	}
-	defer resp.Body.Close()
-	var result authSysVerifyResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", ErrIdentityInvalid
-	}
-	if !result.Verified {
-		return "", ErrIdentityInvalid
-	}
-	return result.SystemName, nil
-}
-
-func (o *DynamicOrchestrator) querySR(filter orchmodel.ServiceRequirement) (*srAH5LookupResponse, error) {
-	body := srLookupRequest{
-		ServiceDefinitionNames: []string{filter.ServiceDefinition},
-	}
-	data, _ := json.Marshal(body)
-	resp, err := o.httpClient.Post(o.srURL+"/serviceregistry/service-discovery/lookup", "application/json", bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	var result srAH5LookupResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-func (o *DynamicOrchestrator) checkAuthorized(consumer, provider, target string) (bool, error) {
-	body := caVerifyRequest{
-		Consumer:   consumer,
-		Provider:   provider,
-		Target:     target,
-		TargetType: "SERVICE_DEF",
-	}
-	data, _ := json.Marshal(body)
-	resp, err := o.httpClient.Post(o.caURL+"/consumerauthorization/authorization/verify", "application/json", bytes.NewReader(data))
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-	// Verify now returns a plain JSON Boolean (true or false).
-	var authorized bool
-	if err := json.NewDecoder(resp.Body).Decode(&authorized); err != nil {
-		return false, err
-	}
-	return authorized, nil
 }

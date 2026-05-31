@@ -18,7 +18,7 @@ import (
 
 func newTestHandler(dur time.Duration) http.Handler {
 	svc := service.NewAuthService(repository.NewMemoryRepository(), dur)
-	return api.NewHandler(svc)
+	return api.NewHandler(svc, "")
 }
 
 func postJSON(t *testing.T, h http.Handler, path string, body any) *httptest.ResponseRecorder {
@@ -256,7 +256,7 @@ func TestHandlerHealth(t *testing.T) {
 
 func newAuthTestServer() *httptest.Server {
 	svc := service.NewAuthService(repository.NewMemoryRepository(), time.Hour)
-	return httptest.NewServer(api.NewHandler(svc))
+	return httptest.NewServer(api.NewHandler(svc, ""))
 }
 
 func keys(m map[string]interface{}) []string {
@@ -414,7 +414,7 @@ func newTestHandlerFull(dur time.Duration) http.Handler {
 	tokenRepo := repository.NewMemoryRepository()
 	identityRepo := repository.NewMemoryIdentityRepository()
 	svc := service.NewAuthServiceFull(tokenRepo, identityRepo, dur)
-	return api.NewHandler(svc)
+	return api.NewHandler(svc, "")
 }
 
 func TestMgmtCreateIdentities201(t *testing.T) {
@@ -515,5 +515,152 @@ func TestVerifySysopTrue(t *testing.T) {
 	json.NewDecoder(w2.Body).Decode(&verifyResp)
 	if !verifyResp.Sysop {
 		t.Error("sysop = false for Sysop identity, want true")
+	}
+}
+
+// ---- Step 26: Login credential object validation ----
+
+// TestLoginMissingPasswordFieldReturns400 sends a credentials object that
+// lacks the "password" key — the handler must reject this with 400.
+func TestLoginMissingPasswordFieldReturns400(t *testing.T) {
+	h := newTestHandlerFull(time.Hour)
+	// Register the identity first so rejection is about credentials, not unknown system.
+	postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
+		"authenticationMethod": "PASSWORD",
+		"identities": []map[string]any{
+			{"systemName": "test", "credentials": map[string]string{"password": "correct"}},
+		},
+	})
+	w := postJSON(t, h, "/authentication/identity/login", map[string]any{
+		"systemName":  "test",
+		"credentials": map[string]string{"token": "x"}, // wrong key, no "password"
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400 for missing password field, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestLoginNonObjectCredentialsReturns400 sends a plain string as credentials
+// when an identity repo is present — must be rejected with 400.
+func TestLoginNonObjectCredentialsReturns400(t *testing.T) {
+	h := newTestHandlerFull(time.Hour)
+	postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
+		"authenticationMethod": "PASSWORD",
+		"identities": []map[string]any{
+			{"systemName": "test2", "credentials": map[string]string{"password": "secret"}},
+		},
+	})
+	// Send credentials as a plain string (not an object).
+	req := httptest.NewRequest(http.MethodPost, "/authentication/identity/login",
+		strings.NewReader(`{"systemName":"test2","credentials":"plainstring"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400 for non-object credentials, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestLoginNullCredentialsReturns400 sends null as credentials when an
+// identity repo is configured — must be rejected with 400.
+func TestLoginNullCredentialsReturns400(t *testing.T) {
+	h := newTestHandlerFull(time.Hour)
+	postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
+		"authenticationMethod": "PASSWORD",
+		"identities": []map[string]any{
+			{"systemName": "test3", "credentials": map[string]string{"password": "pw"}},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/authentication/identity/login",
+		strings.NewReader(`{"systemName":"test3","credentials":null}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400 for null credentials, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestLoginValidCredentialsObjectSucceeds is a regression guard — login with
+// a proper {"password":"..."} credentials object must still succeed (201).
+func TestLoginValidCredentialsObjectSucceeds(t *testing.T) {
+	h := newTestHandlerFull(time.Hour)
+	postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
+		"authenticationMethod": "PASSWORD",
+		"identities": []map[string]any{
+			{"systemName": "test4", "credentials": map[string]string{"password": "correct"}},
+		},
+	})
+	w := postJSON(t, h, "/authentication/identity/login", map[string]any{
+		"systemName":  "test4",
+		"credentials": map[string]string{"password": "correct"},
+	})
+	if w.Code != http.StatusCreated {
+		t.Errorf("want 201 for valid credentials object, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// ─── Step 29 (G20): Pagination on identities query ────────────────────────────
+
+// newTestHandlerWithIdentities creates a handler backed by a full-featured auth service
+// with an identity repository (required for CreateIdentities to work).
+func newTestHandlerWithIdentities() http.Handler {
+	svc := service.NewAuthServiceFull(repository.NewMemoryRepository(), repository.NewMemoryIdentityRepository(), time.Hour)
+	return api.NewHandler(svc, "")
+}
+
+func TestIdentitiesQueryPaginationPageSize(t *testing.T) {
+	h := newTestHandlerWithIdentities()
+	// Create 3 identities via bcrypt — use short password for speed.
+	for _, name := range []string{"sys-a", "sys-b", "sys-c"} {
+		w := postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
+			"authenticationMethod": "PASSWORD",
+			"identities":           []map[string]any{{"systemName": name, "credentials": map[string]string{"password": "pw"}}},
+		})
+		if w.Code != http.StatusCreated {
+			t.Fatalf("setup: create identity %s: want 201, got %d: %s", name, w.Code, w.Body.String())
+		}
+	}
+	// Query page 0 with size 2.
+	w := postJSON(t, h, "/authentication/mgmt/identities/query", map[string]any{
+		"pagination": map[string]any{"pageNumber": 0, "pageSize": 2},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Identities []any `json:"identities"`
+		Count      int   `json:"count"`
+		TotalCount int   `json:"totalCount"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
+	if resp.Count != 2 {
+		t.Errorf("page count: want 2, got %d", resp.Count)
+	}
+	// NewAuthServiceFull bootstraps one Sysop identity, so total = 1 + 3 = 4.
+	if resp.TotalCount != 4 {
+		t.Errorf("totalCount: want 4 (1 Sysop + 3 added), got %d", resp.TotalCount)
+	}
+}
+
+func TestIdentitiesQueryNoPaginationReturnsAll(t *testing.T) {
+	h := newTestHandlerWithIdentities()
+	for _, name := range []string{"x1", "x2", "x3"} {
+		postJSON(t, h, "/authentication/mgmt/identities", map[string]any{
+			"authenticationMethod": "PASSWORD",
+			"identities":           []map[string]any{{"systemName": name, "credentials": map[string]string{"password": "pw"}}},
+		})
+	}
+	w := postJSON(t, h, "/authentication/mgmt/identities/query", map[string]any{})
+	var resp struct {
+		Count      int `json:"count"`
+		TotalCount int `json:"totalCount"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
+	if resp.Count < 3 {
+		t.Errorf("no pagination: want count>=3, got %d", resp.Count)
+	}
+	if resp.TotalCount < 3 {
+		t.Errorf("no pagination: want totalCount>=3, got %d", resp.TotalCount)
 	}
 }

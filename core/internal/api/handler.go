@@ -6,22 +6,27 @@
 package api
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
 
+	blclient "arrowhead/core/internal/blacklist/client"
+	"arrowhead/core/internal/httputil"
 	"arrowhead/core/internal/model"
 	"arrowhead/core/internal/service"
 )
 
 // Handler wires HTTP routes to the RegistryService.
 type Handler struct {
-	svc *service.RegistryService
+	svc      *service.RegistryService
+	blClient blclient.BlacklistClient
 }
 
-func NewHandler(svc *service.RegistryService) http.Handler {
-	h := &Handler{svc: svc}
+// NewHandler creates a ServiceRegistry HTTP handler.
+// blClient is consulted on each register call; pass blclient.NopClient{} to disable.
+func NewHandler(svc *service.RegistryService, blClient blclient.BlacklistClient) http.Handler {
+	h := &Handler{svc: svc, blClient: blClient}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/serviceregistry/register", h.handleRegister)
 	mux.HandleFunc("/serviceregistry/query", h.handleQuery)
@@ -34,41 +39,46 @@ func NewHandler(svc *service.RegistryService) http.Handler {
 // POST /serviceregistry/register
 func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", "serviceregistry")
 		return
 	}
 	var req model.RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
+	}
+	// Reject registrations from blacklisted systems (fail-closed).
+	if req.ProviderSystem != nil && req.ProviderSystem.SystemName != "" {
+		if blacklisted, _ := h.blClient.IsBlacklisted(context.Background(), req.ProviderSystem.SystemName); blacklisted {
+			httputil.WriteError(w, http.StatusForbidden, "system is blacklisted", "serviceregistry")
+			return
+		}
 	}
 	svc, err := h.svc.Register(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, http.StatusBadRequest, err.Error(), "serviceregistry")
 		return
 	}
-	writeJSON(w, http.StatusCreated, svc)
+	httputil.WriteJSON(w, http.StatusCreated, svc, "serviceregistry")
 }
 
 // POST /serviceregistry/query — AH4-compatible, kept for backward compatibility.
 func (h *Handler) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", "serviceregistry")
 		return
 	}
 	var req model.QueryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
-	writeJSON(w, http.StatusOK, h.svc.Query(req))
+	httputil.WriteJSON(w, http.StatusOK, h.svc.Query(req), "serviceregistry")
 }
 
 // GET /serviceregistry/lookup — AH5-aligned read-only lookup.
 // Optional query params: serviceDefinition, version
 func (h *Handler) handleLookup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "GET required", "serviceregistry")
 		return
 	}
 	q := r.URL.Query()
@@ -80,23 +90,22 @@ func (h *Handler) handleLookup(w http.ResponseWriter, r *http.Request) {
 			req.VersionRequirement = n
 		}
 	}
-	writeJSON(w, http.StatusOK, h.svc.Query(req))
+	httputil.WriteJSON(w, http.StatusOK, h.svc.Query(req), "serviceregistry")
 }
 
 // DELETE /serviceregistry/unregister — AH5-aligned revoke.
 // Body: { serviceDefinition, providerSystem: {systemName, address, port}, version }
 func (h *Handler) handleUnregister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "DELETE required", "serviceregistry")
 		return
 	}
 	var req model.UnregisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !httputil.DecodeJSON(w, r, &req) {
 		return
 	}
 	if err := h.svc.Unregister(req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, http.StatusBadRequest, err.Error(), "serviceregistry")
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -104,15 +113,5 @@ func (h *Handler) handleUnregister(w http.ResponseWriter, r *http.Request) {
 
 // GET /health
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "serviceregistry"})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	WriteErrorResponse(w, status, msg, "", "serviceregistry")
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "serviceregistry"}, "serviceregistry")
 }

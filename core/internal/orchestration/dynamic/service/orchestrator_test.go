@@ -1,14 +1,18 @@
 package service_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
-	orchmodel "arrowhead/core/internal/orchestration/model"
+	blclient "arrowhead/core/internal/blacklist/client"
+	dynclient "arrowhead/core/internal/orchestration/dynamic/client"
 	"arrowhead/core/internal/orchestration/dynamic/service"
+	orchmodel "arrowhead/core/internal/orchestration/model"
 )
 
 // srResponse builds a fake AH5 ServiceRegistry service-discovery/lookup response.
@@ -410,5 +414,344 @@ func TestDynamicOrchCallsAH5LookupEndpoint(t *testing.T) {
 	}, "")
 	if !called {
 		t.Error("DynamicOrchestrator did not call AH5 lookup endpoint")
+	}
+}
+
+// ─── Step B: Tests for Step 24 ────────────────────────────────────────────────
+
+func TestOrchestrationResultHasCloudIdentifier(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+	ca := httptest.NewServer(http.HandlerFunc(caAlwaysAuthorized()))
+	defer ca.Close()
+
+	orch := newOrchestrator(sr.URL, ca.URL, false)
+	resp, err := orch.Orchestrate(validRequest(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	if resp.Results[0].CloudIdentifier != "LOCAL" {
+		t.Errorf("CloudIdentifier = %q, want \"LOCAL\"", resp.Results[0].CloudIdentifier)
+	}
+}
+
+func TestOrchestrationResultNoExclusiveUntilWhenUnlocked(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+	ca := httptest.NewServer(http.HandlerFunc(caAlwaysAuthorized()))
+	defer ca.Close()
+
+	orch := newOrchestrator(sr.URL, ca.URL, false)
+	resp, err := orch.Orchestrate(validRequest(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	if resp.Results[0].ExclusiveUntil != "" {
+		t.Errorf("ExclusiveUntil = %q, want empty string (no lock)", resp.Results[0].ExclusiveUntil)
+	}
+}
+
+func TestOrchestrationResultInterfacesForwarded(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+	ca := httptest.NewServer(http.HandlerFunc(caAlwaysAuthorized()))
+	defer ca.Close()
+
+	orch := newOrchestrator(sr.URL, ca.URL, false)
+	resp, err := orch.Orchestrate(validRequest(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	if len(resp.Results[0].Interfaces) == 0 {
+		t.Errorf("Interfaces is empty, expected SR interfaces to be forwarded")
+	}
+}
+
+// ─── Step 28 (G42): Blacklist integration — Dynamic Orchestrator ──────────────
+
+// newOrchestratorWithBlacklist wires up a DynamicOrchestrator with a given blacklist server.
+func newOrchestratorWithBlacklist(srURL, caURL string, blURL string) *service.DynamicOrchestrator {
+	var bl blclient.BlacklistClient
+	if blURL != "" {
+		bl = blclient.NewHTTPClient(blURL, http.DefaultClient)
+	} else {
+		bl = blclient.NopClient{}
+	}
+	return service.NewDynamicOrchestratorWithClients(
+		dynclient.NewSRHTTPClient(srURL, http.DefaultClient),
+		dynclient.NewCAHTTPClient(caURL, http.DefaultClient),
+		nil,
+		bl,
+		false, false,
+	)
+}
+
+func TestBlacklistedProviderExcludedFromResults(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("blacklisted-sensor", "good-sensor")))
+	defer sr.Close()
+
+	// Blacklist returns true only for "blacklisted-sensor".
+	blacklist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Path[len("/blacklist/check/"):]
+		json.NewEncoder(w).Encode(name == "blacklisted-sensor") //nolint:errcheck
+	}))
+	defer blacklist.Close()
+
+	orch := newOrchestratorWithBlacklist(sr.URL, "", blacklist.URL)
+	resp, err := orch.Orchestrate(validRequest(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result after blacklist filter, got %d", len(resp.Results))
+	}
+	if resp.Results[0].ProviderName == "blacklisted-sensor" {
+		t.Error("blacklisted provider should have been excluded")
+	}
+}
+
+func TestBlacklistedRequesterRejected(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+
+	// Blacklist returns true for all systems (to catch the requester check).
+	blacklist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(true) //nolint:errcheck
+	}))
+	defer blacklist.Close()
+
+	orch := newOrchestratorWithBlacklist(sr.URL, "", blacklist.URL)
+	_, err := orch.Orchestrate(validRequest(), "")
+	if err == nil {
+		t.Error("expected error for blacklisted requester, got nil")
+	}
+}
+
+// ─── Step 31: Push notification delivery ──────────────────────────────────────
+
+func newOrch(srURL, caURL string) *service.DynamicOrchestrator {
+	return service.NewDynamicOrchestratorWithClients(
+		dynclient.NewSRHTTPClient(srURL, http.DefaultClient),
+		dynclient.NewCAHTTPClient(caURL, http.DefaultClient),
+		nil,
+		blclient.NopClient{},
+		false, false,
+	)
+}
+
+func makeSub(notifyURL string) service.Subscription {
+	return service.Subscription{
+		ID:              "sub-test-1",
+		OwnerSystemName: "consumer-1",
+		TargetSystemName: "svc-def",
+		NotifyInterface: map[string]any{"notifyUri": notifyURL},
+	}
+}
+
+func waitForHistory(t *testing.T, orch *service.DynamicOrchestrator, wantStatus string, maxWaitMs int) service.HistoryEntry {
+	t.Helper()
+	deadline := time.Now().Add(time.Duration(maxWaitMs) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		hist := orch.QueryHistory()
+		for _, e := range hist.Entries {
+			if e.Status == wantStatus {
+				return e
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for history entry with status=%q; entries: %+v", wantStatus, orch.QueryHistory().Entries)
+	return service.HistoryEntry{}
+}
+
+func TestPushTriggerDeliversToPushSubscriber(t *testing.T) {
+	var received []byte
+	subscriber := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&received) //nolint:errcheck
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer subscriber.Close()
+
+	orch := newOrch("", "")
+	orch.SetPushClient(&http.Client{Timeout: 2 * time.Second})
+
+	sub := makeSub(subscriber.URL)
+	orch.TriggerPush(sub)
+
+	// Poll for DELIVERED status (goroutine delivery is async).
+	entry := waitForHistory(t, orch, "DELIVERED", 2000)
+	if entry.Status != "DELIVERED" {
+		t.Errorf("want DELIVERED, got %q", entry.Status)
+	}
+}
+
+func TestPushDeliveryFailureRecordedInHistory(t *testing.T) {
+	// Subscriber at unreachable address.
+	orch := newOrch("", "")
+	orch.SetPushClient(&http.Client{Timeout: 100 * time.Millisecond})
+
+	sub := makeSub("http://127.0.0.1:19999/no-such-endpoint")
+	orch.TriggerPush(sub)
+
+	entry := waitForHistory(t, orch, "FAILED", 1000)
+	if entry.Status != "FAILED" {
+		t.Errorf("want FAILED, got %q", entry.Status)
+	}
+}
+
+func TestPushDeliveryTimeoutRespected(t *testing.T) {
+	// Subscriber that hangs until the client closes.
+	done := make(chan struct{})
+	subscriber := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-done // never responds
+	}))
+	defer subscriber.Close()
+	defer close(done)
+
+	orch := newOrch("", "")
+	orch.SetPushClient(&http.Client{Timeout: 100 * time.Millisecond})
+
+	sub := makeSub(subscriber.URL)
+	orch.TriggerPush(sub)
+
+	entry := waitForHistory(t, orch, "FAILED", 1000)
+	if entry.Status != "FAILED" {
+		t.Errorf("want FAILED after timeout, got %q", entry.Status)
+	}
+}
+
+func TestPushTriggerDoesNotBlockHandler(t *testing.T) {
+	// Subscriber that is slow to respond.
+	slow := make(chan struct{})
+	subscriber := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-slow
+	}))
+	defer subscriber.Close()
+
+	orch := newOrch("", "")
+	orch.SetPushClient(&http.Client{Timeout: 5 * time.Second})
+
+	// TriggerPush must return before the subscriber responds.
+	done := make(chan struct{})
+	go func() {
+		orch.TriggerPush(makeSub(subscriber.URL))
+		close(done)
+	}()
+	select {
+	case <-done:
+		// OK — TriggerPush returned immediately.
+	case <-time.After(100 * time.Millisecond):
+		t.Error("TriggerPush blocked longer than 100ms")
+	}
+	close(slow)
+}
+
+func TestMissingNotifyURLRecordsFailure(t *testing.T) {
+	orch := newOrch("", "")
+	sub := service.Subscription{
+		ID:              "sub-no-url",
+		OwnerSystemName: "consumer",
+		NotifyInterface: map[string]any{}, // no URL fields
+	}
+	orch.TriggerPush(sub)
+	entry := waitForHistory(t, orch, "FAILED", 500)
+	if entry.Status != "FAILED" {
+		t.Errorf("want FAILED for missing notify URL, got %q", entry.Status)
+	}
+}
+
+// ─── Step 36 (G40): QoS filtering ───────────────────────────────────────────
+
+// mockQoSClient implements dynclient.QoSEvaluatorClient for testing.
+type mockQoSClient struct {
+	latency   int64
+	reachable bool
+	err       error
+}
+
+func (m *mockQoSClient) Measure(_ context.Context, _, _ string) (int64, bool, error) {
+	return m.latency, m.reachable, m.err
+}
+
+func TestQoSFilterPassesFastProvider(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("fast-provider")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	orch.SetQoSClient(&mockQoSClient{latency: 10, reachable: true})
+
+	req := validRequest()
+	req.QualityRequirements = []orchmodel.QoSRequirement{{MaxLatencyMs: 100}}
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("orchestrate: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result (fast provider passes), got %d", len(resp.Results))
+	}
+}
+
+func TestQoSFilterNoRequirementsPassesAll(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("provider-1", "provider-2")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	orch.SetQoSClient(&mockQoSClient{latency: 9999, reachable: true})
+
+	req := validRequest()
+	// No qualityRequirements → QoS client is not consulted
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("orchestrate: %v", err)
+	}
+	if len(resp.Results) != 2 {
+		t.Errorf("expected 2 results, got %d", len(resp.Results))
+	}
+}
+
+func TestQoSEvaluatorUnreachablePassesCandidate(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("provider-1")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	// QoS evaluator returns error → fail-open → include candidate
+	orch.SetQoSClient(&mockQoSClient{err: fmt.Errorf("qos evaluator unavailable")})
+
+	req := validRequest()
+	req.QualityRequirements = []orchmodel.QoSRequirement{{MaxLatencyMs: 50}}
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("orchestrate: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Errorf("fail-open: expected 1 result, got %d", len(resp.Results))
+	}
+}
+
+func TestQoSFilterExcludesUnreachableProvider(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("slow-provider")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	// Provider is not reachable
+	orch.SetQoSClient(&mockQoSClient{latency: 0, reachable: false})
+
+	req := validRequest()
+	req.QualityRequirements = []orchmodel.QoSRequirement{{MaxLatencyMs: 100}}
+	resp, err := orch.Orchestrate(req, "")
+	if err != nil {
+		t.Fatalf("orchestrate: %v", err)
+	}
+	if len(resp.Results) != 0 {
+		t.Errorf("unreachable provider should be excluded, got %d results", len(resp.Results))
 	}
 }

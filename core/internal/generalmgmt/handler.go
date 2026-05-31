@@ -5,7 +5,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"arrowhead/core/internal/httputil"
 )
+
+const gmOrigin = "generalmgmt"
 
 // NewHandler returns an http.Handler that serves:
 //
@@ -48,7 +52,7 @@ func makeLogsHandler(buf *LogBuffer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req logsRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", gmOrigin)
 			return
 		}
 
@@ -57,7 +61,7 @@ func makeLogsHandler(buf *LogBuffer) http.HandlerFunc {
 			from, err1 := time.Parse(time.RFC3339, req.From)
 			to, err2 := time.Parse(time.RFC3339, req.To)
 			if err1 == nil && err2 == nil && from.After(to) {
-				writeError(w, http.StatusBadRequest, "from must not be after to")
+				httputil.WriteError(w, http.StatusBadRequest, "from must not be after to", gmOrigin)
 				return
 			}
 		}
@@ -101,7 +105,7 @@ func makeLogsHandler(buf *LogBuffer) http.HandlerFunc {
 				Exception: e.Exception,
 			})
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"entries": dtos, "count": len(dtos)})
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"entries": dtos, "count": len(dtos)}, gmOrigin)
 	}
 }
 
@@ -120,24 +124,6 @@ func makeConfigHandler(config map[string]string) http.HandlerFunc {
 				result[key] = val
 			}
 		}
-		writeJSON(w, http.StatusOK, result)
+		httputil.WriteJSON(w, http.StatusOK, result, gmOrigin)
 	}
-}
-
-// ---- helpers -----------------------------------------------------------------
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	exType := "INVALID_PARAMETER"
-	writeJSON(w, status, map[string]any{
-		"errorMessage":  msg,
-		"errorCode":     status,
-		"exceptionType": exType,
-		"origin":        "generalmgmt",
-	})
 }

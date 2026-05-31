@@ -257,6 +257,12 @@ type SessionRecord struct {
 	ExpirationTime string `json:"expirationTime"`
 }
 
+// HasIdentityRepo returns true when an identity store is configured (credential
+// verification is active). Used by the handler to enforce G43 credential validation.
+func (s *AuthService) HasIdentityRepo() bool {
+	return s.identityRepo != nil
+}
+
 // QuerySessions returns all active (non-expired) token records.
 func (s *AuthService) QuerySessions() []SessionRecord {
 	all := s.repo.All()

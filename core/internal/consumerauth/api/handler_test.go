@@ -12,11 +12,12 @@ import (
 	"arrowhead/core/internal/consumerauth/model"
 	"arrowhead/core/internal/consumerauth/repository"
 	"arrowhead/core/internal/consumerauth/service"
+	blclient "arrowhead/core/internal/blacklist/client"
 )
 
 func newTestHandler() http.Handler {
 	svc := service.NewAuthService(repository.NewMemoryRepository())
-	return api.NewHandler(svc)
+	return api.NewHandler(svc, "", blclient.NopClient{})
 }
 
 func postJSON(t *testing.T, h http.Handler, path string, body any) *httptest.ResponseRecorder {
@@ -334,7 +335,7 @@ func TestHandlerHealth(t *testing.T) {
 
 func newConsumerAuthTestServer() *httptest.Server {
 	svc := service.NewAuthService(repository.NewMemoryRepository())
-	return httptest.NewServer(api.NewHandler(svc))
+	return httptest.NewServer(api.NewHandler(svc, "", blclient.NopClient{}))
 }
 
 func TestConsumerAuthOldPathReturns404(t *testing.T) {
@@ -476,3 +477,318 @@ func TestRemoveEncryptionKey200(t *testing.T) {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
 }
+
+// ─── Step 28 (G42): Blacklist integration — ConsumerAuth ──────────────────────
+
+func TestGrantBlacklistedProviderForbidden(t *testing.T) {
+	fakeBlacklist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(true) //nolint:errcheck
+	}))
+	defer fakeBlacklist.Close()
+
+	svc := service.NewAuthService(repository.NewMemoryRepository())
+	h := api.NewHandler(svc, "", blclient.NewHTTPClient(fakeBlacklist.URL, http.DefaultClient))
+
+	body := `{"provider":"bad-provider","targetType":"SERVICE_DEF","target":"svc","defaultPolicy":{"policyType":"ALL"}}`
+	req := httptest.NewRequest(http.MethodPost, "/consumerauthorization/authorization/grant",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("blacklisted provider grant: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestVerifyBlacklistedConsumerReturnsFalse(t *testing.T) {
+	fakeBlacklist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(true) //nolint:errcheck
+	}))
+	defer fakeBlacklist.Close()
+
+	svc := service.NewAuthService(repository.NewMemoryRepository())
+	h := api.NewHandler(svc, "", blclient.NewHTTPClient(fakeBlacklist.URL, http.DefaultClient))
+
+	// First grant a policy with a non-blacklisted check (NopClient would pass).
+	// Then verify — blacklist should short-circuit to false.
+	body := `{"consumer":"bad-consumer","provider":"","target":"svc","targetType":"SERVICE_DEF"}`
+	req := httptest.NewRequest(http.MethodPost, "/consumerauthorization/authorization/verify",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("blacklisted consumer verify: want 200, got %d", w.Code)
+	}
+	var authorized bool
+	json.NewDecoder(w.Body).Decode(&authorized) //nolint:errcheck
+	if authorized {
+		t.Error("blacklisted consumer verify: expected false, got true")
+	}
+}
+
+// ─── Step 30: Bulk management endpoints (G38, G39) ────────────────────────────
+
+func deleteJSON(t *testing.T, h http.Handler, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodDelete, path, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestBulkGrantPoliciesCreatesAll(t *testing.T) {
+	h := newTestHandler()
+	body := map[string]any{
+		"policies": []map[string]any{
+			{"provider": "p1", "targetType": model.TargetServiceDef, "target": "svc1", "defaultPolicy": map[string]any{"policyType": model.PolicyAll}},
+			{"provider": "p2", "targetType": model.TargetServiceDef, "target": "svc2", "defaultPolicy": map[string]any{"policyType": model.PolicyAll}},
+		},
+	}
+	w := postJSON(t, h, "/consumerauthorization/authorization/mgmt/grant-policies", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bulk grant-policies: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Results []struct {
+			InstanceID string `json:"instanceId"`
+			Error      string `json:"error"`
+		} `json:"results"`
+		Count int `json:"count"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Count != 2 {
+		t.Errorf("want count=2, got %d", resp.Count)
+	}
+	for i, r := range resp.Results {
+		if r.Error != "" {
+			t.Errorf("result[%d] unexpected error: %s", i, r.Error)
+		}
+		if r.InstanceID == "" {
+			t.Errorf("result[%d] missing instanceId", i)
+		}
+	}
+}
+
+func TestBulkGrantPoliciesPerItemError(t *testing.T) {
+	h := newTestHandler()
+	// Grant one policy first.
+	grantAndGetInstanceID(t, h, "p1", "svc1")
+	// Bulk grant with a duplicate + a valid new one.
+	body := map[string]any{
+		"policies": []map[string]any{
+			// duplicate
+			{"provider": "p1", "targetType": model.TargetServiceDef, "target": "svc1", "defaultPolicy": map[string]any{"policyType": model.PolicyAll}},
+			// valid
+			{"provider": "p2", "targetType": model.TargetServiceDef, "target": "svc2", "defaultPolicy": map[string]any{"policyType": model.PolicyAll}},
+		},
+	}
+	w := postJSON(t, h, "/consumerauthorization/authorization/mgmt/grant-policies", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bulk grant-policies: want 200, got %d", w.Code)
+	}
+	var resp struct {
+		Results []struct {
+			Error string `json:"error"`
+		} `json:"results"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Results) != 2 {
+		t.Fatalf("want 2 results, got %d", len(resp.Results))
+	}
+	if resp.Results[0].Error == "" {
+		t.Error("expected error for duplicate policy, got none")
+	}
+	if resp.Results[1].Error != "" {
+		t.Errorf("expected no error for valid policy, got: %s", resp.Results[1].Error)
+	}
+}
+
+func TestBulkRevokePoliciesRemovesAll(t *testing.T) {
+	h := newTestHandler()
+	id1 := grantAndGetInstanceID(t, h, "p1", "svc1")
+	id2 := grantAndGetInstanceID(t, h, "p2", "svc2")
+
+	w := deleteJSON(t, h, "/consumerauthorization/authorization/mgmt/revoke-policies",
+		map[string]any{"instanceIds": []string{id1, id2}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("revoke-policies: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	// Verify they are gone via query-policies.
+	w2 := postJSON(t, h, "/consumerauthorization/authorization/mgmt/query-policies", map[string]any{})
+	var resp struct{ TotalCount int `json:"totalCount"` }
+	json.NewDecoder(w2.Body).Decode(&resp)
+	if resp.TotalCount != 0 {
+		t.Errorf("after revoke want totalCount=0, got %d", resp.TotalCount)
+	}
+}
+
+func TestQueryPoliciesWithFilters(t *testing.T) {
+	h := newTestHandler()
+	grantAndGetInstanceID(t, h, "p1", "svc1")
+	grantAndGetInstanceID(t, h, "p2", "svc2")
+	grantAndGetInstanceID(t, h, "p3", "svc3")
+
+	// Query all — should return 3.
+	w := postJSON(t, h, "/consumerauthorization/authorization/mgmt/query-policies", map[string]any{})
+	var resp struct {
+		Policies   []model.AuthPolicy `json:"policies"`
+		Count      int                `json:"count"`
+		TotalCount int                `json:"totalCount"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.TotalCount != 3 {
+		t.Errorf("want totalCount=3, got %d", resp.TotalCount)
+	}
+
+	// Query with pagination pageSize=2.
+	w2 := postJSON(t, h, "/consumerauthorization/authorization/mgmt/query-policies",
+		map[string]any{"pagination": map[string]any{"pageNumber": 0, "pageSize": 2}})
+	var resp2 struct {
+		Count      int `json:"count"`
+		TotalCount int `json:"totalCount"`
+	}
+	json.NewDecoder(w2.Body).Decode(&resp2)
+	if resp2.Count != 2 {
+		t.Errorf("paginated: want count=2, got %d", resp2.Count)
+	}
+	if resp2.TotalCount != 3 {
+		t.Errorf("paginated: want totalCount=3, got %d", resp2.TotalCount)
+	}
+}
+
+func TestCheckPoliciesMixedResult(t *testing.T) {
+	h := newTestHandler()
+	// Grant a policy that allows all consumers to access svc1 via p1.
+	grantAndGetInstanceID(t, h, "p1", "svc1")
+
+	checks := []map[string]any{
+		{"consumer": "any-consumer", "provider": "p1", "target": "svc1", "targetType": model.TargetServiceDef},
+		{"consumer": "any-consumer", "provider": "p99", "target": "no-such-svc", "targetType": model.TargetServiceDef},
+	}
+	w := postJSON(t, h, "/consumerauthorization/authorization/mgmt/check-policies", checks)
+	if w.Code != http.StatusOK {
+		t.Fatalf("check-policies: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Results []struct {
+			Authorized bool `json:"authorized"`
+		} `json:"results"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Results) != 2 {
+		t.Fatalf("want 2 results, got %d", len(resp.Results))
+	}
+	if !resp.Results[0].Authorized {
+		t.Error("first check: want authorized=true, got false")
+	}
+	if resp.Results[1].Authorized {
+		t.Error("second check: want authorized=false, got true")
+	}
+}
+
+func TestBulkGenerateTokensReturnsTokenList(t *testing.T) {
+	h := newTestHandler()
+	body := map[string]any{
+		"requests": []map[string]any{
+			{"tokenVariant": model.TokenVariantTimeLimited, "provider": "p1", "targetType": model.TargetServiceDef, "target": "svc1"},
+			{"tokenVariant": model.TokenVariantTimeLimited, "provider": "p2", "targetType": model.TargetServiceDef, "target": "svc2"},
+		},
+	}
+	w := postJSON(t, h, "/consumerauthorization/authorization-token/mgmt/generate-tokens", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("generate-tokens: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Results []struct {
+			Token struct{ Token string `json:"token"` } `json:"token"`
+			Error string `json:"error"`
+		} `json:"results"`
+		Count int `json:"count"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Count != 2 {
+		t.Errorf("want count=2, got %d", resp.Count)
+	}
+	for i, r := range resp.Results {
+		if r.Error != "" {
+			t.Errorf("result[%d] unexpected error: %s", i, r.Error)
+		}
+		if r.Token.Token == "" {
+			t.Errorf("result[%d] missing token", i)
+		}
+	}
+}
+
+func TestBulkRevokeTokensRevokesAll(t *testing.T) {
+	h := newTestHandler()
+	// Generate two tokens via the single endpoint.
+	makeToken := func(provider, target string) string {
+		w := postJSON(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+			"tokenVariant": model.TokenVariantTimeLimited,
+			"provider":     provider,
+			"targetType":   model.TargetServiceDef,
+			"target":       target,
+		})
+		var desc model.TokenDescriptor
+		json.NewDecoder(w.Body).Decode(&desc)
+		return desc.Token
+	}
+	t1 := makeToken("p1", "svc1")
+	t2 := makeToken("p2", "svc2")
+
+	w := deleteJSON(t, h, "/consumerauthorization/authorization-token/mgmt/revoke-tokens",
+		map[string]any{"tokens": []string{t1, t2}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("revoke-tokens: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	// Verify tokens are gone.
+	for _, tok := range []string{t1, t2} {
+		wv := getReq(t, h, "/consumerauthorization/authorization-token/verify/"+tok)
+		if wv.Code != http.StatusNotFound {
+			t.Errorf("after revoke token %s: want 404, got %d", tok, wv.Code)
+		}
+	}
+}
+
+func TestQueryTokensWithPagination(t *testing.T) {
+	h := newTestHandler()
+	// Generate 3 tokens.
+	for i := 0; i < 3; i++ {
+		postJSON(t, h, "/consumerauthorization/authorization-token/generate", map[string]any{
+			"tokenVariant": model.TokenVariantTimeLimited,
+			"provider":     "p1",
+			"targetType":   model.TargetServiceDef,
+			"target":       "svc" + string(rune('1'+i)),
+		})
+	}
+	// Query all.
+	w := postJSON(t, h, "/consumerauthorization/authorization-token/mgmt/query-tokens", map[string]any{})
+	var resp struct {
+		Tokens     []model.TokenRecord `json:"tokens"`
+		Count      int                 `json:"count"`
+		TotalCount int                 `json:"totalCount"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.TotalCount < 3 {
+		t.Errorf("want totalCount>=3, got %d", resp.TotalCount)
+	}
+
+	// Query with pageSize=2.
+	w2 := postJSON(t, h, "/consumerauthorization/authorization-token/mgmt/query-tokens",
+		map[string]any{"pagination": map[string]any{"pageNumber": 0, "pageSize": 2}})
+	var resp2 struct {
+		Count      int `json:"count"`
+		TotalCount int `json:"totalCount"`
+	}
+	json.NewDecoder(w2.Body).Decode(&resp2)
+	if resp2.Count != 2 {
+		t.Errorf("paginated: want count=2, got %d", resp2.Count)
+	}
+	if resp2.TotalCount < 3 {
+		t.Errorf("paginated: want totalCount>=3, got %d", resp2.TotalCount)
+	}
+}
+

@@ -65,6 +65,12 @@ Optional on ServiceRegistry System:
 
 Manages service provider registrations and discovery.
 
+**Configuration (env vars):**
+- `MGMT_AUTH_URL` — when set, all `/mgmt/*` endpoints require sysop Bearer token. When empty, management is open.
+- `BLACKLIST_URL` — when set, `POST /serviceregistry/register` rejects registrations from blacklisted `providerSystem.systemName` (403 Forbidden). When empty, no blacklist check.
+- `SR_AUTH_URL` — Authentication system URL for system-remove token verification. Default: `http://localhost:8081`.
+- `REGISTER_AUTH_URL` — when set, `POST /serviceregistry/system-discovery/register` and `POST /serviceregistry/service-discovery/register` require `Authorization: Bearer <token>` whose verified `systemName` matches the `name`/`systemName` in the request body. Fail-closed: missing token → 401; network error → 401; name mismatch → 403. When empty, registration is open (development mode). Added in Step 33 (G10).
+
 ### Service Instance
 
 ```json
@@ -293,17 +299,23 @@ Returns systems matching optional filter criteria.
 
 ---
 
-#### DELETE /serviceregistry/system-discovery/revoke?name={name}
+#### DELETE /serviceregistry/system-discovery/revoke
 
-Removes the named system.
+Removes the system identified by the caller's Bearer token.
 
-**Note (G10):** AH5 identifies the system from the auth token. This implementation
-uses a `?name=` query parameter.
+**Header:** `Authorization: Bearer <token>` (required)
+
+The `SR_AUTH_URL` configuration variable points to the Authentication system.
+ServiceRegistry calls `GET <SR_AUTH_URL>/authentication/identity/verify/<token>` and
+uses the returned `systemName` to identify which system to remove. If the header is
+absent, the token is invalid, or the Authentication system is unreachable, the request
+is rejected with `401 Unauthorized` (fail-closed).
+
+**New env var:** `SR_AUTH_URL` — default `http://localhost:8081`.
 
 **Response:**
-- `200 OK` — system removed
-- `204 No Content` — no matching system found
-- `400 Bad Request` — `name` parameter missing
+- `204 No Content` — system removed (or no matching system found)
+- `401 Unauthorized` — Bearer token absent, invalid, or Authentication unreachable
 
 ---
 
@@ -516,16 +528,24 @@ Removes a registered service instance.
 
 Manages identity tokens for systems. Tokens are opaque strings with an expiry.
 
+**Configuration (env vars):**
+- `MGMT_AUTH_URL` — when set, all `/mgmt/*` endpoints (identities, sessions) require sysop Bearer token. When empty, management is open.
+
 ### POST /authentication/identity/login
 
 Issues a new token. Credentials are verified against the stored bcrypt hash.
 Returns 401 if the `systemName` is not registered or the password does not match.
-The `credentials` field may be a plain string (legacy) or `{"password":"..."}` (AH5).
+The `credentials` field must be a JSON object with a `password` key. A plain string,
+`null`, or a missing `password` key returns `400 Bad Request`.
 
 **Request:**
 ```json
 { "systemName": "string", "credentials": {"password": "string"} }
 ```
+
+**Error responses:**
+- `400 Bad Request` — `credentials` is not a `{"password":"..."}` object, or `password` key is absent
+- `401 Unauthorized` — unknown `systemName` or wrong password
 
 **Response: 201 Created:**
 ```json
@@ -670,6 +690,11 @@ auto-created (password from `SYSOP_PASSWORD` env var, default `arrowhead`).
 Manages provider-centric authorization policies. Each policy is identified by a composite
 `instanceId` of the form `PR|LOCAL|<provider>|<targetType>|<target>`.
 
+**Configuration (env vars):**
+- `MGMT_AUTH_URL` — when set, all `/mgmt/*` endpoints require sysop Bearer token. When empty, management is open.
+- `BLACKLIST_URL` — when set, `grant` rejects blacklisted providers (403), and `verify` returns `false` for blacklisted consumers or providers (without 4xx). When empty, no blacklist check.
+- `HMAC_SECRET` — secret used to sign `BASE64_SELF_CONTAINED` tokens (HMAC-SHA256). Default: `arrowhead-default-secret`. Set to a strong random value in production. Added in Step 34 (G23).
+
 ### AuthPolicy
 
 ```json
@@ -786,6 +811,92 @@ Bulk verify — checks authorization for multiple requests.
 
 ---
 
+### POST /consumerauthorization/authorization/mgmt/grant-policies
+
+Bulk policy grant. Per-item errors do not abort the batch.
+
+**Request:**
+```json
+{
+  "policies": [
+    { "provider": "SensorProvider", "targetType": "SERVICE_DEF", "target": "temperatureService", "defaultPolicy": { "policyType": "ALL" } }
+  ]
+}
+```
+
+**Response: 200 OK:**
+```json
+{
+  "results": [
+    { "instanceId": "PR|LOCAL|SensorProvider|SERVICE_DEF|temperatureService", "policy": { ... } }
+  ],
+  "count": 1
+}
+```
+
+Per-item error: `{ "error": "authorization policy already exists" }`.
+
+Requires `MGMT_AUTH_URL` (sysop Bearer token).
+
+---
+
+### DELETE /consumerauthorization/authorization/mgmt/revoke-policies
+
+Bulk policy revocation by instanceIds (request body, not query param).
+
+**Request:**
+```json
+{ "instanceIds": ["PR|LOCAL|SensorProvider|SERVICE_DEF|temperatureService"] }
+```
+
+**Response: 200 OK** (empty body). Missing instanceIds are ignored.
+
+Requires `MGMT_AUTH_URL`.
+
+---
+
+### POST /consumerauthorization/authorization/mgmt/query-policies
+
+Paginated policy query with optional filters.
+
+**Request:**
+```json
+{
+  "instanceIds": [],
+  "targetNames": [],
+  "pagination": { "pageNumber": 0, "pageSize": 20 }
+}
+```
+
+**Response: 200 OK:**
+```json
+{ "policies": [...], "count": 20, "totalCount": 100 }
+```
+
+Requires `MGMT_AUTH_URL`.
+
+---
+
+### POST /consumerauthorization/authorization/mgmt/check-policies
+
+Non-destructive bulk authorization check. Returns each tuple with an `authorized` boolean.
+
+**Request:** array of VerifyRequest objects.
+
+**Response: 200 OK:**
+```json
+{
+  "results": [
+    { "consumer": "ConsumerApp", "provider": "SensorProvider", "target": "temperatureService", "targetType": "SERVICE_DEF", "authorized": true }
+  ],
+  "count": 1
+}
+```
+
+Requires `MGMT_AUTH_URL`.
+
+---
+
 ## 3b. ConsumerAuthorization — authorization-token sub-service
 
 The `authorization-token` sub-service issues short-lived tokens that a consumer presents to a provider as proof of authorization. Only `TIME_LIMITED_TOKEN` is fully implemented; all other variants return `501 Not Implemented`.
@@ -877,6 +988,87 @@ Removes the encryption key for a system.
 
 ---
 
+### POST /consumerauthorization/authorization-token/mgmt/generate-tokens
+
+Bulk token generation. Per-item errors do not abort the batch.
+
+**Request:**
+```json
+{
+  "requests": [
+    { "tokenVariant": "TIME_LIMITED_TOKEN", "provider": "SensorProvider", "targetType": "SERVICE_DEF", "target": "temperatureService" }
+  ]
+}
+```
+
+**Response: 200 OK:**
+```json
+{ "results": [{ "token": { "tokenType": "TIME_LIMITED_TOKEN", "token": "<hex>", "expiresAt": "..." } }], "count": 1 }
+```
+
+Requires `MGMT_AUTH_URL`.
+
+---
+
+### DELETE /consumerauthorization/authorization-token/mgmt/revoke-tokens
+
+Bulk token revocation. Missing tokens are silently ignored.
+
+**Request:**
+```json
+{ "tokens": ["<hex-token-1>", "<hex-token-2>"] }
+```
+
+**Response: 200 OK** (empty body).
+
+Requires `MGMT_AUTH_URL`.
+
+---
+
+### POST /consumerauthorization/authorization-token/mgmt/query-tokens
+
+Returns all unexpired tokens with pagination.
+
+**Request:**
+```json
+{ "pagination": { "pageNumber": 0, "pageSize": 20 } }
+```
+
+**Response: 200 OK:**
+```json
+{ "tokens": [...TokenRecord...], "count": 20, "totalCount": 100 }
+```
+
+Requires `MGMT_AUTH_URL`.
+
+---
+
+### POST /consumerauthorization/authorization-token/mgmt/add-encryption-keys
+
+Bulk register encryption keys. Overwrites existing key for same system name.
+
+**Request:**
+```json
+{ "keys": [{ "systemName": "SensorProvider", "algorithm": "RSA", "key": "<base64>" }] }
+```
+
+**Response: 201 Created** (empty body). Requires `MGMT_AUTH_URL`.
+
+---
+
+### DELETE /consumerauthorization/authorization-token/mgmt/remove-encryption-keys
+
+Bulk remove encryption keys for named systems.
+
+**Request:**
+```json
+{ "systemNames": ["SensorProvider"] }
+```
+
+**Response: 200 OK** (empty body). Requires `MGMT_AUTH_URL`.
+
+---
+
 ## 4. DynamicOrchestration — Port 8083
 
 Performs real-time discovery: queries the Service Registry and optionally filters by ConsumerAuthorization rules.
@@ -892,8 +1084,10 @@ The `serviceRequirement` field is the AH5 spec name; `requestedService` is accep
   "requesterSystem":    { "systemName": "", "address": "", "port": 0 },
   "serviceRequirement": { "serviceDefinition": "", "interfaces": [], "metadata": {} },
   "orchestrationFlags": {
-    "MATCHMAKING":    false,
-    "ONLY_PREFERRED": false
+    "MATCHMAKING":       false,
+    "ONLY_PREFERRED":    false,
+    "ALLOW_INTERCLOUD":  false,
+    "ONLY_INTERCLOUD":   false
   },
   "preferredProviders": [{ "systemName": "", "address": "", "port": 0 }]
 }
@@ -906,11 +1100,12 @@ The `serviceRequirement` field is the AH5 spec name; `requestedService` is accep
     {
       "providerName":        "string",
       "serviceDefinitition": "string",
+      "cloudIdentitifer":    "LOCAL",
       "serviceInstanceId":   "string",
       "serviceUri":          "string",
       "interfaces":          ["string"],
-      "aliveUntil":          "string",
-      "cloudIdentitifer":    "string"
+      "exclusiveUntil":      "RFC3339 (omitted when provider is not locked)",
+      "aliveUntil":          "string"
     }
   ]
 }
@@ -918,13 +1113,18 @@ The `serviceRequirement` field is the AH5 spec name; `requestedService` is accep
 
 Note: `serviceDefinitition` (double 't') and `cloudIdentitifer` (missing 'n') are intentional spec typos that match the AH5 wire format exactly.
 
+- `cloudIdentitifer` is always `"LOCAL"` (intercloud not supported).
+- `interfaces` is forwarded directly from the ServiceRegistry response.
+- `exclusiveUntil` is set to the lock's expiry time (RFC3339) when the provider has an active orchestration lock; omitted otherwise. Only DynamicOrchestration checks locks.
+
 **Behavior:**
-1. If `ENABLE_IDENTITY_CHECK=true`: validates the `Authorization: Bearer <token>` header against the Authentication system. Returns `401 Unauthorized` if the token is absent, invalid, or expired. The verified `systemName` from the token replaces the self-reported `requesterSystem.systemName` for all subsequent checks.
-2. Calls `POST /serviceregistry/service-discovery/lookup` with `{"serviceDefinitionNames": [<serviceDefinition>]}`.
-3. If `ENABLE_AUTH=true`, calls `POST /consumerauthorization/authorization/verify` for each result and removes unauthorized providers.
-4. If `orchestrationFlags.ONLY_PREFERRED=true` and `preferredProviders` is non-empty, filters results to only those matching a preferred provider's `systemName`.
-5. If `orchestrationFlags.MATCHMAKING=true` and more than one result remains, truncates to the first result.
-6. Returns the remaining results.
+1. If `ALLOW_INTERCLOUD` or `ONLY_INTERCLOUD` is `true` in `orchestrationFlags`: returns `501 Not Implemented` (intercloud orchestration is not supported).
+2. If `ENABLE_IDENTITY_CHECK=true`: validates the `Authorization: Bearer <token>` header against the Authentication system. Returns `401 Unauthorized` if the token is absent, invalid, or expired. The verified `systemName` from the token replaces the self-reported `requesterSystem.systemName` for all subsequent checks.
+3. Calls `POST /serviceregistry/service-discovery/lookup` with `{"serviceDefinitionNames": [<serviceDefinition>]}`.
+4. If `ENABLE_AUTH=true`, calls `POST /consumerauthorization/authorization/verify` for each result and removes unauthorized providers.
+5. If `orchestrationFlags.ONLY_PREFERRED=true` and `preferredProviders` is non-empty, filters results to only those matching a preferred provider's `systemName`.
+6. If `orchestrationFlags.MATCHMAKING=true` and more than one result remains, truncates to the first result.
+7. Returns the remaining results with `cloudIdentitifer="LOCAL"` and `interfaces` forwarded from the SR response.
 
 **Configuration (env vars):**
 - `SERVICE_REGISTRY_URL` — default `http://localhost:8080`
@@ -932,6 +1132,16 @@ Note: `serviceDefinitition` (double 't') and `cloudIdentitifer` (missing 'n') ar
 - `AUTH_SYSTEM_URL` — default `http://localhost:8081`
 - `ENABLE_AUTH` — `true`/`false`, default `false`
 - `ENABLE_IDENTITY_CHECK` — `true`/`false`, default `false`. When `true`, requires a valid Bearer token issued by the Authentication system. The verified identity overrides the self-reported `requesterSystem.systemName`, preventing impersonation.
+- `MGMT_AUTH_URL` — when set, all `/mgmt/*` endpoints require an `Authorization: Bearer` token verified against this Authentication system URL. Only tokens with `sysop: true` are accepted. When empty, management endpoints are open (development mode).
+- `BLACKLIST_URL` — when set, the Blacklist system is consulted to reject blacklisted requesters (step 2.5) and filter blacklisted providers (step 4). When empty, no blacklist check is performed.
+- `PUSH_DELIVERY_TIMEOUT_SECONDS` — HTTP timeout per push notification delivery attempt. Default: `5`.
+- `QOS_EVALUATOR_URL` — when set, DynamicOrchestration calls `POST <QOS_EVALUATOR_URL>/deviceqosevaluator/quality-evaluation/measure` for each candidate when `qualityRequirements[]` is present in the request. Fail-open: if the evaluator is unreachable, the candidate is included. When empty, a NopQoSClient (fail-open) is used. Added in Step 36 (G40).
+
+**Push trigger delivery semantics (`mgmt/push/trigger`):**
+1. Records a `PUSH/PENDING` history entry.
+2. Launches a goroutine that POSTs the subscription payload to the subscriber's `notifyInterface` URL. The URL is extracted from `notifyInterface.notifyUri`, `notifyInterface.uri`, or assembled from `notifyInterface.address` + `port` + `path`.
+3. Updates the history entry to `PUSH/DELIVERED` (HTTP 2xx) or `PUSH/FAILED` (error or non-2xx) after the delivery attempt.
+4. No retry. The handler returns 200 before delivery completes.
 
 **Note:** `ENABLE_IDENTITY_CHECK` goes beyond the AH5 specification. See `GAP_ANALYSIS.md` for rationale and design decisions.
 
@@ -964,7 +1174,9 @@ Rule IDs are UUIDs (string). `priority` is optional (omitted when 0); lower valu
 
 **Response: 200 OK:** same shape as DynamicOrchestration.
 
-Matches by `requesterSystem.systemName` + `requestedService.serviceDefinition`. Returns the first matching rule wrapped in an `OrchestrationResult`.
+Matches by `requesterSystem.systemName` + `requestedService.serviceDefinition`. Returns the first matching rule wrapped in an `OrchestrationResult` with `cloudIdentitifer="LOCAL"` and `interfaces` from the stored rule.
+
+If `ALLOW_INTERCLOUD` or `ONLY_INTERCLOUD` is `true` in `orchestrationFlags`, returns `501 Not Implemented`.
 
 ### POST /serviceorchestration/orchestration/mgmt/simple-store/create
 
@@ -1329,9 +1541,15 @@ Maintains a list of blacklisted systems. Other core systems do not enforce black
 }
 ```
 
+**New env var:** `BLACKLIST_AUTH_URL` — when set, discovery endpoints require a Bearer token.
+When unset (default), Bearer checks are skipped (development/open mode).
+
 ### GET /blacklist/lookup
 
 Returns all active, non-expired blacklist entries applicable to the caller.
+
+**Header:** `Authorization: Bearer <token>` — required when `BLACKLIST_AUTH_URL` is set.
+Returns `401 Unauthorized` if the token is absent and `BLACKLIST_AUTH_URL` is configured.
 
 **Response: 200 OK**
 ```json
@@ -1341,6 +1559,8 @@ Returns all active, non-expired blacklist entries applicable to the caller.
 ### GET /blacklist/check/{systemName}
 
 Returns `true` if the named system has at least one active, non-expired blacklist entry; `false` otherwise.
+
+**Header:** `Authorization: Bearer <token>` — required when `BLACKLIST_AUTH_URL` is set.
 
 **Response: 200 OK** — plain JSON boolean (`true` or `false`).
 
@@ -1352,9 +1572,16 @@ Returns all entries, with optional filtering.
 ```json
 {
   "systemNames": ["string"],
-  "active":      true
+  "mode":        "ALL"
 }
 ```
+
+`mode` controls which entries are returned:
+- `"ALL"` (or omitted) — all entries regardless of active status
+- `"ACTIVES"` — only entries where `active: true`
+- `"INACTIVES"` — only entries where `active: false`
+
+Any other `mode` value returns `400 Bad Request`.
 
 **Response: 200 OK**
 ```json
@@ -1460,4 +1687,143 @@ Returns the values of the requested configuration keys for this system. Unknown 
 | FlexibleStoreOrchestration | `serviceorchestration/orchestration` |
 | CertificateAuthority | `ca` |
 | Blacklist | `blacklist` |
+| DeviceQoSEvaluator | `deviceqosevaluator` |
+| TranslationManager | `translationmanager` |
+
+---
+
+## 9. DeviceQoSEvaluator — Port 8088
+
+New system added in Step 35 (G35). Performs TCP RTT measurements and stores QoS records.
+
+**Configuration (env vars):**
+- `PORT` — listen port. Default: `8088`.
+
+### POST /deviceqosevaluator/quality-evaluation/measure
+
+Performs a TCP dial to `host:port`, measures latency, stores the result, and returns the QoSRecord.
+
+**Request:**
+```json
+{ "host": "string", "port": "string" }
+```
+
+**Response: 200 OK:**
+```json
+{
+  "id": "uuid", "host": "string", "port": "string",
+  "latencyMs": 12, "measuredAt": "RFC3339", "reachable": true
+}
+```
+
+### POST /deviceqosevaluator/quality-evaluation/mgmt/query
+
+Returns stored QoS records, optionally filtered by host/port.
+
+**Request:**
+```json
+{ "host": "string (optional)", "port": "string (optional)" }
+```
+
+**Response: 200 OK:**
+```json
+{ "records": [...], "count": N, "totalCount": N }
+```
+
+### GET /deviceqosevaluator/health
+
+**Response: 200 OK:** `{"status": "UP"}`
+
+---
+
+## 10. TranslationManager — Port 8089
+
+New system added in Step 37 (G36). Manages JSON field-remapping translation bridges.
+
+**Configuration (env vars):**
+- `PORT` — listen port. Default: `8089`.
+
+### POST /translationmanager/translation/translate
+
+Translates a JSON payload using the field mappings of the specified bridge.
+
+**Request:**
+```json
+{ "bridgeId": "string", "payload": { ... } }
+```
+
+**Response: 200 OK:**
+```json
+{
+  "bridgeId": "string",
+  "originalPayload": { ... },
+  "translatedPayload": { ... }
+}
+```
+
+**Errors:** `404` if bridge not found.
+
+### GET /translationmanager/translation/status/{bridgeId}
+
+Returns the bridge configuration.
+
+**Response: 200 OK:** Bridge object. `404` if not found.
+
+### POST /translationmanager/translation/mgmt/bridges
+
+Creates a new translation bridge.
+
+**Request:**
+```json
+{
+  "sourceFormat": "sensor-v1", "targetFormat": "sensor-v2",
+  "fieldMappings": { "temperature": "temp" }
+}
+```
+
+**Response: 201 Created:** Bridge object with generated `id`.
+
+### GET /translationmanager/translation/mgmt/bridges
+
+Returns all bridges.
+
+**Response: 200 OK:** Array of bridge objects.
+
+### DELETE /translationmanager/translation/mgmt/bridges/{id}
+
+Deletes a bridge. **Response: 200 OK.** `404` if not found.
+
+### GET /translationmanager/health
+
+**Response: 200 OK:** `{"status": "UP"}`
+
+---
+
+## 11. MQTT Communication Profiles (G34)
+
+Added in Step 38. The `core/internal/mqttutil` package provides `MQTTAdapter` which enables
+any core system to subscribe to MQTT request topics and publish replies.
+
+**Topic scheme:**
+- Request: `ah5/<system>/request`
+- Reply: `ah5/<system>/reply/<correlationId>`
+
+**Request payload:**
+```json
+{ "path": "/health", "method": "GET", "correlationId": "abc", "body": "..." }
+```
+
+**Configuration (env vars):**
+- `MQTT_BROKER_URL` — when set (e.g. `tcp://localhost:1883`), the system creates an `MQTTAdapter` and subscribes to its request topic. When empty, no MQTT listener is started.
+
+**Interface name:** `MQTT-INSECURE-JSON` (defined as `mqttutil.MQTTInterfaceName`).
+
+**qualityRequirements[] in OrchestrationRequest (G40):**
+
+When `qualityRequirements[]` is present in a DynamicOrchestration pull request, the orchestrator
+calls the Device QoS Evaluator for each candidate. Candidates are excluded if:
+- The provider is unreachable (TCP probe fails), OR
+- `latencyMs > maxLatencyMs` in any requirement
+
+Fail-open: if the QoS evaluator is unreachable, the candidate is included.
 

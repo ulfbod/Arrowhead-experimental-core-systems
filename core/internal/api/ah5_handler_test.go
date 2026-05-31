@@ -17,7 +17,11 @@ import (
 )
 
 func newAH5Handler() http.Handler {
-	return api.NewAH5Handler(service.NewAH5RegistryService(repository.NewAH5Store()))
+	return api.NewAH5Handler(service.NewAH5RegistryService(repository.NewAH5Store()), "", "", "")
+}
+
+func newAH5HandlerWithRegisterAuth(authURL string) http.Handler {
+	return api.NewAH5Handler(service.NewAH5RegistryService(repository.NewAH5Store()), "", "", authURL)
 }
 
 func ah5Post(t *testing.T, h http.Handler, path string, body any) *httptest.ResponseRecorder {
@@ -974,5 +978,265 @@ func TestAH5DeviceLookupNoPaginationReturnsAll(t *testing.T) {
 	}
 	if resp.TotalCount != 3 {
 		t.Errorf("totalCount = %d, want 3", resp.TotalCount)
+	}
+}
+
+// ─── Step B: Tests for token-based system revoke (Step 22) ───────────────────
+
+func TestSystemRevokeUsesTokenIdentity(t *testing.T) {
+	// fake Auth server that returns systemName for a given token
+	fakeAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// path: /authentication/identity/verify/<token>
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "TargetSystem"})
+	}))
+	defer fakeAuth.Close()
+
+	store := service.NewAH5RegistryService(repository.NewAH5Store())
+	// register the system first
+	store.RegisterSystem(model.SystemRegistrationRequest{Name: "TargetSystem"})
+
+	h := api.NewAH5Handler(store, fakeAuth.URL, "", "")
+
+	// revoke using token (no ?name=)
+	req := httptest.NewRequest(http.MethodDelete, "/serviceregistry/mgmt/systems/revoke", nil)
+	req.Header.Set("Authorization", "Bearer some-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("want 204, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSystemRevokeWithoutBearerReturns401(t *testing.T) {
+	h := api.NewAH5Handler(service.NewAH5RegistryService(repository.NewAH5Store()), "http://localhost:9", "", "")
+	req := httptest.NewRequest(http.MethodDelete, "/serviceregistry/mgmt/systems/revoke", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("want 401, got %d", w.Code)
+	}
+}
+
+func TestSystemRevokeAuthUnreachableReturns401(t *testing.T) {
+	h := api.NewAH5Handler(service.NewAH5RegistryService(repository.NewAH5Store()), "http://localhost:1", "", "") // unreachable
+	req := httptest.NewRequest(http.MethodDelete, "/serviceregistry/mgmt/systems/revoke", nil)
+	req.Header.Set("Authorization", "Bearer some-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("want 401, got %d", w.Code)
+	}
+}
+
+// ─── Step 27 (G37): Management access policy ────────────────────────────────
+
+func TestMgmtOpenWhenMgmtAuthURLUnset(t *testing.T) {
+	// With mgmtAuthURL="" all management endpoints are open.
+	h := api.NewAH5Handler(service.NewAH5RegistryService(repository.NewAH5Store()), "", "", "")
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/mgmt/systems/query", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("open mode: want 200, got %d", w.Code)
+	}
+}
+
+func TestMgmtRequiresBearerWhenMgmtAuthURLSet(t *testing.T) {
+	fakeMgmt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "sysop-sys", "sysop": true}) //nolint:errcheck
+	}))
+	defer fakeMgmt.Close()
+
+	h := api.NewAH5Handler(service.NewAH5RegistryService(repository.NewAH5Store()), "", fakeMgmt.URL, "")
+
+	// no bearer → 401
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/mgmt/systems/query", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("no token: want 401, got %d", w.Code)
+	}
+}
+
+func TestMgmtValidSysopTokenSucceeds(t *testing.T) {
+	fakeMgmt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "sysop-sys", "sysop": true}) //nolint:errcheck
+	}))
+	defer fakeMgmt.Close()
+
+	h := api.NewAH5Handler(service.NewAH5RegistryService(repository.NewAH5Store()), "", fakeMgmt.URL, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/mgmt/systems/query", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("valid sysop: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMgmtNonSysopTokenForbidden(t *testing.T) {
+	fakeMgmt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "regular-sys", "sysop": false}) //nolint:errcheck
+	}))
+	defer fakeMgmt.Close()
+
+	h := api.NewAH5Handler(service.NewAH5RegistryService(repository.NewAH5Store()), "", fakeMgmt.URL, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/mgmt/systems/query", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer regular-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("non-sysop: want 403, got %d", w.Code)
+	}
+}
+
+func TestMgmtAuthUnreachableReturns401(t *testing.T) {
+	h := api.NewAH5Handler(service.NewAH5RegistryService(repository.NewAH5Store()), "", "http://localhost:1", "")
+
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/mgmt/systems/query", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer some-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("auth unreachable: want 401, got %d", w.Code)
+	}
+}
+
+// ─── Step 33 (G10): Registration identity enforcement ────────────────────────
+
+func TestRegisterSystemMatchingTokenIdentitySucceeds(t *testing.T) {
+	fakeAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "SensorA", "verified": true}) //nolint:errcheck
+	}))
+	defer fakeAuth.Close()
+
+	h := newAH5HandlerWithRegisterAuth(fakeAuth.URL)
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/system-discovery/register",
+		strings.NewReader(`{"name":"SensorA","address":"localhost","port":8099}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Errorf("matching identity: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterSystemMismatchedIdentityReturns403(t *testing.T) {
+	fakeAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "SensorA", "verified": true}) //nolint:errcheck
+	}))
+	defer fakeAuth.Close()
+
+	h := newAH5HandlerWithRegisterAuth(fakeAuth.URL)
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/system-discovery/register",
+		strings.NewReader(`{"name":"SensorB","address":"localhost","port":8099}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("mismatched identity: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterSystemMissingBearerWithAuthURLReturns401(t *testing.T) {
+	fakeAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "SensorA", "verified": true}) //nolint:errcheck
+	}))
+	defer fakeAuth.Close()
+
+	h := newAH5HandlerWithRegisterAuth(fakeAuth.URL)
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/system-discovery/register",
+		strings.NewReader(`{"name":"SensorA","address":"localhost","port":8099}`))
+	req.Header.Set("Content-Type", "application/json")
+	// No Authorization header
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("missing bearer: want 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterSystemAuthUnreachableReturns401(t *testing.T) {
+	h := newAH5HandlerWithRegisterAuth("http://localhost:1") // non-listening port
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/system-discovery/register",
+		strings.NewReader(`{"name":"SensorA","address":"localhost","port":8099}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer some-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("auth unreachable: want 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterSystemNoAuthURLIsOpen(t *testing.T) {
+	h := newAH5Handler() // registerAuthURL = ""
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/system-discovery/register",
+		strings.NewReader(`{"name":"SensorA","address":"localhost","port":8099}`))
+	req.Header.Set("Content-Type", "application/json")
+	// No Authorization header — open mode
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Errorf("open mode: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterServiceMatchingTokenIdentitySucceeds(t *testing.T) {
+	fakeAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "SensorA", "verified": true}) //nolint:errcheck
+	}))
+	defer fakeAuth.Close()
+
+	h := newAH5HandlerWithRegisterAuth(fakeAuth.URL)
+	body := map[string]any{
+		"systemName":            "SensorA",
+		"serviceDefinitionName": "temperature",
+		"serviceUri":            "/temp",
+		"interfaces":            []string{"HTTP-INSECURE-JSON"},
+	}
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/service-discovery/register", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Errorf("service register matching identity: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterServiceMismatchedIdentityReturns403(t *testing.T) {
+	fakeAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"systemName": "SensorA", "verified": true}) //nolint:errcheck
+	}))
+	defer fakeAuth.Close()
+
+	h := newAH5HandlerWithRegisterAuth(fakeAuth.URL)
+	body := map[string]any{
+		"systemName":            "SensorB", // mismatch
+		"serviceDefinitionName": "temperature",
+		"serviceUri":            "/temp",
+		"interfaces":            []string{"HTTP-INSECURE-JSON"},
+	}
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/service-discovery/register", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("service register mismatch: want 403, got %d: %s", w.Code, w.Body.String())
 	}
 }

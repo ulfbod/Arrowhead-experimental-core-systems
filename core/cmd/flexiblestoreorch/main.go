@@ -34,11 +34,12 @@ func main() {
 		repo = fsrepo.NewMemoryRepository()
 	}
 	orch := fssvc.NewFlexibleStoreOrchestrator(repo)
-	sysHandler := fsapi.NewHandler(orch)
+	sysHandler := fsapi.NewHandler(orch, os.Getenv("MGMT_AUTH_URL"))
 
 	mgmtHandler := generalmgmt.NewHandler(buf, "serviceorchestration/orchestration", map[string]string{
-		"PORT":    port,
-		"DB_PATH": os.Getenv("DB_PATH"),
+		"PORT":         port,
+		"DB_PATH":      os.Getenv("DB_PATH"),
+		"MGMT_AUTH_URL": os.Getenv("MGMT_AUTH_URL"),
 	})
 
 	root := http.NewServeMux()

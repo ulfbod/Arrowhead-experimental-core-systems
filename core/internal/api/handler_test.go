@@ -8,13 +8,14 @@ import (
 	"testing"
 
 	"arrowhead/core/internal/api"
+	blclient "arrowhead/core/internal/blacklist/client"
 	"arrowhead/core/internal/model"
 	"arrowhead/core/internal/repository"
 	"arrowhead/core/internal/service"
 )
 
 func newTestHandler() http.Handler {
-	return api.NewHandler(service.NewRegistryService(repository.NewMemoryRepository()))
+	return api.NewHandler(service.NewRegistryService(repository.NewMemoryRepository()), blclient.NopClient{})
 }
 
 func postJSON(t *testing.T, h http.Handler, path string, body any) *httptest.ResponseRecorder {
@@ -551,5 +552,80 @@ func TestHandlerUnregisterWrongMethod(t *testing.T) {
 	newTestHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ─── Step 28 (G42): Blacklist integration — SR register ───────────────────────
+
+func TestRegisterBlacklistedSystem403(t *testing.T) {
+	// Fake blacklist that always returns true for "bad-provider".
+	fakeBlacklist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(true) //nolint:errcheck
+	}))
+	defer fakeBlacklist.Close()
+
+	h := api.NewHandler(
+		service.NewRegistryService(repository.NewMemoryRepository()),
+		blclient.NewHTTPClient(fakeBlacklist.URL, http.DefaultClient),
+	)
+	body, _ := json.Marshal(model.RegisterRequest{
+		ServiceDefinition: "svc",
+		ProviderSystem:    &model.System{SystemName: "bad-provider", Address: "10.0.0.1", Port: 9000},
+		ServiceUri:        "/svc",
+		Interfaces:        []string{"HTTP-SECURE-JSON"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("blacklisted provider: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterNonBlacklistedSystemSucceeds(t *testing.T) {
+	// Fake blacklist that always returns false.
+	fakeBlacklist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(false) //nolint:errcheck
+	}))
+	defer fakeBlacklist.Close()
+
+	h := api.NewHandler(
+		service.NewRegistryService(repository.NewMemoryRepository()),
+		blclient.NewHTTPClient(fakeBlacklist.URL, http.DefaultClient),
+	)
+	body, _ := json.Marshal(model.RegisterRequest{
+		ServiceDefinition: "svc",
+		ProviderSystem:    &model.System{SystemName: "good-provider", Address: "10.0.0.1", Port: 9000},
+		ServiceUri:        "/svc",
+		Interfaces:        []string{"HTTP-SECURE-JSON"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Errorf("non-blacklisted: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterBlacklistUnreachableIsFailClosed(t *testing.T) {
+	// Unreachable blacklist → fail-closed → 403.
+	h := api.NewHandler(
+		service.NewRegistryService(repository.NewMemoryRepository()),
+		blclient.NewHTTPClient("http://localhost:1", http.DefaultClient),
+	)
+	body, _ := json.Marshal(model.RegisterRequest{
+		ServiceDefinition: "svc",
+		ProviderSystem:    &model.System{SystemName: "some-provider", Address: "10.0.0.1", Port: 9000},
+		ServiceUri:        "/svc",
+		Interfaces:        []string{"HTTP-SECURE-JSON"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/serviceregistry/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("unreachable blacklist fail-closed: want 403, got %d", w.Code)
 	}
 }

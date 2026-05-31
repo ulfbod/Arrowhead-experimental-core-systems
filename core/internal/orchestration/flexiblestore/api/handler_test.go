@@ -17,7 +17,7 @@ import (
 
 func newTestHandler() http.Handler {
 	orch := service.NewFlexibleStoreOrchestrator(repository.NewMemoryRepository())
-	return api.NewHandler(orch)
+	return api.NewHandler(orch, "")
 }
 
 func postJSON(t *testing.T, h http.Handler, path string, body any) *httptest.ResponseRecorder {
@@ -266,5 +266,25 @@ func TestHandlerHealth(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("%s: expected 200, got %d", path, w.Code)
 		}
+	}
+}
+
+// ─── Step B: Tests for Step 24 ────────────────────────────────────────────────
+
+func TestOrchestrationResultForwardsInterfaces(t *testing.T) {
+	h := newTestHandler()
+	// Create a rule with interfaces
+	postJSON(t, h, "/serviceorchestration/orchestration/flexiblestore/rules", validRuleBody)
+	w := postJSON(t, h, "/serviceorchestration/orchestration/pull", validOrchestrateBody)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp orchmodel.OrchestrationResponse
+	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	if len(resp.Results[0].Interfaces) == 0 {
+		t.Errorf("Interfaces is empty, expected rule interfaces to be forwarded")
 	}
 }

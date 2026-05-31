@@ -9,14 +9,23 @@ import (
 
 	"arrowhead/core/internal/blacklist/model"
 	"arrowhead/core/internal/blacklist/service"
+	"arrowhead/core/internal/httputil"
 )
 
+const blOrigin = "blacklist"
+
 type Handler struct {
-	svc *service.BlacklistService
+	svc         *service.BlacklistService
+	authURL     string // optional: Authentication URL for discovery Bearer enforcement
+	mgmtAuthURL string // optional: Authentication URL for management access control
 }
 
-func NewHandler(svc *service.BlacklistService) http.Handler {
-	h := &Handler{svc: svc}
+// NewHandler creates a Blacklist HTTP handler.
+// authURL is the base URL of the Authentication system for discovery token enforcement (BLACKLIST_AUTH_URL).
+// mgmtAuthURL is the Authentication URL for management access control (MGMT_AUTH_URL).
+// Pass "" to disable the respective check.
+func NewHandler(svc *service.BlacklistService, authURL, mgmtAuthURL string) http.Handler {
+	h := &Handler{svc: svc, authURL: authURL, mgmtAuthURL: mgmtAuthURL}
 	mux := http.NewServeMux()
 
 	// Discovery
@@ -35,41 +44,83 @@ func NewHandler(svc *service.BlacklistService) http.Handler {
 	return mux
 }
 
+// requireBearer checks for a Bearer token when authURL is configured.
+// Returns false (and writes 401) if token is missing.
+func (h *Handler) requireBearer(w http.ResponseWriter, r *http.Request) bool {
+	if h.authURL == "" {
+		return true
+	}
+	token := httputil.ExtractBearer(r)
+	if token == "" {
+		httputil.WriteError(w, http.StatusUnauthorized, "Authorization: Bearer token required", blOrigin)
+		return false
+	}
+	return true
+}
+
 // GET /blacklist/lookup
 // Returns all active, non-expired entries applicable to the calling system.
-// (Simplified: returns all active entries since auth is not enforced.)
 func (h *Handler) handleLookup(w http.ResponseWriter, r *http.Request) {
+	if !h.requireBearer(w, r) {
+		return
+	}
 	entries := activeEntries(h.svc.Query(nil))
-	writeJSON(w, http.StatusOK, entriesResponse(entries))
+	httputil.WriteJSON(w, http.StatusOK, entriesResponse(entries), blOrigin)
 }
 
 // GET /blacklist/check/{systemName}
 func (h *Handler) handleCheck(w http.ResponseWriter, r *http.Request) {
+	if !h.requireBearer(w, r) {
+		return
+	}
 	systemName := r.PathValue("systemName")
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(h.svc.IsBlacklisted(systemName))
+	json.NewEncoder(w).Encode(h.svc.IsBlacklisted(systemName)) //nolint:errcheck
 }
 
 // POST /blacklist/mgmt/query
 func (h *Handler) handleMgmtQuery(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, blOrigin) {
+		return
+	}
 	var body struct {
 		SystemNames []string `json:"systemNames"`
 		Active      *bool    `json:"active"`
+		Mode        string   `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err.Error() != "EOF" {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", blOrigin)
 		return
+	}
+	// Handle mode parameter (ACTIVES, INACTIVES, ALL)
+	if body.Mode != "" {
+		switch body.Mode {
+		case "ACTIVES":
+			t := true
+			body.Active = &t
+		case "INACTIVES":
+			f := false
+			body.Active = &f
+		case "ALL":
+			// leave Active nil
+		default:
+			httputil.WriteError(w, http.StatusBadRequest, "invalid mode: must be ACTIVES, INACTIVES, or ALL", blOrigin)
+			return
+		}
 	}
 	var filter *service.QueryFilter
 	if body.SystemNames != nil || body.Active != nil {
 		filter = &service.QueryFilter{SystemNames: body.SystemNames, Active: body.Active}
 	}
 	entries := h.svc.Query(filter)
-	writeJSON(w, http.StatusOK, entriesResponse(entries))
+	httputil.WriteJSON(w, http.StatusOK, entriesResponse(entries), blOrigin)
 }
 
 // POST /blacklist/mgmt/create
 func (h *Handler) handleMgmtCreate(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, blOrigin) {
+		return
+	}
 	var body struct {
 		Entries []struct {
 			SystemName string `json:"systemName"`
@@ -79,13 +130,13 @@ func (h *Handler) handleMgmtCreate(w http.ResponseWriter, r *http.Request) {
 		} `json:"entries"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", blOrigin)
 		return
 	}
 	// Validate all entries before creating any.
 	for _, e := range body.Entries {
 		if strings.TrimSpace(e.Reason) == "" {
-			writeError(w, http.StatusBadRequest, "reason is required for all entries")
+			httputil.WriteError(w, http.StatusBadRequest, "reason is required for all entries", blOrigin)
 			return
 		}
 	}
@@ -95,7 +146,7 @@ func (h *Handler) handleMgmtCreate(w http.ResponseWriter, r *http.Request) {
 		if e.ExpiresAt != "" {
 			t, err := time.Parse(time.RFC3339, e.ExpiresAt)
 			if err != nil {
-				writeError(w, http.StatusBadRequest, "invalid expiresAt format; use RFC3339")
+				httputil.WriteError(w, http.StatusBadRequest, "invalid expiresAt format; use RFC3339", blOrigin)
 				return
 			}
 			expiresAt = t
@@ -103,11 +154,14 @@ func (h *Handler) handleMgmtCreate(w http.ResponseWriter, r *http.Request) {
 		entry := h.svc.Add(e.SystemName, e.Reason, expiresAt, e.CreatedBy)
 		created = append(created, entry)
 	}
-	writeJSON(w, http.StatusCreated, entriesResponse(created))
+	httputil.WriteJSON(w, http.StatusCreated, entriesResponse(created), blOrigin)
 }
 
 // DELETE /blacklist/mgmt/remove?names=name1,name2
 func (h *Handler) handleMgmtRemove(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, blOrigin) {
+		return
+	}
 	namesParam := r.URL.Query().Get("names")
 	count := 0
 	for _, name := range strings.Split(namesParam, ",") {
@@ -116,12 +170,12 @@ func (h *Handler) handleMgmtRemove(w http.ResponseWriter, r *http.Request) {
 			count++
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"count": count})
+	httputil.WriteJSON(w, http.StatusOK, map[string]int{"count": count}, blOrigin)
 }
 
 // GET /health, GET /blacklist/health
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "blacklist"})
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "system": "blacklist"}, blOrigin)
 }
 
 // ---- helpers ----
@@ -173,23 +227,4 @@ func activeEntries(entries []model.Entry) []model.Entry {
 		out = append(out, e)
 	}
 	return out
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	exType := "INVALID_PARAMETER"
-	if status == http.StatusNotFound {
-		exType = "NOT_FOUND"
-	}
-	writeJSON(w, status, map[string]any{
-		"errorMessage":  msg,
-		"errorCode":     status,
-		"exceptionType": exType,
-		"origin":        "blacklist",
-	})
 }

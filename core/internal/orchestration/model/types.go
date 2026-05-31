@@ -32,22 +32,29 @@ type OrchestrationFlags struct {
 	OnlyIntercloud   bool `json:"ONLY_INTERCLOUD"`   // stub
 }
 
+// QoSRequirement specifies a maximum acceptable latency for a provider.
+type QoSRequirement struct {
+	MaxLatencyMs int64 `json:"maxLatencyMs"`
+}
+
 // OrchestrationRequest is the pull request from a consumer to any orchestration system.
 // The JSON field for RequestedService is "serviceRequirement" (AH5 spec); for backward
 // compatibility "requestedService" is also accepted on decode.
 type OrchestrationRequest struct {
-	RequesterSystem    System             `json:"requesterSystem"`
-	RequestedService   ServiceRequirement `json:"-"`
-	OrchestrationFlags OrchestrationFlags `json:"orchestrationFlags,omitempty"`
-	PreferredProviders []System           `json:"preferredProviders,omitempty"`
+	RequesterSystem     System             `json:"requesterSystem"`
+	RequestedService    ServiceRequirement `json:"-"`
+	OrchestrationFlags  OrchestrationFlags `json:"orchestrationFlags,omitempty"`
+	PreferredProviders  []System           `json:"preferredProviders,omitempty"`
+	QualityRequirements []QoSRequirement   `json:"qualityRequirements,omitempty"`
 }
 
 type orchestrationRequestWire struct {
-	RequesterSystem    System              `json:"requesterSystem"`
-	ServiceRequirement *ServiceRequirement `json:"serviceRequirement"`
-	RequestedService   *ServiceRequirement `json:"requestedService"`
-	OrchestrationFlags OrchestrationFlags  `json:"orchestrationFlags"`
-	PreferredProviders []System            `json:"preferredProviders"`
+	RequesterSystem     System              `json:"requesterSystem"`
+	ServiceRequirement  *ServiceRequirement `json:"serviceRequirement"`
+	RequestedService    *ServiceRequirement `json:"requestedService"`
+	OrchestrationFlags  OrchestrationFlags  `json:"orchestrationFlags"`
+	PreferredProviders  []System            `json:"preferredProviders"`
+	QualityRequirements []QoSRequirement    `json:"qualityRequirements"`
 }
 
 // UnmarshalJSON accepts both "serviceRequirement" (AH5 spec) and "requestedService"
@@ -60,6 +67,7 @@ func (r *OrchestrationRequest) UnmarshalJSON(data []byte) error {
 	r.RequesterSystem = wire.RequesterSystem
 	r.OrchestrationFlags = wire.OrchestrationFlags
 	r.PreferredProviders = wire.PreferredProviders
+	r.QualityRequirements = wire.QualityRequirements
 	if wire.ServiceRequirement != nil {
 		r.RequestedService = *wire.ServiceRequirement
 	} else if wire.RequestedService != nil {
@@ -71,16 +79,18 @@ func (r *OrchestrationRequest) UnmarshalJSON(data []byte) error {
 // MarshalJSON encodes RequestedService as "serviceRequirement" (AH5 spec canonical name).
 func (r OrchestrationRequest) MarshalJSON() ([]byte, error) {
 	type alias struct {
-		RequesterSystem    System             `json:"requesterSystem"`
-		ServiceRequirement ServiceRequirement `json:"serviceRequirement"`
-		OrchestrationFlags OrchestrationFlags `json:"orchestrationFlags,omitempty"`
-		PreferredProviders []System           `json:"preferredProviders,omitempty"`
+		RequesterSystem     System             `json:"requesterSystem"`
+		ServiceRequirement  ServiceRequirement `json:"serviceRequirement"`
+		OrchestrationFlags  OrchestrationFlags `json:"orchestrationFlags,omitempty"`
+		PreferredProviders  []System           `json:"preferredProviders,omitempty"`
+		QualityRequirements []QoSRequirement   `json:"qualityRequirements,omitempty"`
 	}
 	return json.Marshal(alias{
-		RequesterSystem:    r.RequesterSystem,
-		ServiceRequirement: r.RequestedService,
-		OrchestrationFlags: r.OrchestrationFlags,
-		PreferredProviders: r.PreferredProviders,
+		RequesterSystem:     r.RequesterSystem,
+		ServiceRequirement:  r.RequestedService,
+		OrchestrationFlags:  r.OrchestrationFlags,
+		PreferredProviders:  r.PreferredProviders,
+		QualityRequirements: r.QualityRequirements,
 	})
 }
 
@@ -91,6 +101,10 @@ func (r OrchestrationRequest) MarshalJSON() ([]byte, error) {
 type OrchestrationResult struct {
 	// ProviderName is the system name of the matched provider.
 	ProviderName string `json:"providerName"`
+	// ProviderAddress and ProviderPort carry the provider's network coordinates.
+	// Used by QoS filtering (G40); not emitted in the AH5 wire response.
+	ProviderAddress string `json:"-"`
+	ProviderPort    int    `json:"-"`
 	// ServiceDefinitition — spec typo (double 't') is intentional, must match AH5 wire format.
 	ServiceDefinition string `json:"serviceDefinitition"`
 	// CloudIdentitifer — spec typo (missing 'n') is intentional, must match AH5 wire format.
@@ -103,6 +117,8 @@ type OrchestrationResult struct {
 	AliveUntil        string            `json:"aliveUntil,omitempty"`
 	// Priority is set by store-based orchestrators; 0 = not applicable.
 	Priority int `json:"priority,omitempty"`
+	// ExclusiveUntil is set when the provider has an active lock; RFC3339 timestamp.
+	ExclusiveUntil string `json:"exclusiveUntil,omitempty"`
 }
 
 // OrchestrationResponse wraps the list of results.

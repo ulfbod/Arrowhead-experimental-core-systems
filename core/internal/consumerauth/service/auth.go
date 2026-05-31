@@ -3,9 +3,14 @@
 package service
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -25,14 +30,16 @@ var (
 )
 
 type authTokenRecord struct {
-	Token      string
-	TokenType  string
-	Provider   string
-	TargetType string
-	Target     string
-	Scope      string
-	Consumer   string
-	ExpiresAt  time.Time
+	Token         string
+	TokenType     string
+	Provider      string
+	TargetType    string
+	Target        string
+	Scope         string
+	Consumer      string
+	ExpiresAt     time.Time
+	MaxUsageCount int
+	UsageCount    int
 }
 
 type encryptionKeyRecord struct {
@@ -207,45 +214,168 @@ func containsStr(slice []string, s string) bool {
 	return false
 }
 
-// GenerateAuthToken issues an authorization token. Only TIME_LIMITED_TOKEN is supported.
+// hmacSecret returns the HMAC secret from the environment with a default fallback.
+func hmacSecret() string {
+	if s := os.Getenv("HMAC_SECRET"); s != "" {
+		return s
+	}
+	return "arrowhead-default-secret"
+}
+
+// GenerateAuthToken issues an authorization token.
+// Supports TIME_LIMITED_TOKEN, USAGE_LIMITED_TOKEN, and BASE64_SELF_CONTAINED.
+// JWT variants return ErrUnsupportedVariant (501).
 func (s *AuthService) GenerateAuthToken(req model.TokenGenerateRequest) (model.TokenDescriptor, error) {
-	if req.TokenVariant != model.TokenVariantTimeLimited {
+	switch req.TokenVariant {
+	case model.TokenVariantTimeLimited:
+		token := generateToken()
+		expiresAt := time.Now().UTC().Add(time.Hour)
+		s.mu.Lock()
+		s.authTokens[token] = &authTokenRecord{
+			Token:      token,
+			TokenType:  req.TokenVariant,
+			Provider:   req.Provider,
+			TargetType: req.TargetType,
+			Target:     req.Target,
+			Scope:      req.Scope,
+			Consumer:   req.Consumer,
+			ExpiresAt:  expiresAt,
+		}
+		s.mu.Unlock()
+		return model.TokenDescriptor{
+			TokenType:  req.TokenVariant,
+			TargetType: req.TargetType,
+			Token:      token,
+			ExpiresAt:  expiresAt.Format(time.RFC3339),
+		}, nil
+
+	case model.TokenVariantUsageLimited:
+		token := generateToken()
+		expiresAt := time.Now().UTC().Add(time.Hour)
+		maxUsage := req.MaxUsageCount
+		if maxUsage <= 0 {
+			maxUsage = 1
+		}
+		s.mu.Lock()
+		s.authTokens[token] = &authTokenRecord{
+			Token:         token,
+			TokenType:     req.TokenVariant,
+			Provider:      req.Provider,
+			TargetType:    req.TargetType,
+			Target:        req.Target,
+			Scope:         req.Scope,
+			Consumer:      req.Consumer,
+			ExpiresAt:     expiresAt,
+			MaxUsageCount: maxUsage,
+			UsageCount:    0,
+		}
+		s.mu.Unlock()
+		return model.TokenDescriptor{
+			TokenType:  req.TokenVariant,
+			TargetType: req.TargetType,
+			Token:      token,
+			ExpiresAt:  expiresAt.Format(time.RFC3339),
+		}, nil
+
+	case model.TokenVariantBase64SelfContained:
+		expiresAt := time.Now().UTC().Add(time.Hour)
+		payload := map[string]any{
+			"provider":   req.Provider,
+			"target":     req.Target,
+			"targetType": req.TargetType,
+			"consumer":   req.Consumer,
+			"scope":      req.Scope,
+			"exp":        expiresAt.Unix(),
+		}
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			return model.TokenDescriptor{}, err
+		}
+		b64Payload := base64.StdEncoding.EncodeToString(payloadBytes)
+		mac := hmac.New(sha256.New, []byte(hmacSecret()))
+		mac.Write([]byte(b64Payload)) //nolint:errcheck
+		sig := hex.EncodeToString(mac.Sum(nil))
+		token := b64Payload + "." + sig
+		return model.TokenDescriptor{
+			TokenType:  req.TokenVariant,
+			TargetType: req.TargetType,
+			Token:      token,
+			ExpiresAt:  expiresAt.Format(time.RFC3339),
+		}, nil
+
+	default:
 		return model.TokenDescriptor{}, ErrUnsupportedVariant
 	}
-	token := generateToken()
-	expiresAt := time.Now().UTC().Add(time.Hour)
-	s.mu.Lock()
-	s.authTokens[token] = &authTokenRecord{
-		Token:      token,
-		TokenType:  req.TokenVariant,
-		Provider:   req.Provider,
-		TargetType: req.TargetType,
-		Target:     req.Target,
-		Scope:      req.Scope,
-		Consumer:   req.Consumer,
-		ExpiresAt:  expiresAt,
-	}
-	s.mu.Unlock()
-	return model.TokenDescriptor{
-		TokenType:  req.TokenVariant,
-		TargetType: req.TargetType,
-		Token:      token,
-		ExpiresAt:  expiresAt.Format(time.RFC3339),
-	}, nil
 }
 
 // VerifyAuthToken checks if the token is valid and not expired.
+// Supports TIME_LIMITED_TOKEN (map lookup), USAGE_LIMITED_TOKEN (counter check),
+// and BASE64_SELF_CONTAINED (HMAC verify, no map lookup needed).
 func (s *AuthService) VerifyAuthToken(accessToken string) (model.TokenVerifyResponse, bool) {
+	// Detect BASE64_SELF_CONTAINED tokens: they contain exactly one "." separating
+	// the base64 payload from the HMAC signature.
+	if parts := strings.SplitN(accessToken, ".", 2); len(parts) == 2 {
+		b64Payload := parts[0]
+		sig := parts[1]
+		// Verify HMAC
+		mac := hmac.New(sha256.New, []byte(hmacSecret()))
+		mac.Write([]byte(b64Payload)) //nolint:errcheck
+		expectedSig := hex.EncodeToString(mac.Sum(nil))
+		if !hmac.Equal([]byte(sig), []byte(expectedSig)) {
+			return model.TokenVerifyResponse{}, false
+		}
+		payloadBytes, err := base64.StdEncoding.DecodeString(b64Payload)
+		if err != nil {
+			return model.TokenVerifyResponse{}, false
+		}
+		var payload struct {
+			Provider   string `json:"provider"`
+			Target     string `json:"target"`
+			TargetType string `json:"targetType"`
+			Consumer   string `json:"consumer"`
+			Scope      string `json:"scope"`
+			Exp        int64  `json:"exp"`
+		}
+		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+			return model.TokenVerifyResponse{}, false
+		}
+		if time.Now().Unix() > payload.Exp {
+			return model.TokenVerifyResponse{}, false
+		}
+		var scope any = nil
+		if payload.Scope != "" {
+			scope = payload.Scope
+		}
+		return model.TokenVerifyResponse{
+			Verified:      true,
+			ConsumerCloud: "LOCAL",
+			Consumer:      payload.Consumer,
+			TargetType:    payload.TargetType,
+			Target:        payload.Target,
+			Scope:         scope,
+		}, true
+	}
+
 	s.mu.Lock()
 	rec, ok := s.authTokens[accessToken]
 	if ok && time.Now().After(rec.ExpiresAt) {
 		delete(s.authTokens, accessToken)
 		ok = false
 	}
-	s.mu.Unlock()
 	if !ok {
+		s.mu.Unlock()
 		return model.TokenVerifyResponse{}, false
 	}
+	// Handle USAGE_LIMITED_TOKEN
+	if rec.TokenType == model.TokenVariantUsageLimited {
+		rec.UsageCount++
+		if rec.UsageCount > rec.MaxUsageCount {
+			delete(s.authTokens, accessToken)
+			s.mu.Unlock()
+			return model.TokenVerifyResponse{}, false
+		}
+	}
+	s.mu.Unlock()
 	var scope any = nil
 	if rec.Scope != "" {
 		scope = rec.Scope
@@ -258,6 +388,82 @@ func (s *AuthService) VerifyAuthToken(accessToken string) (model.TokenVerifyResp
 		Target:        rec.Target,
 		Scope:         scope,
 	}, true
+}
+
+// BulkGrant creates multiple authorization policies; per-item errors don't abort.
+func (s *AuthService) BulkGrant(reqs []model.GrantRequest) []model.BulkGrantResult {
+	results := make([]model.BulkGrantResult, len(reqs))
+	for i, req := range reqs {
+		policy, err := s.Grant(req)
+		if err != nil {
+			results[i] = model.BulkGrantResult{Error: err.Error()}
+		} else {
+			results[i] = model.BulkGrantResult{InstanceID: policy.InstanceID, Policy: policy}
+		}
+	}
+	return results
+}
+
+// BulkGenerateTokens generates multiple auth tokens; per-item errors don't abort.
+func (s *AuthService) BulkGenerateTokens(reqs []model.TokenGenerateRequest) []model.BulkGenerateResult {
+	results := make([]model.BulkGenerateResult, len(reqs))
+	for i, req := range reqs {
+		desc, err := s.GenerateAuthToken(req)
+		if err != nil {
+			results[i] = model.BulkGenerateResult{Error: err.Error()}
+		} else {
+			results[i] = model.BulkGenerateResult{Token: desc}
+		}
+	}
+	return results
+}
+
+// RevokeTokens removes multiple auth tokens by token string, ignoring missing ones.
+func (s *AuthService) RevokeTokens(tokens []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range tokens {
+		delete(s.authTokens, t)
+	}
+}
+
+// ListTokens returns all unexpired auth tokens as TokenRecords.
+func (s *AuthService) ListTokens() []model.TokenRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	var out []model.TokenRecord
+	for token, rec := range s.authTokens {
+		if now.After(rec.ExpiresAt) {
+			delete(s.authTokens, token)
+			continue
+		}
+		out = append(out, model.TokenRecord{
+			Token:      rec.Token,
+			TokenType:  rec.TokenType,
+			Provider:   rec.Provider,
+			TargetType: rec.TargetType,
+			Target:     rec.Target,
+			Consumer:   rec.Consumer,
+			Scope:      rec.Scope,
+			ExpiresAt:  rec.ExpiresAt.Format(time.RFC3339),
+		})
+	}
+	return out
+}
+
+// BulkAddEncryptionKeys stores multiple encryption keys.
+func (s *AuthService) BulkAddEncryptionKeys(keys []model.EncryptionKeyRequest) {
+	for _, k := range keys {
+		s.RegisterEncryptionKey(k)
+	}
+}
+
+// BulkRemoveEncryptionKeys removes encryption keys for the given system names.
+func (s *AuthService) BulkRemoveEncryptionKeys(systemNames []string) {
+	for _, name := range systemNames {
+		s.RemoveEncryptionKey(name)
+	}
 }
 
 // RegisterEncryptionKey stores an encryption key for a system.

@@ -52,12 +52,13 @@ func main() {
 		identityRepo = repository.NewMemoryIdentityRepository()
 	}
 	svc := service.NewAuthServiceFull(tokenRepo, identityRepo, tokenDuration)
-	sysHandler := api.NewHandler(svc)
+	sysHandler := api.NewHandler(svc, os.Getenv("MGMT_AUTH_URL"))
 
 	mgmtHandler := generalmgmt.NewHandler(buf, "authentication", map[string]string{
-		"PORT":    port,
-		"DB_PATH": os.Getenv("DB_PATH"),
-		"TLS_PORT": os.Getenv("TLS_PORT"),
+		"PORT":         port,
+		"DB_PATH":      os.Getenv("DB_PATH"),
+		"TLS_PORT":     os.Getenv("TLS_PORT"),
+		"MGMT_AUTH_URL": os.Getenv("MGMT_AUTH_URL"),
 	})
 
 	root := http.NewServeMux()

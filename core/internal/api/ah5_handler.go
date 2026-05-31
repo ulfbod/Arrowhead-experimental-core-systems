@@ -18,9 +18,12 @@ import (
 	"net/http"
 	"strings"
 
+	"arrowhead/core/internal/httputil"
 	"arrowhead/core/internal/model"
 	"arrowhead/core/internal/service"
 )
+
+const srOrigin = "serviceregistry"
 
 // pageReqOrZero returns the dereferenced PageRequest, or a zero value if p is nil.
 func pageReqOrZero(p *model.PageRequest) model.PageRequest {
@@ -32,13 +35,21 @@ func pageReqOrZero(p *model.PageRequest) model.PageRequest {
 
 // AH5Handler wires HTTP routes to AH5RegistryService.
 type AH5Handler struct {
-	svc *service.AH5RegistryService
+	svc             *service.AH5RegistryService
+	authURL         string // optional: Authentication URL for token-based system revoke
+	mgmtAuthURL     string // optional: Authentication URL for management endpoint access control
+	registerAuthURL string // optional: Authentication URL for registration identity enforcement (G10)
 }
 
 // NewAH5Handler returns an http.Handler that handles all AH5 discovery and
-// management routes.
-func NewAH5Handler(svc *service.AH5RegistryService) http.Handler {
-	h := &AH5Handler{svc: svc}
+// management routes. authURL is the base URL of the Authentication system
+// (e.g. "http://localhost:8081"). Pass "" to disable token-based revoke.
+// mgmtAuthURL is the Authentication URL for mgmt access control (MGMT_AUTH_URL env var);
+// pass "" for open management access (development mode).
+// registerAuthURL is the Authentication URL for registration identity enforcement (REGISTER_AUTH_URL env var);
+// pass "" for open registration (development/PoC mode).
+func NewAH5Handler(svc *service.AH5RegistryService, authURL, mgmtAuthURL, registerAuthURL string) http.Handler {
+	h := &AH5Handler{svc: svc, authURL: authURL, mgmtAuthURL: mgmtAuthURL, registerAuthURL: registerAuthURL}
 	mux := http.NewServeMux()
 
 	// Device discovery
@@ -63,6 +74,7 @@ func NewAH5Handler(svc *service.AH5RegistryService) http.Handler {
 	// Management — systems
 	mux.HandleFunc("/serviceregistry/mgmt/systems/query", h.handleMgmtSystemsQuery)
 	mux.HandleFunc("/serviceregistry/mgmt/systems", h.handleMgmtSystems)
+	mux.HandleFunc("/serviceregistry/mgmt/systems/revoke", h.handleMgmtSystemsRevoke)
 
 	// Management — service definitions
 	mux.HandleFunc("/serviceregistry/mgmt/service-definitions/query", h.handleMgmtServiceDefsQuery)
@@ -79,39 +91,47 @@ func NewAH5Handler(svc *service.AH5RegistryService) http.Handler {
 	return mux
 }
 
+// statusFor maps sentinel errors to HTTP status codes for this handler.
+func (h *AH5Handler) statusFor(err error) int {
+	if errors.Is(err, service.ErrLocked) {
+		return http.StatusLocked
+	}
+	return http.StatusBadRequest
+}
+
 // ─── Device Discovery ─────────────────────────────────────────────────────────
 
 // POST /serviceregistry/device-discovery/register
 func (h *AH5Handler) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", srOrigin)
 		return
 	}
 	var req model.DeviceRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 		return
 	}
 	if msg := validateDeviceName(req.Name); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
+		httputil.WriteError(w, http.StatusBadRequest, msg, srOrigin)
 		return
 	}
 	dev, created, err := h.svc.RegisterDevice(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
 		return
 	}
 	if created {
-		writeJSON(w, http.StatusCreated, dev)
+		httputil.WriteJSON(w, http.StatusCreated, dev, srOrigin)
 	} else {
-		writeJSON(w, http.StatusOK, dev)
+		httputil.WriteJSON(w, http.StatusOK, dev, srOrigin)
 	}
 }
 
 // POST /serviceregistry/device-discovery/lookup
 func (h *AH5Handler) handleDeviceLookup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", srOrigin)
 		return
 	}
 	var raw struct {
@@ -119,28 +139,28 @@ func (h *AH5Handler) handleDeviceLookup(w http.ResponseWriter, r *http.Request) 
 		Pagination *model.PageRequest `json:"pagination"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 		return
 	}
 	full := h.svc.LookupDevices(raw.DeviceLookupRequest)
 	page, total := model.Paginate(full.Entries, pageReqOrZero(raw.Pagination), func(d *model.Device) string { return d.Name })
-	writeJSON(w, http.StatusOK, model.DeviceLookupResponse{Entries: page, Count: len(page), TotalCount: total})
+	httputil.WriteJSON(w, http.StatusOK, model.DeviceLookupResponse{Entries: page, Count: len(page), TotalCount: total}, srOrigin)
 }
 
 // DELETE /serviceregistry/device-discovery/revoke/{name}
 func (h *AH5Handler) handleDeviceRevoke(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "DELETE required", srOrigin)
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/serviceregistry/device-discovery/revoke/")
 	if name == "" {
-		writeError(w, http.StatusBadRequest, "device name required in path")
+		httputil.WriteError(w, http.StatusBadRequest, "device name required in path", srOrigin)
 		return
 	}
 	ok, err := h.svc.RevokeDevice(name)
 	if errors.Is(err, service.ErrLocked) {
-		writeError(w, http.StatusLocked, err.Error())
+		httputil.WriteError(w, http.StatusLocked, err.Error(), srOrigin)
 		return
 	}
 	if ok {
@@ -155,34 +175,38 @@ func (h *AH5Handler) handleDeviceRevoke(w http.ResponseWriter, r *http.Request) 
 // POST /serviceregistry/system-discovery/register
 func (h *AH5Handler) handleSystemRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", srOrigin)
 		return
 	}
 	var req model.SystemRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
+		return
+	}
+	if ok, status := httputil.VerifyTokenIdentity(r, h.registerAuthURL, req.Name); !ok {
+		httputil.WriteError(w, status, "registration identity check failed", srOrigin)
 		return
 	}
 	if msg := validateSystemName(req.Name); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
+		httputil.WriteError(w, http.StatusBadRequest, msg, srOrigin)
 		return
 	}
 	sys, created, err := h.svc.RegisterSystem(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
 		return
 	}
 	if created {
-		writeJSON(w, http.StatusCreated, sys)
+		httputil.WriteJSON(w, http.StatusCreated, sys, srOrigin)
 	} else {
-		writeJSON(w, http.StatusOK, sys)
+		httputil.WriteJSON(w, http.StatusOK, sys, srOrigin)
 	}
 }
 
 // POST /serviceregistry/system-discovery/lookup
 func (h *AH5Handler) handleSystemLookup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", srOrigin)
 		return
 	}
 	var raw struct {
@@ -190,12 +214,12 @@ func (h *AH5Handler) handleSystemLookup(w http.ResponseWriter, r *http.Request) 
 		Pagination *model.PageRequest `json:"pagination"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 		return
 	}
 	full := h.svc.LookupSystems(raw.SystemLookupRequest)
 	page, total := model.Paginate(full.Entries, pageReqOrZero(raw.Pagination), func(s *model.AH5System) string { return s.Name })
-	writeJSON(w, http.StatusOK, model.SystemLookupResponse{Entries: page, Count: len(page), TotalCount: total})
+	httputil.WriteJSON(w, http.StatusOK, model.SystemLookupResponse{Entries: page, Count: len(page), TotalCount: total}, srOrigin)
 }
 
 // DELETE /serviceregistry/system-discovery/revoke?name={name}
@@ -204,12 +228,12 @@ func (h *AH5Handler) handleSystemLookup(w http.ResponseWriter, r *http.Request) 
 // implementation uses a ?name= query parameter.
 func (h *AH5Handler) handleSystemRevoke(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "DELETE required", srOrigin)
 		return
 	}
 	name := r.URL.Query().Get("name")
 	if name == "" {
-		writeError(w, http.StatusBadRequest, "name query parameter required")
+		httputil.WriteError(w, http.StatusBadRequest, "name query parameter required", srOrigin)
 		return
 	}
 	if h.svc.RevokeSystem(name) {
@@ -224,35 +248,39 @@ func (h *AH5Handler) handleSystemRevoke(w http.ResponseWriter, r *http.Request) 
 // POST /serviceregistry/service-discovery/register
 func (h *AH5Handler) handleServiceRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", srOrigin)
 		return
 	}
 	var req model.ServiceRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
+		return
+	}
+	if ok, status := httputil.VerifyTokenIdentity(r, h.registerAuthURL, req.SystemName); !ok {
+		httputil.WriteError(w, status, "registration identity check failed", srOrigin)
 		return
 	}
 	if msg := validateSystemName(req.SystemName); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
+		httputil.WriteError(w, http.StatusBadRequest, msg, srOrigin)
 		return
 	}
 	if msg := validateServiceDefinitionName(req.ServiceDefinitionName); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
+		httputil.WriteError(w, http.StatusBadRequest, msg, srOrigin)
 		return
 	}
 	if msg := validateInterfaces(req.Interfaces); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
+		httputil.WriteError(w, http.StatusBadRequest, msg, srOrigin)
 		return
 	}
 	inst, created, err := h.svc.RegisterService(req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
 		return
 	}
 	if created {
-		writeJSON(w, http.StatusCreated, inst)
+		httputil.WriteJSON(w, http.StatusCreated, inst, srOrigin)
 	} else {
-		writeJSON(w, http.StatusOK, inst)
+		httputil.WriteJSON(w, http.StatusOK, inst, srOrigin)
 	}
 }
 
@@ -260,7 +288,7 @@ func (h *AH5Handler) handleServiceRegister(w http.ResponseWriter, r *http.Reques
 // Requires at least one of: instanceIds, providerNames, serviceDefinitionNames.
 func (h *AH5Handler) handleServiceLookup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", srOrigin)
 		return
 	}
 	var raw struct {
@@ -268,27 +296,27 @@ func (h *AH5Handler) handleServiceLookup(w http.ResponseWriter, r *http.Request)
 		Pagination *model.PageRequest `json:"pagination"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 		return
 	}
 	if !hasServiceLookupFilter(raw.ServiceLookupRequest) {
-		writeError(w, http.StatusBadRequest, "at least one of instanceIds, providerNames, serviceDefinitionNames must be provided")
+		httputil.WriteError(w, http.StatusBadRequest, "at least one of instanceIds, providerNames, serviceDefinitionNames must be provided", srOrigin)
 		return
 	}
 	full := h.svc.LookupServices(raw.ServiceLookupRequest)
 	page, total := model.Paginate(full.Entries, pageReqOrZero(raw.Pagination), func(si *model.AH5ServiceInstance) string { return si.InstanceID })
-	writeJSON(w, http.StatusOK, model.ServiceLookupResponse{Entries: page, Count: len(page), TotalCount: total})
+	httputil.WriteJSON(w, http.StatusOK, model.ServiceLookupResponse{Entries: page, Count: len(page), TotalCount: total}, srOrigin)
 }
 
 // DELETE /serviceregistry/service-discovery/revoke/{instanceId}
 func (h *AH5Handler) handleServiceRevoke(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "DELETE required", srOrigin)
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/serviceregistry/service-discovery/revoke/")
 	if id == "" {
-		writeError(w, http.StatusBadRequest, "instanceId required in path")
+		httputil.WriteError(w, http.StatusBadRequest, "instanceId required in path", srOrigin)
 		return
 	}
 	if h.svc.RevokeService(id) {
@@ -302,8 +330,11 @@ func (h *AH5Handler) handleServiceRevoke(w http.ResponseWriter, r *http.Request)
 
 // POST /serviceregistry/mgmt/devices/query
 func (h *AH5Handler) handleMgmtDevicesQuery(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
+		return
+	}
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", srOrigin)
 		return
 	}
 	var raw struct {
@@ -311,49 +342,52 @@ func (h *AH5Handler) handleMgmtDevicesQuery(w http.ResponseWriter, r *http.Reque
 		Pagination *model.PageRequest `json:"pagination"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 		return
 	}
 	full := h.svc.QueryDevices(raw.DeviceLookupRequest)
 	page, total := model.Paginate(full.Devices, pageReqOrZero(raw.Pagination), func(d *model.Device) string { return d.Name })
-	writeJSON(w, http.StatusOK, model.DeviceListResponse{Devices: page, Count: len(page), TotalCount: total})
+	httputil.WriteJSON(w, http.StatusOK, model.DeviceListResponse{Devices: page, Count: len(page), TotalCount: total}, srOrigin)
 }
 
 // POST /serviceregistry/mgmt/devices — create
 // PUT  /serviceregistry/mgmt/devices — update
 // DELETE /serviceregistry/mgmt/devices?names=... — remove
 func (h *AH5Handler) handleMgmtDevices(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 		var req model.DeviceListRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 			return
 		}
 		resp, err := h.svc.CreateDevices(req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
 			return
 		}
-		writeJSON(w, http.StatusCreated, resp)
+		httputil.WriteJSON(w, http.StatusCreated, resp, srOrigin)
 	case http.MethodPut:
 		var req model.DeviceListRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 			return
 		}
 		resp, err := h.svc.UpdateDevices(req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
 			return
 		}
-		writeJSON(w, http.StatusOK, resp)
+		httputil.WriteJSON(w, http.StatusOK, resp, srOrigin)
 	case http.MethodDelete:
 		names := r.URL.Query()["names"]
 		h.svc.RemoveDevices(names)
 		w.WriteHeader(http.StatusOK)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "POST, PUT, or DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST, PUT, or DELETE required", srOrigin)
 	}
 }
 
@@ -361,8 +395,11 @@ func (h *AH5Handler) handleMgmtDevices(w http.ResponseWriter, r *http.Request) {
 
 // POST /serviceregistry/mgmt/systems/query
 func (h *AH5Handler) handleMgmtSystemsQuery(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
+		return
+	}
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", srOrigin)
 		return
 	}
 	var raw struct {
@@ -370,94 +407,166 @@ func (h *AH5Handler) handleMgmtSystemsQuery(w http.ResponseWriter, r *http.Reque
 		Pagination *model.PageRequest `json:"pagination"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 		return
 	}
 	full := h.svc.QuerySystems(raw.SystemLookupRequest)
 	page, total := model.Paginate(full.Systems, pageReqOrZero(raw.Pagination), func(s *model.AH5System) string { return s.Name })
-	writeJSON(w, http.StatusOK, model.SystemListResponse{Systems: page, Count: len(page), TotalCount: total})
+	httputil.WriteJSON(w, http.StatusOK, model.SystemListResponse{Systems: page, Count: len(page), TotalCount: total}, srOrigin)
 }
 
 // POST /serviceregistry/mgmt/systems — create
 // PUT  /serviceregistry/mgmt/systems — update
 // DELETE /serviceregistry/mgmt/systems?names=... — remove
 func (h *AH5Handler) handleMgmtSystems(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 		var req model.SystemListRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 			return
 		}
 		resp, err := h.svc.CreateSystems(req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
 			return
 		}
-		writeJSON(w, http.StatusCreated, resp)
+		httputil.WriteJSON(w, http.StatusCreated, resp, srOrigin)
 	case http.MethodPut:
 		var req model.SystemListRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 			return
 		}
 		resp, err := h.svc.UpdateSystems(req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
 			return
 		}
-		writeJSON(w, http.StatusOK, resp)
+		httputil.WriteJSON(w, http.StatusOK, resp, srOrigin)
 	case http.MethodDelete:
 		names := r.URL.Query()["names"]
 		h.svc.RemoveSystems(names)
 		w.WriteHeader(http.StatusOK)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "POST, PUT, or DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST, PUT, or DELETE required", srOrigin)
 	}
+}
+
+// DELETE /serviceregistry/mgmt/systems/revoke
+// Revokes (removes) the system identified by the Bearer token from the Authentication system.
+// Falls back to ?name= parameter when authURL is not configured.
+func (h *AH5Handler) handleMgmtSystemsRevoke(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
+		return
+	}
+	if r.Method != http.MethodDelete {
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "DELETE required", srOrigin)
+		return
+	}
+
+	var systemName string
+	if h.authURL != "" {
+		// Token-based: resolve system name via Authentication system.
+		token := httputil.ExtractBearer(r)
+		if token == "" {
+			httputil.WriteError(w, http.StatusUnauthorized, "Authorization: Bearer token required", srOrigin)
+			return
+		}
+		name, err := h.resolveSystemNameFromToken(token)
+		if err != nil {
+			httputil.WriteError(w, http.StatusUnauthorized, "identity token is invalid or unreachable", srOrigin)
+			return
+		}
+		systemName = name
+	} else {
+		// Fallback: name from query param.
+		systemName = r.URL.Query().Get("name")
+		if systemName == "" {
+			httputil.WriteError(w, http.StatusBadRequest, "name query parameter required", srOrigin)
+			return
+		}
+	}
+
+	if h.svc.RevokeSystem(systemName) {
+		w.WriteHeader(http.StatusNoContent)
+	} else {
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// resolveSystemNameFromToken calls GET /authentication/identity/verify/<token>
+// and returns the systemName from the response.
+func (h *AH5Handler) resolveSystemNameFromToken(token string) (string, error) {
+	url := h.authURL + "/authentication/identity/verify/" + token
+	resp, err := http.Get(url) //nolint:noctx
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	var body struct {
+		SystemName string `json:"systemName"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	if body.SystemName == "" {
+		return "", errors.New("empty systemName in verify response")
+	}
+	return body.SystemName, nil
 }
 
 // ─── Management — Service Definitions ────────────────────────────────────────
 
 // POST /serviceregistry/mgmt/service-definitions/query
 func (h *AH5Handler) handleMgmtServiceDefsQuery(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
+		return
+	}
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", srOrigin)
 		return
 	}
 	var raw struct {
 		Pagination *model.PageRequest `json:"pagination"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 		return
 	}
 	full := h.svc.QueryServiceDefinitions()
 	page, total := model.Paginate(full.ServiceDefinitions, pageReqOrZero(raw.Pagination), func(sd *model.ServiceDefinition) string { return sd.Name })
-	writeJSON(w, http.StatusOK, model.ServiceDefinitionListResponse{ServiceDefinitions: page, Count: len(page), TotalCount: total})
+	httputil.WriteJSON(w, http.StatusOK, model.ServiceDefinitionListResponse{ServiceDefinitions: page, Count: len(page), TotalCount: total}, srOrigin)
 }
 
 // POST /serviceregistry/mgmt/service-definitions — create
 // DELETE /serviceregistry/mgmt/service-definitions?names=... — remove
 func (h *AH5Handler) handleMgmtServiceDefs(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 		var req model.ServiceDefinitionListRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 			return
 		}
 		resp, err := h.svc.CreateServiceDefinitions(req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
 			return
 		}
-		writeJSON(w, http.StatusCreated, resp)
+		httputil.WriteJSON(w, http.StatusCreated, resp, srOrigin)
 	case http.MethodDelete:
 		names := r.URL.Query()["names"]
 		h.svc.RemoveServiceDefinitions(names)
 		w.WriteHeader(http.StatusOK)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "POST or DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST or DELETE required", srOrigin)
 	}
 }
 
@@ -465,8 +574,11 @@ func (h *AH5Handler) handleMgmtServiceDefs(w http.ResponseWriter, r *http.Reques
 
 // POST /serviceregistry/mgmt/service-instances/query
 func (h *AH5Handler) handleMgmtServiceInstancesQuery(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
+		return
+	}
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", srOrigin)
 		return
 	}
 	var raw struct {
@@ -474,49 +586,52 @@ func (h *AH5Handler) handleMgmtServiceInstancesQuery(w http.ResponseWriter, r *h
 		Pagination *model.PageRequest `json:"pagination"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 		return
 	}
 	full := h.svc.QueryServiceInstances(raw.ServiceLookupRequest)
 	page, total := model.Paginate(full.Instances, pageReqOrZero(raw.Pagination), func(si *model.AH5ServiceInstance) string { return si.InstanceID })
-	writeJSON(w, http.StatusOK, model.ServiceListResponse{Instances: page, Count: len(page), TotalCount: total})
+	httputil.WriteJSON(w, http.StatusOK, model.ServiceListResponse{Instances: page, Count: len(page), TotalCount: total}, srOrigin)
 }
 
 // POST   /serviceregistry/mgmt/service-instances — create
 // PUT    /serviceregistry/mgmt/service-instances — update
 // DELETE /serviceregistry/mgmt/service-instances?serviceInstances=... — remove
 func (h *AH5Handler) handleMgmtServiceInstances(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 		var req model.ServiceCreateListRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 			return
 		}
 		resp, err := h.svc.CreateServiceInstances(req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
 			return
 		}
-		writeJSON(w, http.StatusCreated, resp)
+		httputil.WriteJSON(w, http.StatusCreated, resp, srOrigin)
 	case http.MethodPut:
 		var req model.ServiceUpdateListRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 			return
 		}
 		resp, err := h.svc.UpdateServiceInstances(req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
 			return
 		}
-		writeJSON(w, http.StatusOK, resp)
+		httputil.WriteJSON(w, http.StatusOK, resp, srOrigin)
 	case http.MethodDelete:
 		ids := r.URL.Query()["serviceInstances"]
 		h.svc.RemoveServiceInstances(ids)
 		w.WriteHeader(http.StatusOK)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "POST, PUT, or DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST, PUT, or DELETE required", srOrigin)
 	}
 }
 
@@ -524,51 +639,57 @@ func (h *AH5Handler) handleMgmtServiceInstances(w http.ResponseWriter, r *http.R
 
 // POST /serviceregistry/mgmt/interface-templates/query
 func (h *AH5Handler) handleMgmtInterfaceTemplatesQuery(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
+		return
+	}
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST required", srOrigin)
 		return
 	}
 	var raw struct {
 		Pagination *model.PageRequest `json:"pagination"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 		return
 	}
 	full := h.svc.QueryInterfaceTemplates()
 	page, total := model.Paginate(full.InterfaceTemplates, pageReqOrZero(raw.Pagination), func(it *model.InterfaceTemplate) string { return it.Name })
-	writeJSON(w, http.StatusOK, model.InterfaceTemplateListResponse{InterfaceTemplates: page, Count: len(page), TotalCount: total})
+	httputil.WriteJSON(w, http.StatusOK, model.InterfaceTemplateListResponse{InterfaceTemplates: page, Count: len(page), TotalCount: total}, srOrigin)
 }
 
 // POST   /serviceregistry/mgmt/interface-templates — create
 // DELETE /serviceregistry/mgmt/interface-templates?names=... — remove
 func (h *AH5Handler) handleMgmtInterfaceTemplates(w http.ResponseWriter, r *http.Request) {
+	if !httputil.RequireManagementAuth(w, r, h.mgmtAuthURL, srOrigin) {
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 		var req model.InterfaceTemplateListRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", srOrigin)
 			return
 		}
 		for _, tmpl := range req.InterfaceTemplates {
 			if tmpl != nil {
 				if msg := validateInterfaceTemplateName(tmpl.Name); msg != "" {
-					writeError(w, http.StatusBadRequest, msg)
+					httputil.WriteError(w, http.StatusBadRequest, msg, srOrigin)
 					return
 				}
 			}
 		}
 		resp, err := h.svc.CreateInterfaceTemplates(req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			httputil.WriteError(w, h.statusFor(err), err.Error(), srOrigin)
 			return
 		}
-		writeJSON(w, http.StatusCreated, resp)
+		httputil.WriteJSON(w, http.StatusCreated, resp, srOrigin)
 	case http.MethodDelete:
 		names := r.URL.Query()["names"]
 		h.svc.RemoveInterfaceTemplates(names)
 		w.WriteHeader(http.StatusOK)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "POST or DELETE required")
+		httputil.WriteError(w, http.StatusMethodNotAllowed, "POST or DELETE required", srOrigin)
 	}
 }

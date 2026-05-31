@@ -258,3 +258,20 @@ func TestDeleteRuleNotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent rule")
 	}
 }
+
+// ─── Step B: Tests for Step 24 ────────────────────────────────────────────────
+
+func TestOrchestrationResultHasCloudIdentifier(t *testing.T) {
+	orch := newOrchestrator()
+	orch.CreateRule(validCreateRule()) //nolint:errcheck
+	resp, err := orch.Orchestrate(validOrchRequest())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	if resp.Results[0].CloudIdentifier != "LOCAL" {
+		t.Errorf("CloudIdentifier = %q, want \"LOCAL\"", resp.Results[0].CloudIdentifier)
+	}
+}
