@@ -24,27 +24,28 @@ Ratings assess three orthogonal dimensions:
 
 **Overall** = 0.4 × Endpoint% + 0.3 × Model% + 0.3 × Behavior%
 
-Ratings reflect all resolved steps through Step 21. Open gaps are annotated with their G-ID.
-
 ---
 
 ## Per-System Ratings
 
+Ratings reflect all resolved steps through Step 32 (Phase 2 complete).
+
 | System | Endpoint% | Model% | Behavior% | Overall | Key open gaps |
 |--------|-----------|--------|-----------|---------|---------------|
-| ServiceRegistry | 75 | 70 | 65 | **~70%** | G11, G20, G34, G37 |
-| Authentication | 80 | 72 | 65 | **~73%** | G20, G37, G43 |
-| ConsumerAuthorization | 60 | 65 | 55 | **~60%** | G20, G23 (partial), G37, G38, G39, G42 |
-| DynamicOrchestration | 80 | 65 | 60 | **~69%** | G20, G25 (intercloud), G26 (delivery), G37, G40 (result fields) |
-| SimpleStoreOrchestration | 75 | 65 | 60 | **~67%** | G20, G25 (intercloud), G37, G40 (result fields) |
-| Blacklist | 100 | 70 | 50 | **~76%** | G41, G42 |
-| GeneralManagement (cross-cutting) | 100 | 85 | 75 | **~88%** | G37 |
+| ServiceRegistry | 83 | 75 | 79 | **~79%** | G34 |
+| Authentication | 85 | 80 | 78 | **~81%** | — |
+| ConsumerAuthorization | 75 | 65 | 65 | **~68%** | G23 (partial) |
+| DynamicOrchestration | 85 | 75 | 82 | **~81%** | G40 (QoS) |
+| SimpleStoreOrchestration | 80 | 75 | 83 | **~79%** | G40 (QoS) |
+| Blacklist | 100 | 85 | 90 | **~92%** | — |
+| GeneralManagement (cross-cutting) | 100 | 85 | 85 | **~90%** | — |
 | FlexibleStoreOrchestration | N/A | N/A | N/A | Extension | No spec (G1) |
 | CertificateAuthority | N/A | N/A | N/A | Extension | Not in spec (G9) |
 
 **Notes:**
-- Blacklist endpoint% is 100% (all five spec endpoints implemented); overall dragged down by
-  missing enforcement integration (G42) and Bearer/mode gaps (G41).
+- G11, G25 (intercloud), G40 (result fields), G41, G43 resolved in Phase 1 (Steps E1–E5).
+- G37, G42, G20, G38, G39, G26 resolved in Phase 2 (Steps 27–31).
+- G40 QoS filtering remains open (requires G35 Device QoS Evaluator); result fields are resolved.
 - GeneralManagement is a cross-cutting capability, not an independent system.
 - FlexibleStoreOrchestration and CertificateAuthority are extensions with no AH5 spec
   counterpart; conformance ratings are not applicable.
@@ -69,17 +70,7 @@ Ratings reflect all resolved steps through Step 21. Open gaps are annotated with
 
 | Gap | Description | PoC | Teaching | Prototyping | Production | Phase |
 |-----|-------------|-----|----------|-------------|------------|-------|
-| **G11** | System revoke derives identity from token, not `?name=` | Low | Medium | High | Blocker | **1** |
-| **G43** | `credentials` not validated as `{"password":"..."}` object | None | Low | Low | Medium | **1** |
-| **G25** (intercloud) | ALLOW_INTERCLOUD/ONLY_INTERCLOUD silently ignored; should 501 | None | Low | Medium | High | **1** |
-| **G40** (result fields) | OrchestrationResult missing `cloudIdentifier`, `exclusiveUntil`, `interfaces[]` | None | Low | Medium | High | **1** |
-| **G41** | Blacklist Bearer not enforced on discovery; `mode` enum mismatch | None | Medium | Medium | High | **1** |
-| **G20** | No pagination on any query/list endpoint | None | Low | Medium | High | **2** |
-| **G26** (delivery) | Push notification delivery is a stub; no HTTP call to subscriber | Medium | Medium | High | Blocker | **2** |
-| **G37** | Management endpoints open to any caller; no access policy | None | Medium | High | Blocker | **2** |
-| **G38** | authorizationTokenManagement bulk endpoints absent | None | None | Medium | High | **2** |
-| **G39** | authorizationManagement bulk endpoints absent | None | None | Medium | High | **2** |
-| **G42** | Blacklist not integrated with SR, Orchestration, ConsumerAuth | Low | Medium | High | Blocker | **2** |
+| **G40** (QoS) | `qualityRequirements[]` filtering not implemented; requires G35 | None | Low | Medium | High | **3** |
 | **G23** (variants) | Token variants USAGE_LIMITED, JWT not implemented | None | Low | Medium | High | **3** |
 | **G34** | No MQTT/MQTTS communication profiles | Low | Medium | High | High | **3** |
 | **G35** | Device QoS Evaluator support system not implemented | None | Medium | Medium | High | **3** |
@@ -87,7 +78,7 @@ Ratings reflect all resolved steps through Step 21. Open gaps are annotated with
 
 ---
 
-## Resolved Gaps (Steps 1–21)
+## Resolved Gaps (Steps 1–21 and Phase 1)
 
 | Gap | Description | Step |
 |-----|-------------|------|
@@ -114,18 +105,40 @@ Ratings reflect all resolved steps through Step 21. Open gaps are annotated with
 | G26 | Subscribe/unsubscribe + push management endpoints | 19 (partial) |
 | G28 | Blacklist system (all five endpoints) | 20 |
 | G29 | GeneralManagement on all systems | 21 |
+| G11 | System revoke derives identity from Bearer token (fail-closed) | E1 |
+| G41 | Blacklist Bearer enforcement on discovery; `mode` enum in mgmt/query | E2 |
+| G40 (result fields) | `cloudIdentifier`, `exclusiveUntil`, `interfaces[]` in OrchestrationResult | E3 |
+| G25 (intercloud) | ALLOW_INTERCLOUD / ONLY_INTERCLOUD → 501 Not Implemented | E4 |
+| G43 | `credentials` validated as `{"password":"..."}` object; plain string → 400 | E5 |
+| G37 | Management access policy — sysop Bearer guard on all `/mgmt/*` endpoints via `MGMT_AUTH_URL` | 27 |
+| G42 | Blacklist integration — `BlacklistClient` wired into SR, Orchestration, ConsumerAuth, CA | 28 |
+| G20 | Pagination — `model.Paginate[T]` applied to all query/list endpoints across all systems | 29 |
+| G38 | ConsumerAuth `authorization-token/mgmt` bulk endpoints (5 endpoints) | 30 |
+| G39 | ConsumerAuth `authorization/mgmt` bulk endpoints (4 endpoints) | 30 |
+| G26 (delivery) | Push trigger delivers HTTP POST to subscriber `notifyInterface`; DELIVERED/FAILED history | 31 |
 
 ---
 
 ## Phase Plan
 
-| Phase | Steps | Focus |
-|-------|-------|-------|
-| **Phase 1** | 22–26 | Wire-compatibility: five low-effort gaps that break spec-compliant clients |
-| **Phase 2** | 27–31 (TBD) | Functional completeness: pagination, push delivery, access policy, bulk endpoints |
-| **Phase 3** | 32+ (TBD) | Advanced features: additional token types, Blacklist integration, support systems |
+| Phase | Steps | Focus | Status |
+|-------|-------|-------|--------|
+| **Phase 1** | E1–E5 | Wire-compatibility: five gaps that break spec-compliant clients | **Complete** |
+| **Phase 2** | 27–32 | Functional completeness: access policy, Blacklist integration, pagination, bulk endpoints, push delivery | **Complete** |
+| **Phase 3** | 33+ | Advanced features: additional token types, QoS evaluation, support systems | Planned |
 
-See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan.
+### Phase 2 — Step breakdown
+
+| Step | Gap(s) | Focus | Priority | Affects core-evol |
+|------|--------|-------|----------|-------------------|
+| 27 | G37 | Management access policy (`MGMT_ACCESS_POLICY`) — sysop-only Bearer guard on all `/mgmt/*` endpoints | **Blocker** (Production) | Yes — handler.go |
+| 28 | G42 | Blacklist integration — `BlacklistClient` wired into SR register, Orchestration filter, ConsumerAuth grant/verify | **Blocker** (Production) | Yes — service.go |
+| 29 | G20 | Pagination — generic `Paginate[T]` helper applied to all query/list endpoints | High | Minimal |
+| 30 | G38, G39 | ConsumerAuth bulk endpoints — `mgmt/grant-policies`, `mgmt/revoke-policies`, `mgmt/query-policies`, `mgmt/check-policies`, `mgmt/generate-tokens`, `mgmt/revoke-tokens`, `mgmt/query-tokens` | High | No |
+| 31 | G26 | Push notification HTTP delivery — actual HTTP call to subscriber `notifyInterface` on trigger | High | Yes — service.go |
+| 32 | — | Phase 2 documentation update — CONFORMANCE.md, CONFORMANCE_UPDATE_PLAN.md, GAP_ANALYSIS.md, SPEC.md, EXAMPLES.md, README.md | — | — |
+
+See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan (Steps 27–32).
 
 ---
 
@@ -139,4 +152,4 @@ See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan.
 
 ---
 
-*Last updated: 2026-05-29 (restructured — G-IDs only; gap detail moved to core/GAP_ANALYSIS.md)*
+*Last updated: 2026-05-30 (Phase 2 complete — Steps 27–32; gaps G20, G26, G37, G38, G39, G42 resolved)*

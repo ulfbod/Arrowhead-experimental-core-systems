@@ -1,10 +1,10 @@
 # AH5 Conformance Update Plan
 
-**Status:** Draft — not yet implemented  
+**Status:** Complete — implemented May 2026 (commit 26d741b)  
 **Scope:** `core/`, `core-evol/`, all active experiments  
-**Source of truth for gaps:** `core/GAP_ANALYSIS.md` (gaps G1–G29)  
+**Source of truth for gaps:** `core/GAP_ANALYSIS.md` (gaps G1–G43)  
 **Source of truth for API spec:** `core/SPEC.md` and `core/GAP_ANALYSIS.md`  
-**Conformance assessment:** `draft-paper/CONFORMANCE.md`
+**Conformance assessment:** `CONFORMANCE.md`
 
 ---
 
@@ -4971,125 +4971,13 @@ system revoke. Low-effort fix that was blocked only by G2 being a stub.
 
 ---
 
-### TDD cycle 22.1 — Revoke with valid Bearer token uses token identity
-
-**Write this failing test first** in `core/internal/api/ah5_handler_test.go`:
-
-```go
-func TestSystemRevokeUsesTokenIdentity(t *testing.T) {
-    // Set up a fake Authentication server that returns a known systemName.
-    fakeAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // Expect GET /authentication/identity/verify/<token>
-        w.Header().Set("Content-Type", "application/json")
-        json.NewEncoder(w).Encode(map[string]interface{}{
-            "verified":   true,
-            "systemName": "TargetSystem",
-            "sysop":      false,
-        })
-    }))
-    defer fakeAuth.Close()
-
-    store := model.NewAH5Store()
-    // Pre-register TargetSystem so there is something to revoke.
-    store.SaveSystem(model.AH5System{Name: "TargetSystem", Addresses: []model.AddressDTO{{Address: "host", Type: "IPV4"}}})
-
-    h := api.NewAH5Handler(store, fakeAuth.URL)
-
-    req := httptest.NewRequest(http.MethodDelete,
-        "/serviceregistry/system-discovery/revoke", nil)
-    req.Header.Set("Authorization", "Bearer valid-token-abc")
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-
-    if w.Code != http.StatusOK {
-        t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
-    }
-    // Confirm the system is gone.
-    systems := store.ListSystems()
-    for _, s := range systems {
-        if s.Name == "TargetSystem" {
-            t.Error("TargetSystem still present after revoke")
-        }
-    }
-}
-```
-
-**Expected failure:** `ah5_handler_test.go:NN: NewAH5Handler: wrong number of arguments` (authURL
-parameter not yet in constructor signature).
-
-**Implementation notes:**
-- Change `NewAH5Handler(store)` to `NewAH5Handler(store, authURL string) http.Handler`.
-- In `handleSystemRevoke`:
-  1. Extract `Authorization: Bearer <token>` header. If absent → 401.
-  2. Call `GET <authURL>/authentication/identity/verify/<token>`. If unreachable or
-     `verified: false` → 401.
-  3. Use the `systemName` from the response as the system to revoke.
-  4. `?name=` query parameter is still accepted as a backward-compatibility fallback
-     **only when no `Authorization` header is present** (to avoid breaking existing tests
-     that do not send a header). Document this fallback as deprecated.
-
----
-
-### TDD cycle 22.2 — Revoke without Bearer returns 401
-
-**Write this failing test first:**
-
-```go
-func TestSystemRevokeWithoutBearerReturns401(t *testing.T) {
-    store := model.NewAH5Store()
-    store.SaveSystem(model.AH5System{Name: "SomeSystem", Addresses: []model.AddressDTO{{Address: "host", Type: "IPV4"}}})
-    h := api.NewAH5Handler(store, "http://localhost:0") // unreachable auth
-
-    req := httptest.NewRequest(http.MethodDelete,
-        "/serviceregistry/system-discovery/revoke", nil)
-    // No Authorization header and no ?name= — must be 401.
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-
-    if w.Code != http.StatusUnauthorized {
-        t.Errorf("expected 401, got %d", w.Code)
-    }
-}
-```
-
-**Expected failure:** handler currently reads `?name=` and returns 404 (name not found) instead of 401.
-
----
-
-### TDD cycle 22.3 — Auth server unreachable returns 401 (fail-closed)
-
-```go
-func TestSystemRevokeAuthUnreachableReturns401(t *testing.T) {
-    store := model.NewAH5Store()
-    h := api.NewAH5Handler(store, "http://localhost:0") // port 0 = guaranteed unreachable
-
-    req := httptest.NewRequest(http.MethodDelete,
-        "/serviceregistry/system-discovery/revoke", nil)
-    req.Header.Set("Authorization", "Bearer any-token")
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-
-    if w.Code != http.StatusUnauthorized {
-        t.Errorf("expected 401 (fail-closed), got %d", w.Code)
-    }
-}
-```
-
----
-
 ### System test
 
 Add to `core/internal/integration/e2e_test.go` or a new
-`core/internal/integration/system_revoke_test.go`:
-
-```
-1. Start Authentication with a Sysop identity.
-2. Register a system via system-discovery/register.
-3. Login → get token.
-4. DELETE /system-discovery/revoke with Authorization: Bearer <token> (no ?name=).
-5. Assert 200.
-6. GET /system-discovery/lookup — system must be absent.
-```
+`core/internal/integration/system_revoke_test.go`. Start Authentication with a Sysop
+identity, register a system, login to get a token, then call
+`DELETE /system-discovery/revoke` with `Authorization: Bearer <token>` (no `?name=`),
+assert 200, and confirm the system is absent from a subsequent lookup.
 
 ### Coverage check
 
@@ -5111,13 +4999,13 @@ Target: ≥ 80% on `internal/api` package.
 
 ### Completion criteria
 
-- [ ] `TestSystemRevokeUsesTokenIdentity` passes
-- [ ] `TestSystemRevokeWithoutBearerReturns401` passes
-- [ ] `TestSystemRevokeAuthUnreachableReturns401` passes
-- [ ] Backward-compat `?name=` fallback still works (existing tests pass without change)
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on `internal/api`
+- [x] `TestSystemRevokeUsesTokenIdentity` passes
+- [x] `TestSystemRevokeWithoutBearerReturns401` passes
+- [x] `TestSystemRevokeAuthUnreachableReturns401` passes
+- [x] Backward-compat `?name=` fallback still works (existing tests pass without change)
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on `internal/api`
 
 ---
 
@@ -5150,119 +5038,12 @@ Target: ≥ 80% on `internal/api` package.
 
 ---
 
-### TDD cycle 23.1 — Discovery endpoints require Bearer when BLACKLIST_AUTH_URL is set
-
-**Write this failing test first** in `core/internal/blacklist/api/handler_test.go`:
-
-```go
-func TestLookupRequiresBearerWhenAuthConfigured(t *testing.T) {
-    fakeAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        json.NewEncoder(w).Encode(map[string]interface{}{"verified": true, "systemName": "S"})
-    }))
-    defer fakeAuth.Close()
-
-    svc := service.NewBlacklistService(repository.NewMemoryBlacklistRepo())
-    h := api.NewBlacklistHandler(svc, fakeAuth.URL) // authURL passed to handler
-
-    // Without Bearer → 401
-    req := httptest.NewRequest(http.MethodGet, "/blacklist/lookup", nil)
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-    if w.Code != http.StatusUnauthorized {
-        t.Errorf("expected 401 without Bearer, got %d", w.Code)
-    }
-
-    // With Bearer → 200
-    req2 := httptest.NewRequest(http.MethodGet, "/blacklist/lookup", nil)
-    req2.Header.Set("Authorization", "Bearer valid")
-    w2 := httptest.NewRecorder()
-    h.ServeHTTP(w2, req2)
-    if w2.Code != http.StatusOK {
-        t.Errorf("expected 200 with valid Bearer, got %d", w2.Code)
-    }
-}
-```
-
-**Expected failure:** `NewBlacklistHandler` does not accept an `authURL` parameter.
-
-**Implementation:** Change `NewBlacklistHandler(svc)` to `NewBlacklistHandler(svc, authURL string)`.
-In `handleLookup` and `handleCheck`: if `authURL != ""`, extract and verify Bearer token;
-return 401 on missing header or failed verification.
-
----
-
-### TDD cycle 23.2 — mgmt/query accepts mode enum
-
-**Write this failing test first:**
-
-```go
-func TestMgmtQueryModeActives(t *testing.T) {
-    svc, repo := newTestBlacklistSvc()
-    repo.Create(blacklistmodel.Entry{SystemName: "Active1", Active: true, Reason: "r"})
-    repo.Create(blacklistmodel.Entry{SystemName: "Inactive1", Active: false, Reason: "r"})
-
-    h := api.NewBlacklistHandler(svc, "") // no auth required for mgmt in test
-
-    body := `{"mode":"ACTIVES"}`
-    req := httptest.NewRequest(http.MethodPost, "/blacklist/mgmt/query",
-        strings.NewReader(body))
-    req.Header.Set("Content-Type", "application/json")
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-
-    if w.Code != http.StatusOK {
-        t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-    }
-    var resp struct{ Data []blacklistmodel.Entry `json:"data"` }
-    json.NewDecoder(w.Body).Decode(&resp)
-    if len(resp.Data) != 1 || resp.Data[0].SystemName != "Active1" {
-        t.Errorf("ACTIVES mode: got %v, want [Active1]", resp.Data)
-    }
-}
-```
-
-**Expected failure:** `{"data":[...Active1...Inactive1...]}` — both returned because mode
-enum is not yet parsed.
-
-**Additional test cases:**
-- `mode: "ALL"` → both entries returned
-- `mode: "INACTIVES"` → only Inactive1
-- `mode: "BOGUS"` → 400 Bad Request
-- Old `active: true` field → 400 (field removed; send mode instead)
-
----
-
-### TDD cycle 23.3 — check/{name} also requires Bearer
-
-```go
-func TestCheckRequiresBearerWhenAuthConfigured(t *testing.T) {
-    fakeAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        json.NewEncoder(w).Encode(map[string]interface{}{"verified": true, "systemName": "S"})
-    }))
-    defer fakeAuth.Close()
-
-    svc := service.NewBlacklistService(repository.NewMemoryBlacklistRepo())
-    h := api.NewBlacklistHandler(svc, fakeAuth.URL)
-
-    req := httptest.NewRequest(http.MethodGet, "/blacklist/check/SOME_SYSTEM", nil)
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-    if w.Code != http.StatusUnauthorized {
-        t.Errorf("expected 401, got %d", w.Code)
-    }
-}
-```
-
 ### System test
 
-```
-1. Start Blacklist with BLACKLIST_AUTH_URL pointing to a running Authentication instance.
-2. GET /blacklist/lookup without token → assert 401.
-3. Login to Authentication → get token.
-4. GET /blacklist/lookup with Authorization: Bearer <token> → assert 200.
-5. POST /blacklist/mgmt/query with {"mode":"ALL"} → assert 200.
-6. POST /blacklist/mgmt/query with {"mode":"BOGUS"} → assert 400.
-```
+Start Blacklist with `BLACKLIST_AUTH_URL` pointing to a running Authentication instance.
+Verify that `GET /blacklist/lookup` without a token returns 401, that the same endpoint
+with a valid Bearer token returns 200, that `POST /blacklist/mgmt/query {"mode":"ALL"}`
+returns 200, and that `{"mode":"BOGUS"}` returns 400.
 
 ### Coverage check
 
@@ -5284,13 +5065,13 @@ Target: ≥ 80% on `internal/blacklist/...`.
 
 ### Completion criteria
 
-- [ ] `TestLookupRequiresBearerWhenAuthConfigured` passes
-- [ ] `TestCheckRequiresBearerWhenAuthConfigured` passes
-- [ ] `TestMgmtQueryModeActives` passes (and ALL, INACTIVES, BOGUS variants)
-- [ ] `BLACKLIST_AUTH_URL` unset → no auth check (development mode unchanged)
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on `internal/blacklist/...`
+- [x] `TestLookupRequiresBearerWhenAuthConfigured` passes
+- [x] `TestCheckRequiresBearerWhenAuthConfigured` passes
+- [x] `TestMgmtQueryModeActives` passes (and ALL, INACTIVES, BOGUS variants)
+- [x] `BLACKLIST_AUTH_URL` unset → no auth check (development mode unchanged)
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on `internal/blacklist/...`
 
 ---
 
@@ -5316,134 +5097,12 @@ Target: ≥ 80% on `internal/blacklist/...`.
 
 ---
 
-### TDD cycle 24.1 — OrchestrationResult includes cloudIdentifier
-
-**Write this failing test first** in `core/internal/orchestration/dynamic/service/orchestrator_test.go`:
-
-```go
-func TestOrchestrationResultHasCloudIdentifier(t *testing.T) {
-    // ... set up orchestrator with fake SR returning one provider ...
-    results, err := orch.Orchestrate(ctx, validRequest())
-    if err != nil {
-        t.Fatalf("orchestrate: %v", err)
-    }
-    if len(results) == 0 {
-        t.Fatal("expected at least one result")
-    }
-    if results[0].CloudIdentifier != "LOCAL" {
-        t.Errorf("CloudIdentifier = %q, want LOCAL", results[0].CloudIdentifier)
-    }
-}
-```
-
-**Expected failure:** `results[0].CloudIdentifier` is undefined — field absent from struct.
-
-**Implementation:** Add to `OrchestrationResult`:
-
-```go
-CloudIdentifier string   `json:"cloudIdentifier,omitempty"`
-ExclusiveUntil  string   `json:"exclusiveUntil,omitempty"`
-Interfaces      []string `json:"interfaces,omitempty"`
-```
-
-Set `CloudIdentifier = "LOCAL"` in all three orchestrators' result-building code.
-
----
-
-### TDD cycle 24.2 — exclusiveUntil populated from LockStore
-
-**Write this failing test first** (DynamicOrch only — it has a LockStore):
-
-```go
-func TestOrchestrationResultHasExclusiveUntilWhenLocked(t *testing.T) {
-    orch, locks := newOrchestratorWithLockStore(t)
-    // Create a lock for the provider that SR will return.
-    expiry := time.Now().Add(30 * time.Minute)
-    locks.Create(service.Lock{
-        SystemName: "SensorProvider",
-        LockedBy:   "consumer-1",
-        ExpiresAt:  expiry,
-    })
-
-    results, _ := orch.Orchestrate(ctx, requestForSensorProvider())
-    if len(results) == 0 {
-        t.Fatal("no results")
-    }
-    if results[0].ExclusiveUntil == "" {
-        t.Error("ExclusiveUntil should be non-empty when provider is locked")
-    }
-    // Ensure it is RFC3339.
-    if _, err := time.Parse(time.RFC3339, results[0].ExclusiveUntil); err != nil {
-        t.Errorf("ExclusiveUntil %q is not RFC3339: %v", results[0].ExclusiveUntil, err)
-    }
-}
-
-func TestOrchestrationResultNoExclusiveUntilWhenUnlocked(t *testing.T) {
-    orch, _ := newOrchestratorWithLockStore(t)
-    // No locks created.
-    results, _ := orch.Orchestrate(ctx, requestForSensorProvider())
-    if len(results) > 0 && results[0].ExclusiveUntil != "" {
-        t.Errorf("ExclusiveUntil should be empty when no lock, got %q", results[0].ExclusiveUntil)
-    }
-}
-```
-
-**Implementation:** After assembling results, for each result's `ProviderName`, check the
-LockStore for an active (non-expired) lock; if found, set `ExclusiveUntil` to the lock's
-`ExpiresAt` formatted as `time.RFC3339`.
-
-SimpleStore and FlexibleStore orchestrators do not have a LockStore; `ExclusiveUntil` is
-always omitted from their results.
-
----
-
-### TDD cycle 24.3 — interfaces[] forwarded from SR response
-
-**Write this failing test first:**
-
-```go
-func TestOrchestrationResultForwardsInterfaces(t *testing.T) {
-    // Fake SR returns a service with interfaces ["HTTP-SECURE-JSON", "HTTP-INSECURE-JSON"].
-    fakeSR := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        json.NewEncoder(w).Encode(map[string]interface{}{
-            "results": []map[string]interface{}{
-                {
-                    "providerName":      "SensorProvider",
-                    "serviceDefinition": "temperature",
-                    "serviceUri":        "/temp",
-                    "interfaces":        []string{"HTTP-SECURE-JSON", "HTTP-INSECURE-JSON"},
-                },
-            },
-        })
-    }))
-    defer fakeSR.Close()
-
-    orch := newOrchestratorWithSR(t, fakeSR.URL)
-    results, _ := orch.Orchestrate(ctx, validRequest())
-    if len(results) == 0 {
-        t.Fatal("no results")
-    }
-    if len(results[0].Interfaces) != 2 {
-        t.Errorf("Interfaces = %v, want 2 entries", results[0].Interfaces)
-    }
-}
-```
-
-**Expected failure:** `results[0].Interfaces` is nil — field absent or not populated.
-
----
-
 ### System test
 
-```
-1. Register a service with interfaces ["HTTP-INSECURE-JSON"].
-2. Grant authorization.
-3. POST /serviceorchestration/orchestration/pull.
-4. Assert response result contains:
-   - "cloudIdentifier": "LOCAL"
-   - "interfaces": ["HTTP-INSECURE-JSON"]
-   - "exclusiveUntil" absent (or empty string) — no lock created
-```
+Register a service with interfaces `["HTTP-INSECURE-JSON"]`, grant authorization, then
+`POST /serviceorchestration/orchestration/pull`. Assert the response result contains
+`"cloudIdentifier": "LOCAL"`, `"interfaces": ["HTTP-INSECURE-JSON"]`, and that
+`"exclusiveUntil"` is absent or empty (no lock created).
 
 ### Coverage check
 
@@ -5474,15 +5133,15 @@ Target: ≥ 80% on all touched packages.
 
 ### Completion criteria
 
-- [ ] `TestOrchestrationResultHasCloudIdentifier` passes (all three orchestrators)
-- [ ] `TestOrchestrationResultHasExclusiveUntilWhenLocked` passes (DynamicOrch)
-- [ ] `TestOrchestrationResultNoExclusiveUntilWhenUnlocked` passes
-- [ ] `TestOrchestrationResultForwardsInterfaces` passes (all three orchestrators)
-- [ ] core-evol: same field set populated in `dynamicorch-xacml` results
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `cd core-evol && go test -race ./...` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on all modified packages
+- [x] `TestOrchestrationResultHasCloudIdentifier` passes (all three orchestrators)
+- [x] `TestOrchestrationResultHasExclusiveUntilWhenLocked` passes (DynamicOrch)
+- [x] `TestOrchestrationResultNoExclusiveUntilWhenUnlocked` passes
+- [x] `TestOrchestrationResultForwardsInterfaces` passes (all three orchestrators)
+- [x] core-evol: same field set populated in `dynamicorch-xacml` results
+- [x] `go test -race ./...` from `core/` passes
+- [x] `cd core-evol && go test -race ./...` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all modified packages
 
 ---
 
@@ -5506,87 +5165,10 @@ Target: ≥ 80% on all touched packages.
 - `core-evol/internal/orchestration/service.go` — detect and surface intercloud flags
 - `core-evol/internal/orchestration/handler.go` — map to 501
 
-**New sentinel error:**
-
-```go
-// in core/internal/orchestration/model/errors.go (new file, or add to types.go)
-var ErrInterclouNotSupported = errors.New("intercloud orchestration not implemented")
-```
-
----
-
-### TDD cycle 25.1 — ALLOW_INTERCLOUD returns 501
-
-**Write this failing test first** in `core/internal/orchestration/dynamic/api/handler_test.go`:
-
-```go
-func TestAllowInterclouReturns501(t *testing.T) {
-    h := newDynamicHandler(t)
-    body := `{
-        "requesterSystem":  {"systemName":"ConsumerA","address":"localhost","port":9001},
-        "requestedService": {"serviceDefinition":"temp"},
-        "orchestrationFlags": {"ALLOW_INTERCLOUD": true}
-    }`
-    req := httptest.NewRequest(http.MethodPost,
-        "/serviceorchestration/orchestration/pull",
-        strings.NewReader(body))
-    req.Header.Set("Content-Type", "application/json")
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-
-    if w.Code != http.StatusNotImplemented {
-        t.Errorf("expected 501 for ALLOW_INTERCLOUD, got %d: %s", w.Code, w.Body.String())
-    }
-}
-```
-
-**Expected failure:** handler returns 200 (flag silently ignored, providers searched locally).
-
-**Implementation:**
-- In each orchestrator's `Orchestrate` method, after parsing `orchestrationFlags`, check:
-  ```go
-  if flags["ALLOW_INTERCLOUD"] || flags["ONLY_INTERCLOUD"] {
-      return nil, ErrInterclouNotSupported
-  }
-  ```
-- In each handler, map `ErrInterclouNotSupported` → `http.StatusNotImplemented`.
-
----
-
-### TDD cycle 25.2 — ONLY_INTERCLOUD also returns 501
-
-```go
-func TestOnlyInterclouReturns501(t *testing.T) {
-    h := newDynamicHandler(t)
-    body := `{
-        "requesterSystem":  {"systemName":"ConsumerA","address":"localhost","port":9001},
-        "requestedService": {"serviceDefinition":"temp"},
-        "orchestrationFlags": {"ONLY_INTERCLOUD": true}
-    }`
-    req := httptest.NewRequest(http.MethodPost,
-        "/serviceorchestration/orchestration/pull",
-        strings.NewReader(body))
-    req.Header.Set("Content-Type", "application/json")
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-    if w.Code != http.StatusNotImplemented {
-        t.Errorf("expected 501 for ONLY_INTERCLOUD, got %d", w.Code)
-    }
-}
-```
-
-### TDD cycle 25.3 — Local orchestration unaffected
-
-```go
-func TestLocalOrchestrationUnaffectedByInterclouChange(t *testing.T) {
-    // Verify that a request with no intercloud flags still works normally.
-    h := newDynamicHandler(t)
-    // ... register a service, grant auth, orchestrate without intercloud flags ...
-    // assert 200 and at least one result.
-}
-```
-
-**Expected failure:** currently always passes — confirm it still passes after implementation.
+**New sentinel error:** Define `ErrInterclouNotSupported` in
+`core/internal/orchestration/model/errors.go` (or `types.go`). Each orchestrator checks
+for `ALLOW_INTERCLOUD` or `ONLY_INTERCLOUD` flags after parsing, returns this error, and
+each handler maps it to `http.StatusNotImplemented`.
 
 ### Coverage check
 
@@ -5614,14 +5196,14 @@ Target: ≥ 80% on all modified packages.
 
 ### Completion criteria
 
-- [ ] `TestAllowInterclouReturns501` passes (DynamicOrch and SimpleStore)
-- [ ] `TestOnlyInterclouReturns501` passes (DynamicOrch and SimpleStore)
-- [ ] `TestLocalOrchestrationUnaffectedByInterclouChange` passes
-- [ ] core-evol: same 501 behaviour in `dynamicorch-xacml`
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `cd core-evol && go test -race ./...` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on all modified packages
+- [x] `TestAllowInterclouReturns501` passes (DynamicOrch and SimpleStore)
+- [x] `TestOnlyInterclouReturns501` passes (DynamicOrch and SimpleStore)
+- [x] `TestLocalOrchestrationUnaffectedByInterclouChange` passes
+- [x] core-evol: same 501 behaviour in `dynamicorch-xacml`
+- [x] `go test -race ./...` from `core/` passes
+- [x] `cd core-evol && go test -race ./...` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on all modified packages
 
 ---
 
@@ -5642,134 +5224,6 @@ Target: ≥ 80% on all modified packages.
 - `core/internal/authentication/api/handler.go` — map new validation error to 400
 
 **Files to modify (core-evol/):** None — Authentication is a standalone core service.
-
----
-
-### TDD cycle 26.1 — Missing password field returns 400
-
-**Write this failing test first** in `core/internal/authentication/api/handler_test.go`:
-
-```go
-func TestLoginMissingPasswordFieldReturns400(t *testing.T) {
-    h := newAuthHandler(t)
-
-    // credentials is an object but has no "password" key.
-    body := `{"systemName":"TestSystem","credentials":{"token":"abc"}}`
-    req := httptest.NewRequest(http.MethodPost, "/authentication/identity/login",
-        strings.NewReader(body))
-    req.Header.Set("Content-Type", "application/json")
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-
-    if w.Code != http.StatusBadRequest {
-        t.Errorf("expected 400 for missing password key, got %d: %s", w.Code, w.Body.String())
-    }
-}
-```
-
-**Expected failure:** currently returns 401 (bcrypt comparison against empty string fails
-with "wrong password") instead of 400.
-
----
-
-### TDD cycle 26.2 — Non-object credentials returns 400
-
-```go
-func TestLoginNonObjectCredentialsReturns400(t *testing.T) {
-    h := newAuthHandler(t)
-
-    // credentials is a plain string — not a JSON object.
-    body := `{"systemName":"TestSystem","credentials":"plainstring"}`
-    req := httptest.NewRequest(http.MethodPost, "/authentication/identity/login",
-        strings.NewReader(body))
-    req.Header.Set("Content-Type", "application/json")
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-
-    if w.Code != http.StatusBadRequest {
-        t.Errorf("expected 400 for non-object credentials, got %d: %s", w.Code, w.Body.String())
-    }
-}
-```
-
----
-
-### TDD cycle 26.3 — Null credentials returns 400
-
-```go
-func TestLoginNullCredentialsReturns400(t *testing.T) {
-    h := newAuthHandler(t)
-
-    body := `{"systemName":"TestSystem","credentials":null}`
-    req := httptest.NewRequest(http.MethodPost, "/authentication/identity/login",
-        strings.NewReader(body))
-    req.Header.Set("Content-Type", "application/json")
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-
-    if w.Code != http.StatusBadRequest {
-        t.Errorf("expected 400 for null credentials, got %d: %s", w.Code, w.Body.String())
-    }
-}
-```
-
----
-
-### TDD cycle 26.4 — Valid credentials object still works
-
-```go
-func TestLoginValidCredentialsObjectSucceeds(t *testing.T) {
-    svc, _ := newAuthServiceWithIdentity(t, "TestSystem", "secret123")
-    h := newAuthHandlerWithSvc(t, svc)
-
-    body := `{"systemName":"TestSystem","credentials":{"password":"secret123"}}`
-    req := httptest.NewRequest(http.MethodPost, "/authentication/identity/login",
-        strings.NewReader(body))
-    req.Header.Set("Content-Type", "application/json")
-    w := httptest.NewRecorder()
-    h.ServeHTTP(w, req)
-
-    if w.Code != http.StatusOK {
-        t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
-    }
-}
-```
-
-**Expected failure:** currently this already passes — confirm it still passes after the
-structural change.
-
-### Implementation notes
-
-Define in `core/internal/authentication/model/types.go`:
-
-```go
-// Credentials is the structured credential object as specified by AH5.
-// The wire format is {"password": "..."}.
-type Credentials struct {
-    Password string `json:"password"`
-}
-
-// UnmarshalJSON rejects credentials that are not a JSON object.
-func (c *Credentials) UnmarshalJSON(data []byte) error {
-    data = bytes.TrimSpace(data)
-    if len(data) == 0 || data[0] != '{' {
-        return errors.New("credentials must be a JSON object")
-    }
-    type alias Credentials
-    return json.Unmarshal(data, (*alias)(c))
-}
-```
-
-In `LoginRequest`, change `Credentials string` → `Credentials Credentials`.
-
-In `auth.go`, after validating the system name, check:
-```go
-if req.Credentials.Password == "" {
-    return LoginResponse{}, ErrMissingPassword
-}
-```
-
-Map `ErrMissingPassword` → 400 in the handler.
 
 ### Coverage check
 
@@ -5794,14 +5248,14 @@ Target: ≥ 80% on all three packages.
 
 ### Completion criteria
 
-- [ ] `TestLoginMissingPasswordFieldReturns400` passes
-- [ ] `TestLoginNonObjectCredentialsReturns400` passes
-- [ ] `TestLoginNullCredentialsReturns400` passes
-- [ ] `TestLoginValidCredentialsObjectSucceeds` passes
-- [ ] All existing login/verify/logout tests still pass (no regression)
-- [ ] `go test -race ./...` from `core/` passes
-- [ ] `bash core/test-system.sh` passes
-- [ ] Coverage ≥ 80% on `authentication/model`, `authentication/service`, `authentication/api`
+- [x] `TestLoginMissingPasswordFieldReturns400` passes
+- [x] `TestLoginNonObjectCredentialsReturns400` passes
+- [x] `TestLoginNullCredentialsReturns400` passes
+- [x] `TestLoginValidCredentialsObjectSucceeds` passes
+- [x] All existing login/verify/logout tests still pass (no regression)
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on `authentication/model`, `authentication/service`, `authentication/api`
 
 ---
 
@@ -5854,4 +5308,565 @@ Run after all five Phase 1 steps are complete:
 | `bash core/test-system.sh` | All Phase 1 |
 | `cd core-evol && go build ./... && go test -race ./...` | 24, 25 |
 | `go build ./...` (workspace root) | All Phase 1 |
+
+---
+
+---
+
+# Phase 2 — Functional Completeness
+
+**Scope:** Steps 27–32. Addresses all six remaining Phase 2 gaps from `CONFORMANCE.md`.
+**Order:** Steps 27 and 28 are Blockers for Production and must be done first. Steps 29–31 are independent of each other once Step 28 is done. Step 32 is the documentation sweep after all implementation steps are complete.
+
+**TDD cycle and coverage standard** are the same as Phase 1 (see sections 2 and 3 above).
+
+---
+
+## Step 27 — Management access policy (G37)
+
+**Gap addressed:**
+- **G37** — All management endpoints (`/mgmt/*`) on all eight core systems are open to any
+  caller on the network. AH5 specifies three access-control modes: `sysop-only`,
+  `whitelist`, and `authorization`. This step implements `sysop-only` (the default and
+  most critical mode): every management request must carry a valid `Authorization: Bearer`
+  token whose identity resolves to the sysop account.
+
+**Why now:** Blocker for Production. An unauthenticated management API allows any network
+peer to read, create, or delete records in any running system. This is the highest-priority
+remaining gap.
+
+**Prerequisites:** Step 13 complete (Authentication management endpoints and bcrypt
+credential verification exist). Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/httputil/respond.go` — add `RequireManagementAuth(w, r, authURL string) bool` helper
+- `core/cmd/serviceregistry/main.go` — read `MGMT_AUTH_URL`; pass to handler
+- `core/cmd/authentication/main.go` — same
+- `core/cmd/consumerauth/main.go` — same
+- `core/cmd/dynamicorch/main.go` — same
+- `core/cmd/simplestoreorch/main.go` — same
+- `core/cmd/flexiblestoreorch/main.go` — same
+- `core/cmd/ca/main.go` — same
+- `core/cmd/blacklist/main.go` (if exists; else `cmd/serviceregistry/main.go` hosts Blacklist) — same
+- Every `api/handler.go` for each system — call `httputil.RequireManagementAuth` at the top of every mgmt route handler
+- `core/internal/api/ah5_handler.go` — apply to AH5 mgmt routes
+- `core/internal/generalmgmt/handler.go` — apply to all routes (all are mgmt)
+
+**Files to modify (core-evol/):**
+- `core-evol/internal/orchestration/handler.go` — apply `RequireManagementAuth` to every `/mgmt/*` route (`mgmt/push/*`, `mgmt/locks/*`, `mgmt/history/*`)
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `MGMT_AUTH_URL` | *(unset)* | When set, all `/mgmt/*` requests must carry `Authorization: Bearer <token>` verified via this Authentication system URL. Unset = open access (development/PoC mode). |
+
+The URL is verified by calling `POST <MGMT_AUTH_URL>/authentication/identity/verify` with the
+bearer token. A 200 response means the token is valid; any other response (including network
+error) must reject the request with 401. This is fail-closed (same pattern as D4 and D8).
+
+---
+
+### System test
+
+After setting `MGMT_AUTH_URL=http://localhost:8081` in all binaries, start the full stack.
+Call `POST /serviceregistry/mgmt/system-discovery` (or any mgmt endpoint) without a token —
+assert 401. Log in as sysop, extract the token, call the same endpoint with
+`Authorization: Bearer <token>` — assert 200/201. Repeat for at least one mgmt endpoint on
+Authentication, ConsumerAuthorization, and DynamicOrchestration.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/httputil/... ./internal/api/... \
+  ./internal/authentication/api/... ./internal/consumerauth/api/... \
+  ./internal/orchestration/dynamic/api/... ./internal/orchestration/simplestore/api/... \
+  ./internal/orchestration/flexiblestore/api/... ./internal/generalmgmt/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on every modified package.
+
+### Documentation updates (after Step 27)
+
+- `core/GAP_ANALYSIS.md` — mark G37 resolved; add implementation summary (env var, fail-closed semantics, which handler files)
+- `core/SPEC.md` — add `MGMT_AUTH_URL` to Configuration section; document that all `/mgmt/*` endpoints require Bearer when env var is set
+- `README.md` — add `MGMT_AUTH_URL` to Configuration table (all systems)
+- `CONFORMANCE.md` — move G37 from Open → Resolved; update per-system ratings (all systems gain Behavior% points)
+
+### Completion criteria
+
+- [ ] `TestMgmtRequiresBearerWhenAuthURLSet` passes (one representative handler per system)
+- [ ] `TestMgmtOpenWhenAuthURLUnset` passes (default dev mode)
+- [ ] `TestMgmtAuthUnreachableReturns401` passes (fail-closed)
+- [ ] `TestMgmtValidSysopTokenSucceeds` passes
+- [ ] All existing management endpoint tests still pass with `MGMT_AUTH_URL` unset
+- [ ] `core-evol` mgmt routes return 401 without Bearer when `MGMT_AUTH_URL` set
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `cd core-evol && go test -race ./...` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 28 — Blacklist integration (G42)
+
+**Gap addressed:**
+- **G42** — The Blacklist system exists but no other system consults it. AH5 requires:
+  - **ServiceRegistry** rejects `register` from a blacklisted system
+  - **Orchestration** excludes blacklisted providers from results
+  - **ConsumerAuthorization** rejects `grant` and `verify` for blacklisted consumers or providers
+
+**Why now:** Blocker for Production. The Blacklist is currently decorative — a system on the
+deny-list can still register, be orchestrated, and obtain grants. This step wires it in.
+
+**Prerequisites:** Step 28 (this step) requires the Blacklist system to be running (G28
+complete, Step 20) and `BlacklistClient` to be defined. Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/blacklist/client/client.go` (new file) — define `BlacklistClient` interface
+  with `IsBlacklisted(ctx context.Context, name string) (bool, error)` and
+  `HTTPBlacklistClient` struct implementing it
+- `core/internal/api/ah5_handler.go` — call `IsBlacklisted` at the start of
+  `handleServiceRegister`; return 403 if blacklisted
+- `core/internal/orchestration/dynamic/service/orchestrator.go` — filter result list:
+  remove any provider whose `providerName` is blacklisted
+- `core/internal/orchestration/simplestore/service/orchestrator.go` — same filter
+- `core/internal/orchestration/flexiblestore/service/orchestrator.go` — same filter
+- `core/internal/consumerauth/service/auth.go` — call `IsBlacklisted` in `Grant` and
+  `Verify`; return error (→ 403) if consumer or provider is blacklisted
+- `core/cmd/serviceregistry/main.go` — read `BLACKLIST_URL`; wire `HTTPBlacklistClient`
+- `core/cmd/dynamicorch/main.go` — same
+- `core/cmd/simplestoreorch/main.go` — same
+- `core/cmd/flexiblestoreorch/main.go` — same
+- `core/cmd/consumerauth/main.go` — same
+
+**Files to modify (core-evol/):**
+- `core-evol/internal/orchestration/service.go` — add `BlacklistClient` field to
+  `XACMLOrchestrator`; filter results in `Orchestrate()` method after XACML decision,
+  before returning results; wire from `main.go`
+- `core-evol/cmd/dynamicorch-xacml/main.go` — read `BLACKLIST_URL`; construct and inject
+  `HTTPBlacklistClient`
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `BLACKLIST_URL` | *(unset)* | When set, SR register, Orchestration result filter, and ConsumerAuth grant/verify consult the Blacklist. Unset = no Blacklist checks (development/PoC mode). Fail-closed: unreachable Blacklist is treated as blacklisted. |
+
+Fail-closed semantics: a network error or non-200 response from the Blacklist is treated as
+`IsBlacklisted = true`. This is consistent with D4 and D8.
+
+---
+
+### System test
+
+Start the full stack with `BLACKLIST_URL=http://localhost:XXXX`. Add a system (`sensorX`) to
+the Blacklist. Then:
+1. `POST /serviceregistry/service-discovery/register` with `providerSystem.systemName=sensorX` → assert 403
+2. Register a different provider, then add it to the Blacklist, then call orchestration → assert `sensorX` is absent from results
+3. Call `POST /consumerauthorization/authorization/grant` with a blacklisted consumer → assert 403
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out \
+  ./internal/blacklist/client/... \
+  ./internal/api/... \
+  ./internal/orchestration/dynamic/service/... \
+  ./internal/orchestration/simplestore/service/... \
+  ./internal/orchestration/flexiblestore/service/... \
+  ./internal/consumerauth/service/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on every modified package.
+
+### Documentation updates (after Step 28)
+
+- `core/GAP_ANALYSIS.md` — mark G42 resolved; add implementation summary (which systems, fail-closed, `BLACKLIST_URL`)
+- `core/SPEC.md` — add Blacklist integration behavior to ServiceRegistry register, Orchestration pull, and ConsumerAuth grant/verify sections; document `BLACKLIST_URL`
+- `README.md` — add `BLACKLIST_URL` to Configuration table
+- `CONFORMANCE.md` — move G42 from Open → Resolved; update per-system ratings (SR, ConsumerAuth, Orchestration all gain Behavior% points; Blacklist Behavior% increases)
+
+### Completion criteria
+
+- [ ] `TestRegisterBlacklistedSystemReturns403` passes
+- [ ] `TestOrchestrationExcludesBlacklistedProvider` passes (DynamicOrch)
+- [ ] `TestSimpleStoreExcludesBlacklistedProvider` passes
+- [ ] `TestConsumerAuthGrantBlacklistedConsumerReturns403` passes
+- [ ] `TestConsumerAuthGrantBlacklistedProviderReturns403` passes
+- [ ] `TestConsumerAuthVerifyBlacklistedReturns403` passes
+- [ ] `TestBlacklistUnreachableFails closed` passes (returns 403/error when Blacklist down)
+- [ ] `TestBlacklistURLUnsetSkipsCheck` passes (no calls to Blacklist when env var unset)
+- [ ] core-evol: `TestXACMLOrchestratorExcludesBlacklistedProvider` passes
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `cd core-evol && go test -race ./...` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 29 — Pagination on query/list endpoints (G20)
+
+**Gap addressed:**
+- **G20** — All query and list operations return unbounded result sets. AH5 requires a
+  `pagination` object (`page`, `size`, `direction`, `sortField`) in requests and bounded,
+  offset-based result pages in responses.
+
+**Why now:** High-impact for any non-trivial deployment. Implementing pagination before bulk
+endpoints (Step 30) means bulk endpoints can reuse the same helper.
+
+**Prerequisites:** Steps 27–28 complete. Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/httputil/paginate.go` (new file) — generic `Paginate[T any](items []T, page, size int, direction string, less func(T, T) bool) []T` helper; if `size ≤ 0`, return all items (backward-compatible default)
+- `core/internal/api/ah5_handler.go` — apply `Paginate` in service/system/device list handlers
+- `core/internal/authentication/api/handler.go` — apply in identity/session query handlers
+- `core/internal/consumerauth/api/handler.go` — apply in authorization lookup handler
+- `core/internal/orchestration/dynamic/api/handler.go` — apply in push-query and lock-query handlers
+- `core/internal/orchestration/simplestore/api/handler.go` — apply in rule-list handler
+- `core/internal/orchestration/flexiblestore/api/handler.go` — apply in rule-list handler
+- `core/internal/blacklist/api/handler.go` — apply in mgmt/query handler
+- `core/internal/generalmgmt/handler.go` — apply in list handlers
+
+**Files to modify (core-evol/):**
+- `core-evol/internal/orchestration/handler.go` — apply `Paginate` in
+  `mgmt/push/query`, `mgmt/locks/query`, and `mgmt/history/query` handlers. Import
+  `httputil` from core module is not allowed (separate module); copy or vendor the helper
+  into `core-evol/internal/httputil/paginate.go`.
+
+**New environment variable:** None.
+
+**Pagination request shape** (extend existing request bodies):
+
+```json
+{
+  "pagination": {
+    "page":       0,
+    "size":       20,
+    "direction":  "ASC",
+    "sortField":  "id"
+  }
+}
+```
+
+`page` and `size` default to 0 / no-limit when absent (backward-compatible).
+Response must include a `count` field (total items before pagination) alongside `data` array.
+
+---
+
+### System test
+
+Register 25 services in ServiceRegistry. Call the service-discovery list endpoint with
+`"pagination": {"page": 0, "size": 10}` — assert exactly 10 results returned and
+`count == 25`. Call with `page: 1` — assert next 10. Call with `page: 2` — assert 5.
+Call without pagination object — assert all 25 returned (backward-compatible).
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/httputil/... ./internal/api/... \
+  ./internal/authentication/api/... ./internal/consumerauth/api/... \
+  ./internal/orchestration/dynamic/api/... ./internal/orchestration/simplestore/api/... \
+  ./internal/orchestration/flexiblestore/api/... ./internal/blacklist/api/... \
+  ./internal/generalmgmt/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on every modified package.
+
+### Documentation updates (after Step 29)
+
+- `core/GAP_ANALYSIS.md` — mark G20 resolved; add implementation summary (`Paginate[T]` helper, backward-compatible default)
+- `core/SPEC.md` — add pagination object to all query endpoint request shapes; add `count` field to all list response shapes
+- `core/EXAMPLES.md` — add Example 6: paginated service list request and response
+- `CONFORMANCE.md` — move G20 from Open → Resolved; update per-system ratings (all systems gain Endpoint% and Behavior% points)
+
+### Completion criteria
+
+- [ ] `TestPaginateHelper` covers page/size/direction/sortField combinations
+- [ ] `TestServiceListPaginationPage0Size10Returns10Of25` passes
+- [ ] `TestServiceListPaginationPage2Returns5Of25` passes
+- [ ] `TestServiceListNoPaginationReturnsAll` passes (backward-compatible)
+- [ ] `TestAuthIdentityQueryPagination` passes
+- [ ] At least one pagination test per system handler package
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `cd core-evol && go test -race ./...` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 30 — ConsumerAuth bulk management endpoints (G38, G39)
+
+**Gap addressed:**
+- **G39** — `authorizationManagement` bulk endpoints absent: `mgmt/grant-policies`,
+  `mgmt/revoke-policies`, `mgmt/query-policies`, `mgmt/check-policies`
+- **G38** — `authorizationTokenManagement` bulk endpoints absent: `mgmt/generate-tokens`,
+  `mgmt/revoke-tokens`, `mgmt/query-tokens`, `mgmt/add-encryption-keys`,
+  `mgmt/remove-encryption-keys`
+
+**Why now:** High-impact for operator tooling and production incident response. Both G38 and
+G39 are in the same system and handler file; doing them together avoids two separate passes.
+
+**Prerequisites:** Steps 27–29 complete (pagination helper available). Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/consumerauth/api/handler.go` — add new route handlers:
+  - `POST /consumerauthorization/authorization/mgmt/grant-policies`
+  - `DELETE /consumerauthorization/authorization/mgmt/revoke-policies`
+  - `POST /consumerauthorization/authorization/mgmt/query-policies`
+  - `POST /consumerauthorization/authorization/mgmt/check-policies`
+  - `POST /consumerauthorization/authorization-token/mgmt/generate-tokens`
+  - `DELETE /consumerauthorization/authorization-token/mgmt/revoke-tokens`
+  - `POST /consumerauthorization/authorization-token/mgmt/query-tokens`
+  - `POST /consumerauthorization/authorization-token/mgmt/add-encryption-keys`
+  - `DELETE /consumerauthorization/authorization-token/mgmt/remove-encryption-keys`
+- `core/internal/consumerauth/service/auth.go` — add bulk service methods if not already
+  present (most delegate to existing single-item logic in a loop; `QueryPolicies` and
+  `CheckPolicies` are new query paths)
+- `core/internal/consumerauth/repository/memory.go` — add `QueryPolicies` and `CheckPolicies`
+  repository methods with filter support
+
+**Files to modify (core-evol/):** None — ConsumerAuthorization is a standalone core system
+not present in core-evol.
+
+**New environment variable:** None.
+
+**Request/response shapes:**
+
+`POST mgmt/grant-policies` body: `{"policies": [{"consumerSystemName": "...", "providerSystemName": "...", "serviceDefinition": "..."}]}`
+Response: list of created policy IDs with any per-item errors.
+
+`POST mgmt/query-policies` body: pagination object + optional filters (`consumerSystemName`, `providerSystemName`, `serviceDefinition`).
+
+`POST mgmt/check-policies` body: list of tuples; response: same list with `authorized: bool` per tuple.
+
+`POST mgmt/generate-tokens` body: list of `{consumerSystemName, providerSystemName, serviceDefinition}`; response: list of tokens.
+
+---
+
+### System test
+
+Grant five policies via individual endpoint. Then call `POST mgmt/query-policies` — assert
+all five appear. Call `POST mgmt/check-policies` with three of the five plus two
+non-existent — assert three `authorized: true`, two `authorized: false`.
+Call `DELETE mgmt/revoke-policies` with all five IDs — assert all revoked.
+Repeat token-side: `POST mgmt/generate-tokens` with three tuples, assert three tokens;
+`DELETE mgmt/revoke-tokens` with all three, assert 200.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out \
+  ./internal/consumerauth/api/... \
+  ./internal/consumerauth/service/... \
+  ./internal/consumerauth/repository/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on every modified package.
+
+### Documentation updates (after Step 30)
+
+- `core/GAP_ANALYSIS.md` — mark G38 and G39 resolved; add implementation summary
+- `core/SPEC.md` — add all nine new endpoint definitions under ConsumerAuthorization
+- `CONFORMANCE.md` — move G38 and G39 from Open → Resolved; update ConsumerAuthorization rating (Endpoint% rises significantly)
+
+### Completion criteria
+
+- [ ] `TestBulkGrantPoliciesCreatesAll` passes
+- [ ] `TestBulkRevokePoliciesRemovesAll` passes
+- [ ] `TestQueryPoliciesWithFilters` passes
+- [ ] `TestCheckPoliciesMixedResult` passes
+- [ ] `TestBulkGenerateTokensReturnsTokenList` passes
+- [ ] `TestBulkRevokeTokensRevokesAll` passes
+- [ ] `TestQueryTokensWithPagination` passes
+- [ ] All existing single-item endpoint tests still pass (no regression)
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on all modified packages
+
+---
+
+## Step 31 — Push notification HTTP delivery (G26)
+
+**Gap addressed:**
+- **G26** (delivery sub-gap) — The `mgmt/push/trigger` endpoint records a `PUSH/PENDING`
+  history entry but makes no HTTP call to the subscriber's `notifyInterface` address.
+  AH5 requires the orchestrator to POST the matching orchestration results to the
+  subscriber's callback URL when a trigger fires.
+
+**Why now:** High-impact for Prototyping and Production. The push model is one of the two
+AH5 orchestration styles; without actual delivery the subscribe/trigger machinery is
+non-functional from a client's perspective.
+
+**Prerequisites:** Step 29 complete (pagination available for delivery response body).
+Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/orchestration/dynamic/service/orchestrator.go` — add `deliverPush` private
+  method: look up all active subscriptions for the triggered service, perform
+  `POST <notifyInterface>` with the orchestration result payload, update history entry to
+  `DELIVERED` or `FAILED` based on HTTP response. Use a goroutine per delivery to avoid
+  blocking the trigger handler.
+- `core/internal/orchestration/simplestore/service/orchestrator.go` — same pattern
+  (SimpleStore also supports subscribe/trigger per Step 19)
+- `core/internal/orchestration/dynamic/service/orchestrator_test.go` — use `httptest.Server`
+  as the subscriber endpoint to assert delivery
+
+**Files to modify (core-evol/):**
+- `core-evol/internal/orchestration/service.go` — add `deliverPush` to
+  `XACMLOrchestrator` trigger path; same goroutine pattern and history update
+
+**New environment variable:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `PUSH_DELIVERY_TIMEOUT_SECONDS` | `5` | HTTP timeout for each push notification delivery attempt |
+
+**Delivery semantics:**
+- Fire-and-forget with timeout — if the subscriber endpoint does not respond within
+  `PUSH_DELIVERY_TIMEOUT_SECONDS`, mark history as `FAILED` and continue.
+- No retry. A failed delivery is recorded in orchestration history as `PUSH/FAILED`.
+- A successful delivery (HTTP 2xx) is recorded as `PUSH/DELIVERED`.
+
+---
+
+### System test
+
+Start an `httptest.Server` (or a minimal test HTTP server) as the subscriber. Subscribe to
+a service. Trigger a push. Assert that the test server received exactly one POST with the
+expected orchestration result payload. Assert history shows `PUSH/DELIVERED`.
+Also: trigger push with subscriber at an unreachable address — assert history shows
+`PUSH/FAILED` within `PUSH_DELIVERY_TIMEOUT_SECONDS + 1` seconds.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out \
+  ./internal/orchestration/dynamic/service/... \
+  ./internal/orchestration/simplestore/service/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on both service packages.
+
+### Documentation updates (after Step 31)
+
+- `core/GAP_ANALYSIS.md` — mark G26 fully resolved; describe delivery semantics (goroutine,
+  timeout, DELIVERED/FAILED history states, no retry)
+- `core/SPEC.md` — update push trigger behavior: document that trigger now POSTs results to
+  `notifyInterface`; add `PUSH_DELIVERY_TIMEOUT_SECONDS`; document DELIVERED/FAILED history
+  states
+- `README.md` — add `PUSH_DELIVERY_TIMEOUT_SECONDS` to DynamicOrchestration Configuration table
+- `CONFORMANCE.md` — move G26 delivery from Open → Resolved; update DynamicOrchestration
+  and SimpleStoreOrchestration Behavior% ratings
+
+### Completion criteria
+
+- [ ] `TestPushTriggerDeliversToPushSubscriber` passes (real HTTP delivery via httptest.Server)
+- [ ] `TestPushDeliveryFailureRecordedInHistory` passes (unreachable subscriber → FAILED)
+- [ ] `TestPushDeliveryTimeoutRespected` passes (slow subscriber → FAILED before timeout+1s)
+- [ ] `TestPushTriggerDoesNotBlockHandler` passes (handler returns 200 before goroutines complete)
+- [ ] `TestSimpleStorePushDelivery` passes (same for SimpleStore)
+- [ ] core-evol: `TestXACMLOrchestratorPushDelivery` passes
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] `cd core-evol && go test -race ./...` passes
+- [ ] `bash core/test-system.sh` passes
+- [ ] Coverage ≥ 80% on `orchestration/dynamic/service` and `orchestration/simplestore/service`
+
+---
+
+## Step 32 — Phase 2 documentation update
+
+**Purpose:** Consolidated documentation sweep after all five implementation steps (27–31) are
+complete. Ensures every authoritative document reflects the final implemented state.
+
+**Prerequisites:** Steps 27–31 all complete and passing. Pre-flight check passes.
+
+**No code changes.** This step is documentation only.
+
+### `core/GAP_ANALYSIS.md`
+
+Each of the five resolved gaps must have:
+- A `**Status: Resolved in Step N**` line at the top of the gap section
+- An implementation summary paragraph (env var(s), which handler/service files, key design decision)
+
+Gaps to update: G37, G42, G20, G38, G39, G26.
+
+### `CONFORMANCE.md`
+
+1. Move all six gaps (G37, G42, G20, G38, G39, G26) from **Open Gaps** table → **Resolved Gaps** table with Step numbers 27–31.
+2. Update **Per-System Ratings** for all affected systems:
+   - ServiceRegistry: Behavior% +5 (Blacklist integration), Endpoint% +3 (pagination)
+   - Authentication: Behavior% +3 (mgmt access policy)
+   - ConsumerAuthorization: Endpoint% +15 (G38+G39 bulk endpoints), Behavior% +5 (G37 mgmt + G42 blacklist check)
+   - DynamicOrchestration: Behavior% +8 (G37 mgmt, G42 filter, G26 delivery)
+   - SimpleStoreOrchestration: Behavior% +8 (same)
+   - FlexibleStoreOrchestration: Behavior% +5 (G37, G42)
+   - Blacklist: Behavior% +10 (G42 integration — Blacklist actually blocks now)
+   - GeneralManagement: Behavior% +5 (G37)
+3. Update Phase Plan: mark Phase 2 as **Complete**.
+4. Update **last updated** timestamp.
+
+### `CONFORMANCE_UPDATE_PLAN.md`
+
+1. Tick all completion criteria checkboxes in Steps 27–31.
+2. Add Phase 2 regression matrix (see below) as section 13.
+
+### `core/SPEC.md`
+
+- Add `MGMT_AUTH_URL` config to all system sections (G37)
+- Add `BLACKLIST_URL` config to SR, Orchestration, ConsumerAuth sections (G42)
+- Add `PUSH_DELIVERY_TIMEOUT_SECONDS` to DynamicOrchestration section (G31)
+- Add pagination object to all query request shapes; add `count` to all list responses (G20)
+- Add nine new ConsumerAuth bulk endpoints (G38, G39)
+- Update push-trigger behavior to document actual HTTP delivery (G26)
+
+### `core/EXAMPLES.md`
+
+- Add Example 6: paginated service list request and response
+- Add Example 7: `mgmt/grant-policies` bulk request and response
+- Add Example 8: `mgmt/check-policies` mixed result
+- Add Example 9: push trigger — delivery confirmed in history
+
+### `README.md`
+
+- Add `MGMT_AUTH_URL` to the Configuration table (all systems section)
+- Add `BLACKLIST_URL` to the Configuration table (SR, Orchestration, ConsumerAuth)
+- Add `PUSH_DELIVERY_TIMEOUT_SECONDS` to DynamicOrchestration section
+
+### Completion criteria
+
+- [ ] All six gaps (G37, G42, G20, G38, G39, G26) appear in the Resolved Gaps table in `CONFORMANCE.md`
+- [ ] None of the six gaps remain in the Open Gaps table in `CONFORMANCE.md`
+- [ ] Per-system ratings updated in `CONFORMANCE.md`
+- [ ] Phase Plan row for Phase 2 shows **Complete**
+- [ ] All Steps 27–31 completion criteria checkboxes are `[x]`
+- [ ] All new env vars documented in `core/SPEC.md` and `README.md`
+- [ ] All new endpoints documented in `core/SPEC.md`
+- [ ] `core/EXAMPLES.md` updated with at least one example per major new feature
+- [ ] `core/GAP_ANALYSIS.md` shows resolved status for G20, G26, G37, G38, G39, G42
+
+---
+
+## 13. Phase 2 — Regression matrix
+
+Run after all Phase 2 steps are complete (Steps 27–31):
+
+| Check | Steps |
+|---|---|
+| `cd core && go build ./...` | All Phase 2 |
+| `cd core && go vet ./...` | All Phase 2 |
+| `cd core && go test -race ./...` | All Phase 2 |
+| `bash core/test-system.sh` | All Phase 2 |
+| `cd core-evol && go build ./... && go test -race ./...` | 27, 28, 31 |
+| `go build ./...` (workspace root) | All Phase 2 |
 

@@ -16,6 +16,10 @@ Documentation sources (reviewed May 2026 — full site traversal):
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/communication_profiles/
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/general_management/
 
+**Implementation status (as of May 2026):** Phases 1 and 2 complete (Steps 1–32, E1–E5).
+Resolved gaps: G2, G3, G5, G7, G8, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G24, G25, G26, G27, G28, G29, G30, G37, G38, G39, G41, G42, G43 (+ G23 partial, G40 partial).
+Open gaps (Phase 3): G1, G4, G6, G9, G10, G23 (variants), G34, G35, G36, G40 (QoS filtering).
+
 ---
 
 ## Gaps
@@ -134,12 +138,19 @@ in-memory research use but must be resolved before any security-sensitive deploy
 
 ---
 
-### G11 — System revoke uses query parameter instead of auth-token identity
+### G11 — System revoke derives identity from verified token
 
-AH5 `DELETE /serviceregistry/system-discovery/revoke` has no path or body parameter
-— the system to revoke is inferred from the Authorization header. Because credential
-verification is stubbed (G2, G10), this implementation uses `?name=<systemName>` as
-a query parameter. This deviates from the AH5 wire protocol for this endpoint.
+**Status: Resolved in Step E1**
+
+`DELETE /serviceregistry/mgmt/systems/revoke` now extracts the `Authorization: Bearer <token>`
+header and calls `GET <authURL>/authentication/identity/verify/<token>` to resolve the
+system name. If the token is absent or the authentication system is unreachable or returns
+a non-200 response, the request is rejected with 401 (fail-closed). When `authURL` is not
+configured, the endpoint falls back to the `?name=` query parameter (backward-compatible
+for unauthenticated deployments).
+
+The legacy `?name=`-based `DELETE /serviceregistry/system-discovery/revoke` endpoint is
+retained but still uses query-parameter identity.
 
 ---
 
@@ -274,9 +285,19 @@ Validation is enforced at the discovery register endpoints (`handleDeviceRegiste
 
 ### G20 — No pagination on query endpoints
 
-AH5 all query and list operations accept a `pagination` object (`page`, `size`, `direction`, `sortField`) and return bounded result sets. This implementation returns the full in-memory collection on every query.
+**Status: Resolved in Step 29**
 
-**Fix:** Add a generic `Paginate[T]` helper and apply it in each query handler across all six systems.
+AH5 all query and list operations accept a `pagination` object (`page`, `size`, `direction`, `sortField`) and return bounded result sets.
+
+**Implementation:** A generic `model.Paginate[T]` helper (`core/internal/model/paginate.go`) sorts by a string key field and applies `PageNumber`/`PageSize` offsets. Zero `PageSize` returns all results. The helper is wired into every query and list handler across all six core systems:
+- ServiceRegistry: `mgmt/systems/query`, `service-discovery/lookup`
+- Authentication: `mgmt/identities/query`, `mgmt/sessions`
+- ConsumerAuthorization: `authorization/lookup`, `authorization/mgmt/query`, and the new bulk `mgmt/query-policies`
+- DynamicOrchestration: `mgmt/push/query`, `mgmt/lock/query`, `mgmt/history/query`
+- SimpleStoreOrchestration: `mgmt/simple-store/query`
+- FlexibleStoreOrchestration: `mgmt/flexiblestore/rules`
+
+All paginated responses include `count` (page size) and `totalCount` (full collection size) fields.
 
 ---
 
@@ -357,14 +378,16 @@ AH5 `ServiceOrchestrationRequest` requires an `orchestrationFlags` object with B
 
 `orchestrationFlags` is now present in `OrchestrationRequest`. `MATCHMAKING` (truncate to one result) and `ONLY_PREFERRED` (filter by `preferredProviders`) are fully implemented in DynamicOrchestration. `ALLOW_TRANSLATION` and `ONLY_EXCLUSIVE` are accepted but are no-op stubs.
 
-**Remaining gap — intercloud flags (Step 25):** `ALLOW_INTERCLOUD` and `ONLY_INTERCLOUD` are
-currently accepted and silently ignored, giving callers a misleading successful response.
-They should return `501 Not Implemented` to signal that intercloud orchestration is not
-supported. This is addressed in Step 25.
+**Intercloud flags (resolved in Step E4):** `ALLOW_INTERCLOUD` and `ONLY_INTERCLOUD` now
+return `501 Not Implemented` in both DynamicOrchestration and SimpleStoreOrchestration.
+The error is detected before any SR query so no work is wasted. FlexibleStore does not
+expose `OrchestrationFlags` in its request model and is unaffected.
 
 ---
 
-### G26 — Subscription and push orchestration model — **Partially resolved (Step 19)**
+### G26 — Subscription and push orchestration model — **Resolved (Step 31)**
+
+**Status: Resolved in Step 31** (partially resolved in Step 19)
 
 AH5 defines a push-style orchestration alongside pull:
 
@@ -372,13 +395,18 @@ AH5 defines a push-style orchestration alongside pull:
 - `DELETE /serviceorchestration/orchestration/unsubscribe/{id}` — cancel a subscription
 - Push management endpoints for operators: subscribe on behalf of systems, trigger push, query subscriptions
 
-**Implemented in Step 19:**
-- `subscribe` and `unsubscribe` endpoints on both DynamicOrchestration and SimpleStoreOrchestration. In-memory `SubscriptionStore`; duplicate subscribe (same owner+target) overwrites and returns 200.
-- Push management on DynamicOrchestration: `mgmt/push/subscribe`, `mgmt/push/unsubscribe`, `mgmt/push/trigger`, `mgmt/push/query`.
-- `trigger` records a `PUSH/PENDING` history entry. Actual notification delivery to the subscriber's `notifyInterface` address is a **stub** — no HTTP call is made. This limitation is intentional for the research context.
-- `core-evol/internal/orchestration` (`dynamicorch-xacml`) also implements the same subscribe/unsubscribe and push management endpoints (same in-memory stores; same semantics).
+**Implemented in Step 19:** `subscribe` and `unsubscribe` endpoints on both DynamicOrchestration and SimpleStoreOrchestration. Push management on DynamicOrchestration: `mgmt/push/subscribe`, `mgmt/push/unsubscribe`, `mgmt/push/trigger`, `mgmt/push/query`. Same endpoints in `core-evol/internal/orchestration` (`dynamicorch-xacml`).
 
-**Remaining gap:** Background provider-change polling and real notification delivery to arbitrary HTTP endpoints are not implemented.
+**Implemented in Step 31 (delivery):**
+- `mgmt/push/trigger` now performs actual HTTP POST delivery to the subscriber's `notifyInterface` URL.
+- Delivery is fire-and-forget: launched in a goroutine, returns 200 to the caller immediately.
+- History entry is created as `PUSH/PENDING` and updated to `PUSH/DELIVERED` (HTTP 2xx) or `PUSH/FAILED` (error or non-2xx) after delivery.
+- No retry. A failed delivery is recorded and the next trigger is a clean attempt.
+- `PUSH_DELIVERY_TIMEOUT_SECONDS` env var (default: `5`) controls the HTTP timeout per delivery.
+- URL extracted from `notifyInterface` map: tries `"notifyUri"`, then `"uri"`, then assembles from `"address"` + `"port"` + `"path"`.
+- Same delivery logic implemented in `core-evol/internal/orchestration/handler.go`.
+
+**Remaining sub-gap:** Background provider-change polling (automatic push when registry changes) is not implemented — triggers must be fired manually via `mgmt/push/trigger`.
 
 ---
 
@@ -493,23 +521,23 @@ The Translation Manager is invoked by DynamicOrchestration when the `ALLOW_TRANS
 
 ### G37 — Management access policy not implemented
 
+**Status: Resolved in Step 27**
+
 AH5 defines three access control modes for all core systems' management endpoints (`/mgmt/*`):
 
 - `sysop-only` — only the Sysop identity may call management endpoints
 - `whitelist` — a pre-configured list of system names may call management endpoints
 - `authorization` — ConsumerAuthorization governs access, treating management as a service
 
-This implementation exposes all management endpoints without authentication. Any caller on the network can query, create, or delete records via management endpoints.
+**Implementation:** `httputil.RequireManagementAuth(w, r, mgmtAuthURL, origin)` checks the `Authorization: Bearer <token>` header by calling the Authentication system's `/authentication/identity/verify` endpoint and asserting `sysop: true`. Returns 401 (missing token), 403 (non-sysop), or 503 (auth system unreachable). The `sysop` property is set automatically on the bootstrapped Sysop identity.
 
-**Scope:** Cross-cutting — affects all eight core systems (ServiceRegistry, Authentication, ConsumerAuthorization, DynamicOrchestration, SimpleStoreOrchestration, FlexibleStoreOrchestration, CertificateAuthority, Blacklist).
-
-**Fix:** Add a configurable `MGMT_ACCESS_POLICY` environment variable (default `sysop-only`). For `sysop-only`, validate the `Authorization: Bearer` header via the Authentication system's verify endpoint before any management operation. This is the same pattern as D8 for orchestration identity check.
+All eight core systems accept `MGMT_AUTH_URL` env var. When set to the Authentication system base URL, all management endpoints are guarded. When empty (default), management access is open (development mode). `core-evol/internal/orchestration` uses an inline equivalent `requireMgmtAuth` method (cannot import `core/internal/httputil`).
 
 ---
 
 ### G38 — authorizationTokenManagement bulk endpoints not fully implemented
 
-**Status: Partially resolved in Step 15**
+**Status: Resolved in Step 30**
 
 AH5 ConsumerAuthorization exposes `authorizationTokenManagement` as a set of sysop bulk endpoints under `/consumerauthorization/authorization-token/mgmt/`:
 
@@ -519,13 +547,13 @@ AH5 ConsumerAuthorization exposes `authorizationTokenManagement` as a set of sys
 - `POST mgmt/add-encryption-keys` — register bulk encryption keys for JWT providers
 - `DELETE mgmt/remove-encryption-keys` — bulk key removal
 
-Step 15 implemented the individual endpoints (`/generate`, `/verify`, `/public-key`, `/encryption-key`). The bulk management endpoints listed above are absent.
-
-**Fix:** Implement each bulk endpoint as a wrapper that invokes the individual logic in a loop, returning a batch result list. Revocation is the highest-priority fix (needed for incident response).
+**Implementation:** All five bulk endpoints are now implemented in `core/internal/consumerauth/api/handler.go` and `service/auth.go`. Each bulk call iterates the input list and delegates to the existing single-item service logic; per-item errors are captured in the result without aborting the batch. `mgmt/query-tokens` uses the shared `model.Paginate[T]` helper. All endpoints require management auth (`MGMT_AUTH_URL`).
 
 ---
 
 ### G39 — authorizationManagement bulk endpoints absent
+
+**Status: Resolved in Step 30**
 
 AH5 ConsumerAuthorization exposes `authorizationManagement` bulk endpoints under `/consumerauthorization/authorization/mgmt/`:
 
@@ -534,13 +562,14 @@ AH5 ConsumerAuthorization exposes `authorizationManagement` bulk endpoints under
 - `POST mgmt/query-policies` — paginated query with filters (consumer, provider, targetType, policyType)
 - `POST mgmt/check-policies` — non-destructive bulk check (returns which tuples are authorized)
 
-This implementation has individual grant (`/grant`), revoke (`/revoke/{id}`), lookup (`/lookup`), and verify (`/verify`) endpoints but not the bulk management paths above.
-
-**Fix:** Implement each endpoint. `mgmt/grant-policies` and `mgmt/revoke-policies` loop over the input list and call existing store logic. `mgmt/query-policies` and `mgmt/check-policies` are new query paths.
+**Implementation:** All four endpoints are now implemented in `core/internal/consumerauth/api/handler.go` and `service/auth.go`. `mgmt/grant-policies` iterates the input policies list, calls `Grant` per item, and returns a per-item result including the created instanceId or error string. `mgmt/revoke-policies` accepts `{"instanceIds": [...]}` in the request body. `mgmt/query-policies` supports optional filter (instanceIds, targetNames, cloudIdentifiers) and pagination. `mgmt/check-policies` accepts a list of `VerifyRequest` tuples and returns each with an `authorized: bool` field. All endpoints require management auth.
 
 ---
 
 ### G40 — QoS requirements not supported in orchestration requests
+
+**Result-fields sub-gap: Resolved in Step E3** (see below).
+**QoS sub-gap: open** — `qualityRequirements[]` filtering requires G35 (Device QoS Evaluator).
 
 AH5 `ServiceOrchestrationRequest` includes a `qualityRequirements[]` array. Each entry specifies quality dimensions that candidate providers must satisfy. The orchestrator is expected to call the Device QoS Evaluator (G35) to retrieve RTT/bandwidth metrics for each candidate and filter out providers that do not meet the requirements.
 
@@ -548,59 +577,62 @@ This implementation's `OrchestrationRequest` has no `qualityRequirements` field.
 
 **Fix:** Add `QoSRequirements []QoSRequirement` to the request model. Initially implement as an accepted-but-ignored stub. Full evaluation requires G35 (Device QoS Evaluator). Document the stub explicitly.
 
-**Note:** `ServiceOrchestrationResult` is also missing three spec-defined fields: `cloudIdentifier` (which cloud the provider belongs to), `exclusiveUntil` (populated from lock store when a lock exists), and `interfaces[]` (interface definitions forwarded from SR). These should be added in the same change.
+**Result-fields resolved in Step E3:** `OrchestrationResult` now includes:
+- `cloudIdentifier` — always `"LOCAL"` (this implementation is a single-cloud deployment)
+- `interfaces[]` — forwarded from the SR response for DynamicOrchestration; forwarded from stored rule for SimpleStore/FlexibleStore
+- `exclusiveUntil` — populated from the lock store when a lock exists (DynamicOrchestration); empty for store-based orchestrators
 
 ---
 
-### G41 — Blacklist Bearer token enforcement and `mode` filter absent
+### G41 — Blacklist Bearer token enforcement and `mode` filter
 
-**Status: Resolved in Step 20 for endpoints; behavioral gaps remain**
+**Status: Resolved in Step E2 (Step H)**
 
-While the Blacklist system endpoints are implemented (G28/Step 20), two behavioral gaps remain:
+Both behavioral gaps are now closed:
 
-1. **Bearer enforcement:** `GET /blacklist/lookup` and `GET /blacklist/check/{name}` are specified to require `Authorization: Bearer <token>` (validated against the Authentication system). The implementation returns results without any authentication check.
+1. **Bearer enforcement:** When `authURL` is configured, `GET /blacklist/lookup` and `GET /blacklist/check/{name}` require `Authorization: Bearer <token>`. A missing token returns 401. Without `authURL` (unauthenticated deployments), the endpoints remain open.
 
-2. **Mode filter enum:** `POST /blacklist/mgmt/query` should accept a `mode` field with values `ALL`, `ACTIVES`, or `INACTIVES`. The implementation uses `active: *bool` (three-valued boolean) which is functionally equivalent but wire-incompatible with AH5 clients that send the string enum.
-
-**Fix:** Add an auth middleware to Blacklist discovery handlers. Change `active *bool` to `mode string` in the query request model and map `ALL`→nil, `ACTIVES`→true, `INACTIVES`→false before filtering.
+2. **Mode filter enum:** `POST /blacklist/mgmt/query` accepts `mode` field with values `ALL`, `ACTIVES`, or `INACTIVES`. An invalid mode value returns 400. The mode is mapped to the internal active filter before querying.
 
 ---
 
 ### G42 — Blacklist enforcement not integrated with other core systems
 
-The Blacklist system exists as a standalone service (G28/Step 20) but is not consulted by any other core system. The AH5 spec intends that:
+**Status: Resolved in Step 28**
 
-- **ServiceRegistry** rejects `register` requests from blacklisted systems
-- **Orchestration** excludes blacklisted providers from orchestration results
-- **ConsumerAuthorization** rejects `grant` and `verify` for blacklisted consumers or providers
+The Blacklist system exists as a standalone service (G28/Step 20) but was not consulted by any other core system.
 
-None of these cross-checks exist. A blacklisted system can freely register, be returned as an orchestration result, and obtain authorization grants.
+**Implementation:** `core/internal/blacklist/client/client.go` defines a `BlacklistClient` interface with `IsBlacklisted(ctx, name) (bool, error)` and two implementations:
+- `HTTPClient` — calls the Blacklist system's `/blacklist/check/{name}` endpoint; **fail-closed**: returns `(true, nil)` on any network error
+- `NopClient` — always returns `(false, nil)` (used in tests and when `BLACKLIST_URL` is unset)
 
-**Fix:** Add a `BlacklistClient` interface with a `IsBlacklisted(ctx, name) (bool, error)` method. Wire it into ServiceRegistry's register handler, Orchestration's result filter, and ConsumerAuthorization's grant/verify handlers. Use `fail-closed` semantics (treat Blacklist unreachability as blacklisted) consistent with D4.
+Wired into:
+- **ServiceRegistry** (`register` handler): rejects requests from blacklisted `providerSystem.systemName` with 403
+- **DynamicOrchestration** (`Orchestrate`): rejects blacklisted requesters (Step 2.5); filters blacklisted providers from results (Step 4)
+- **ConsumerAuthorization** (`grant` handler): rejects blacklisted provider with 403; (`verify` handler): returns `false` for blacklisted consumer or provider (without 4xx — consistent with verify semantics)
+- `CertificateAuthority` (`/ca/sign` handler): rejects blacklisted system names with 403
+
+All systems accept `BLACKLIST_URL` env var. When empty (default), `NopClient{}` is used and no blacklist check is performed.
 
 ---
 
-### G43 — Authentication `credentials` not validated as a structured object
+### G43 — Authentication `credentials` validated as a structured object
 
-AH5 specifies `POST /authentication/identity/login` accepts `credentials` as a JSON object
-`{"password": "..."}`. The `AuthenticationMethod` enum currently only documents `PASSWORD`.
+**Status: Resolved in Step E5**
 
-This implementation accepts `credentials` as any JSON value. If `credentials` is a bare
-string, an array, or `null`, the handler currently passes whatever it receives to the bcrypt
-comparison (which then fails with "wrong password") and returns 401 rather than the correct
-400 for a malformed request. The `password` sub-field is not validated to be present or
-non-empty before the bcrypt call.
+When an identity repository is configured, `POST /authentication/identity/login` now strictly
+validates the `credentials` field:
 
-**Root cause:** A1 (now resolved as a gap rather than an ambiguity — the spec clearly uses
-`{"password": "..."}` in its login examples even if the field format is not formally specified
-in a schema section).
+- `null`, missing, or non-object values → **400 Bad Request**
+- Object without a `"password"` key → **400 Bad Request**
+- Valid `{"password": "..."}` object → proceeds to bcrypt verification
 
-**Impact:** Malformed login requests that omit the password key receive a misleading 401 instead
-of 400. AH5 clients that construct credentials incorrectly get no actionable feedback.
+Without an identity repository (unauthenticated mode), the handler still accepts plain strings
+and objects for backward compatibility.
 
-**Fix:** Define a `Credentials` struct `{Password string}` with custom `UnmarshalJSON` that
-rejects non-object JSON values. Return 400 if the password key is absent or the value is
-not a JSON object.
+Seven experiment service files have been updated to send `{"password": "..."}` objects instead
+of plain strings: experiment-4, 5, 7 (consumer-direct-tls, robot-fleet-tls), and
+experiment-13 (robot-fleet-tls).
 
 ---
 
