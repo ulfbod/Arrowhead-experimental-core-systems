@@ -28,29 +28,59 @@ Ratings assess three orthogonal dimensions:
 
 ## Per-System Ratings
 
-Ratings reflect all resolved steps through Step 39 (Phase 3 complete).
+Ratings reflect the implemented state after Phase 3 (Steps 1–39, E1–E5) and account for all
+open gaps identified through the Phase 4/5 audit. Ratings will improve as Phases 4 and 5 are completed.
 
 | System | Endpoint% | Model% | Behavior% | Overall | Key open gaps |
 |--------|-----------|--------|-----------|---------|---------------|
-| ServiceRegistry | 87 | 80 | 85 | **~84%** | — (G10, G34 resolved) |
-| Authentication | 85 | 80 | 78 | **~81%** | — |
-| ConsumerAuthorization | 80 | 75 | 75 | **~77%** | — (G23 variants resolved) |
-| DynamicOrchestration | 90 | 82 | 88 | **~87%** | — (G40 QoS filtering resolved) |
-| SimpleStoreOrchestration | 80 | 75 | 83 | **~79%** | — |
-| Blacklist | 100 | 85 | 90 | **~92%** | — |
-| GeneralManagement (cross-cutting) | 100 | 85 | 90 | **~92%** | — (G34 MQTT adapter resolved) |
+| ServiceRegistry | 82 | 75 | 82 | **~80%** | G44, G45 |
+| Authentication | 85 | 80 | 76 | **~81%** | G52 |
+| ConsumerAuthorization | 78 | 70 | 68 | **~72%** | G46, G47, G6 (partial) |
+| DynamicOrchestration | 88 | 82 | 84 | **~85%** | G48, G49, G25 (ONLY_EXCLUSIVE) |
+| SimpleStoreOrchestration | 77 | 75 | 82 | **~78%** | G51 |
+| Blacklist | 100 | 85 | 85 | **~91%** | G50 |
+| GeneralManagement (cross-cutting) | 100 | 85 | 87 | **~91%** | — |
 | FlexibleStoreOrchestration | N/A | N/A | N/A | Extension | No spec (G1) |
 | CertificateAuthority | N/A | N/A | N/A | Extension | Not in spec (G9) |
-| DeviceQoSEvaluator | 90 | 90 | 85 | **~88%** | — (new in Phase 3) |
-| TranslationManager | 90 | 90 | 85 | **~88%** | — (new in Phase 3) |
+| DeviceQoSEvaluator | 85 | 80 | 80 | **~82%** | G53 |
+| TranslationManager | 85 | 85 | 80 | **~84%** | Phase 5 roadmap |
 
 **Notes:**
 - G11, G25 (intercloud), G40 (result fields), G41, G43 resolved in Phase 1 (Steps E1–E5).
 - G37, G42, G20, G38, G39, G26 resolved in Phase 2 (Steps 27–31).
 - G10, G23 (variants), G34 (MQTT adapter), G35, G36, G40 (QoS filtering) resolved in Phase 3 (Steps 33–38).
+- Ratings revised downward after Phase 4/5 audit revealed G44–G53 and residual partial gaps.
 - GeneralManagement is a cross-cutting capability, not an independent system.
 - FlexibleStoreOrchestration and CertificateAuthority are extensions with no AH5 spec
   counterpart; conformance ratings are not applicable.
+
+**Projected ratings after Phase 4 (Steps 40–49):**
+
+| System | Endpoint% | Model% | Behavior% | Overall |
+|--------|-----------|--------|-----------|---------|
+| ServiceRegistry | 92 | 85 | 90 | **~89%** |
+| Authentication | 90 | 83 | 85 | **~86%** |
+| ConsumerAuthorization | 83 | 78 | 80 | **~81%** |
+| DynamicOrchestration | 92 | 85 | 90 | **~89%** |
+| SimpleStoreOrchestration | 85 | 80 | 87 | **~84%** |
+| Blacklist | 100 | 88 | 92 | **~94%** |
+| GeneralManagement | 100 | 88 | 92 | **~94%** |
+| DeviceQoSEvaluator | 90 | 85 | 87 | **~87%** |
+| TranslationManager | 90 | 88 | 85 | **~88%** |
+
+**Projected ratings after Phase 5 (Steps 50–56):**
+
+| System | Endpoint% | Model% | Behavior% | Overall |
+|--------|-----------|--------|-----------|---------|
+| ServiceRegistry | 95 | 92 | 95 | **~94%** |
+| Authentication | 95 | 90 | 92 | **~93%** |
+| ConsumerAuthorization | 95 | 92 | 92 | **~93%** |
+| DynamicOrchestration | 97 | 90 | 95 | **~94%** |
+| SimpleStoreOrchestration | 92 | 85 | 92 | **~90%** |
+| Blacklist | 100 | 92 | 95 | **~96%** |
+| GeneralManagement | 100 | 92 | 95 | **~96%** |
+| DeviceQoSEvaluator | 95 | 92 | 92 | **~93%** |
+| TranslationManager | 92 | 90 | 88 | **~90%** |
 
 ---
 
@@ -70,11 +100,34 @@ Ratings reflect all resolved steps through Step 39 (Phase 3 complete).
 
 ## Open Gaps — Impact and Phase
 
-*No open conformance gaps remain. All gaps from Phases 1–3 are resolved.*
+Phases 1–3 are complete. The gaps below were identified during the Phase 4/5 audit and represent
+the remaining work to reach full AH5 conformance.
+
+### Partial gaps (implementation exists but incomplete)
 
 | Gap | Description | PoC | Teaching | Prototyping | Production | Phase |
 |-----|-------------|-----|----------|-------------|------------|-------|
-| **G34** (MQTTS) | MQTT over TLS not implemented (plain MQTT adapter is in place) | Low | Low | Medium | High | — |
+| **G4** (completion) | mTLS not enforced by default; plain HTTP is the default transport | None | Low | High | **Blocker** | **5** |
+| **G6** (completion) | ConsumerAuth does not require a prior Authentication token for authz token generation | None | Low | Medium | High | **5** |
+| **G23** (JWT) | JWT token variants (RSA_SHA256, RSA_SHA512, TRANSLATION_BRIDGE) return 501 | None | Low | Medium | High | **5** |
+| **G25** (ONLY_EXCLUSIVE) | `ONLY_EXCLUSIVE` flag accepted but not enforced against the lock store | None | Low | Medium | Medium | **4** |
+| **G26** (auto-push) | Push delivery is manual-trigger only; no provider-change auto-polling | None | Medium | Medium | High | **5** |
+| **G34** (MQTTS) | MQTT over TLS not implemented; plain MQTT adapter is in place | Low | Low | Medium | High | **5** |
+
+### New gaps (Phase 4/5 audit)
+
+| Gap | Description | PoC | Teaching | Prototyping | Production | Phase |
+|-----|-------------|-----|----------|-------------|------------|-------|
+| **G44** | ServiceRegistry missing PUT update operations for systems, devices, interface templates, service definitions | Low | Low | Medium | High | **4** |
+| **G45** | `securityPolicy` accepted but not validated on service registration; `authenticationInfo` stored but not enforced | None | Low | Medium | High | **4** |
+| **G46** | `scopedPolicies` stored but not evaluated in ConsumerAuthorization verify; only `defaultPolicy` is checked | None | Medium | High | **Blocker** | **4** |
+| **G47** | JWT token signing infrastructure absent; RSA key pair not managed; `/authorization-token/public-key` returns 404 | None | Low | High | **Blocker** | **5** |
+| **G48** | `ONLY_EXCLUSIVE` orchestration flag does not consult lock store to exclude locked providers | None | Low | Medium | Medium | **4** |
+| **G49** | Orchestration history query has no filtering by consumer, service, status, or date range | None | Low | Medium | High | **4** |
+| **G50** | Blacklist expired entries never auto-purged; accumulate unboundedly in store | None | None | Low | Medium | **4** |
+| **G51** | SimpleStore full rule update endpoint missing; only priority reordering is available | None | Low | Medium | Medium | **4** |
+| **G52** | Authentication identity creation does not enforce PascalCase naming convention (G19 applies to SR only) | None | Low | Low | Medium | **4** |
+| **G53** | QoS measurements limited to TCP RTT; bandwidth, jitter, packet-loss not modelled or measured | None | Low | High | High | **5** |
 
 ---
 
@@ -132,6 +185,8 @@ Ratings reflect all resolved steps through Step 39 (Phase 3 complete).
 | **Phase 1** | E1–E5 | Wire-compatibility: five gaps that break spec-compliant clients | **Complete** |
 | **Phase 2** | 27–32 | Functional completeness: access policy, Blacklist integration, pagination, bulk endpoints, push delivery | **Complete** |
 | **Phase 3** | 33–39 | Advanced conformance: registration identity, token variants, QoS evaluation, support systems, MQTT | **Complete** |
+| **Phase 4** | 40–49 | Behavioral completeness: model correctness gaps, missing CRUD operations, scoped policy evaluation | Planned |
+| **Phase 5** | 50–56 | Full protocol compliance: JWT token signing, mTLS by default, auth coupling, MQTTS, QoS dimensions | Planned |
 
 ### Phase 2 — Step breakdown
 
@@ -162,6 +217,42 @@ See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan (Steps 27�
 
 See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan (Steps 33–39).
 
+### Phase 4 — Behavioral completeness (Steps 40–49)
+
+**Goal:** Close model-correctness and missing-CRUD gaps identified in the Phase 4/5 audit.
+No new external dependencies. All steps are independent of each other except where noted.
+
+**Order:** Step 40 (G44 — SR PUT operations) first because it unblocks SR management tooling. Steps 41–47 are independent. Step 48 (G46 — scoped policies) should come before Step 50 (G6 completion) in Phase 5 since they share the ConsumerAuth verify path. Step 49 is the documentation sweep.
+
+| Step | Gap(s) | Focus | Priority | Systems affected |
+|------|--------|-------|----------|-----------------|
+| 40 | G44 | ServiceRegistry PUT update endpoints for systems, devices, interface templates, service definitions | High | SR |
+| 41 | G45 | `securityPolicy` enum validation on service registration; `authenticationInfo` field wired into verification | Medium | SR |
+| 42 | G46 | Scoped policy evaluation in ConsumerAuth verify — consult `ScopedPolicies[scope]` before falling back to `DefaultPolicy` | **Blocker** (Production) | ConsumerAuth |
+| 43 | G48 | `ONLY_EXCLUSIVE` flag — exclude candidates whose `exclusiveUntil` is in the future from orchestration results | Medium | DynamicOrch |
+| 44 | G49 | Orchestration history query filtering — consumer, service definition, status, date range | Medium | DynamicOrch |
+| 45 | G50 | Blacklist expired-entry auto-purge — background goroutine; configurable `BLACKLIST_PURGE_INTERVAL_SECONDS` | Low | Blacklist |
+| 46 | G51 | SimpleStore full rule update endpoint — `PUT /mgmt/simple-store/update/{id}` replacing all rule fields | Medium | SimpleStoreOrch |
+| 47 | G52 | Authentication identity creation naming convention — enforce PascalCase on `POST /mgmt/identities` | Low | Authentication |
+| 48 | G25 | `ONLY_EXCLUSIVE` flag returns 501 if used without lock support; update stub behaviour | Low | DynamicOrch, SimpleStoreOrch |
+| 49 | — | Phase 4 documentation update — CONFORMANCE.md, GAP_ANALYSIS.md, SPEC.md, EXAMPLES.md, README.md | — | — |
+
+### Phase 5 — Full protocol compliance (Steps 50–56)
+
+**Goal:** Reach ≥90% across all dimensions for every spec-defined system. Covers high-effort crypto, transport, and protocol gaps. Each step has external dependencies or significant design risk; careful prerequisite management is required.
+
+**Order:** Step 50 (G46 scoped-policy prerequisite already complete from Phase 4; Step 50 builds on it for G6). Step 51 (G47 JWT) is independent but needs an RSA key-pair bootstrap mechanism. Step 52 (G4 mTLS) builds on the existing TLS infrastructure from experiment-7. Step 53 (G53 QoS dimensions) extends the Device QoS Evaluator. Step 54 (G26 auto-push) extends DynamicOrchestration push. Step 55 (G34 MQTTS) extends the MQTT adapter. Step 56 is the documentation sweep.
+
+| Step | Gap(s) | Focus | Priority | Notes |
+|------|--------|-------|----------|-------|
+| 50 | G6 | ConsumerAuth token relay — `POST /authorization-token/generate` requires a valid Bearer token from Authentication; verified `systemName` must match request `consumer` | High | Builds on G46 (Phase 4) and REGISTER_AUTH_URL pattern (G10) |
+| 51 | G47 | JWT token variants — RSA key-pair managed at startup (`JWT_PRIVATE_KEY_FILE` env var); `RSA_SHA256_JSON_WEB_TOKEN` and `RSA_SHA512_JSON_WEB_TOKEN` generation and verify; `/authorization-token/public-key` endpoint returns PEM | Medium | Needs `crypto/rsa` or `github.com/golang-jwt/jwt/v5` |
+| 52 | G4 | mTLS default enforcement — `HTTPS_ONLY` env var makes TLS_PORT the primary listener; plain HTTP only for health endpoints and Docker bootstrap | High | Builds on experiment-7 TLS infrastructure |
+| 53 | G53 | QoS full model — `bandwidthBps`, `jitterMs`, `packetLoss` fields on `QoSRecord`; active bandwidth probe; `QOS_PROBE_TIMEOUT_SECONDS` env var; `maxBandwidthBps`, `maxJitterMs` in `QoSRequirement` | Low | Requires iPerf or ICMP probe logic |
+| 54 | G26 | Provider-change auto push — `PUSH_POLL_INTERVAL_SECONDS` env var; background goroutine monitors SR for provider changes and fires triggers automatically | Medium | Requires SR event feed or polling loop |
+| 55 | G34 | MQTTS — MQTT over TLS; `MQTT_BROKER_TLS_CERT_FILE`, `MQTT_BROKER_TLS_KEY_FILE` env vars; register `MQTT-SECURE-JSON` interface alongside `MQTT-INSECURE-JSON` | Low | Extends mqttutil adapter |
+| 56 | — | Phase 5 documentation update — CONFORMANCE.md, GAP_ANALYSIS.md, SPEC.md, EXAMPLES.md, README.md | — | — |
+
 ---
 
 ## Extensions beyond AH5 (not conformance gaps)
@@ -174,4 +265,4 @@ See `CONFORMANCE_UPDATE_PLAN.md` for the detailed TDD execution plan (Steps 33�
 
 ---
 
-*Last updated: 2026-05-31 (Phase 3 complete — Steps 33–39 implemented; G10, G23, G34, G35, G36, G40 resolved)*
+*Last updated: 2026-05-31 (Phase 4/5 audit — G44–G53 added; per-system ratings revised; Phase 4 and Phase 5 plans added)*

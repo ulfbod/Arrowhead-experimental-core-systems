@@ -16,10 +16,11 @@ Documentation sources (reviewed May 2026 — full site traversal):
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/communication_profiles/
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/general_management/
 
-**Implementation status (as of May 2026):** Phases 1, 2, and 3 complete (Steps 1–39, E1–E5).
+**Implementation status (as of May 2026):** Phases 1, 2, and 3 complete (Steps 1–39, E1–E5). Phases 4 and 5 planned.
 Resolved: G2, G3, G5, G7, G8, G10, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G23, G24, G25, G26, G27, G28, G29, G30, G34, G35, G36, G37, G38, G39, G40, G41, G42, G43.
-Partial: G4 (mTLS experiment-7 only), G6 (optional coupling), G34 (MQTT adapter only — MQTTS unimplemented).
-Open: None.
+Partial: G4 (mTLS experiment-7 only; default transport is plain HTTP), G6 (optional coupling via ENABLE_IDENTITY_CHECK; ConsumerAuth does not require a prior Authentication token), G23 (JWT variants still 501), G25 (ONLY_EXCLUSIVE stub; ALLOW_TRANSLATION wired but protocol-level translation not implemented), G26 (manual push trigger only; no provider-change auto-polling), G34 (plain MQTT adapter only; MQTTS unimplemented).
+Open (Phase 4): G44, G45, G46, G48, G49, G50, G51, G52.
+Open (Phase 5): G4 (completion), G6 (completion), G23 (JWT completion), G34 (MQTTS), G47, G53.
 Design decisions (not conformance gaps): G1 (FlexibleStore — no spec), G9 (CA — intentional extension).
 
 ---
@@ -652,6 +653,126 @@ and objects for backward compatibility.
 Seven experiment service files have been updated to send `{"password": "..."}` objects instead
 of plain strings: experiment-4, 5, 7 (consumer-direct-tls, robot-fleet-tls), and
 experiment-13 (robot-fleet-tls).
+
+---
+
+### G44 — ServiceRegistry management missing update (PUT) operations
+
+AH5 management surfaces for devices, systems, service definitions, and interface templates all define full CRUD. The ServiceRegistry implementation supports create, query, and delete on each resource but has no PUT update endpoint.
+
+**Missing endpoints:**
+- `PUT /serviceregistry/mgmt/devices` — update device metadata/addresses
+- `PUT /serviceregistry/mgmt/systems` — update system metadata
+- `PUT /serviceregistry/mgmt/service-definitions` — update service definition name/metadata
+- `PUT /serviceregistry/mgmt/interface-templates` — update interface template properties
+
+**Impact (Endpoint%):** Four missing endpoints out of roughly 22 defined management endpoints.
+
+**Status:** Open (Phase 4)
+
+---
+
+### G45 — `securityPolicy` accepted but not validated on service registration
+
+`POST /serviceregistry/service-discovery/register` accepts an `InterfaceInstance` whose `policy` field is stored verbatim. The `SecurityPolicy` enum constant (`NONE`, `CERT_AUTH`, `TIME_LIMITED_TOKEN_AUTH`, etc.) is defined in the model but only validated in G30's management path. The discovery register handler does not reject unknown policy values, and the stored `authenticationInfo` field on systems and services is never verified during subsequent operations.
+
+**Impact (Model%, Behavior%):** Clients registering with an invalid or misspelled security policy receive 201 with corrupted data. Downstream consumers trusting the stored `policy` may apply the wrong access model.
+
+**Status:** Open (Phase 4)
+
+---
+
+### G46 — Scoped policies stored but not evaluated in ConsumerAuthorization verify
+
+`AuthPolicy.ScopedPolicies` is a `map[string]PolicyDef` populated from the grant request and persisted. `POST /consumerauthorization/authorization/verify` accepts a `scope` field in its request body. However, `VerifyRequest.Scope` is read and stored on the record but the verify logic unconditionally evaluates `p.DefaultPolicy`; the scoped policy map is never consulted.
+
+**Root cause:** The scope lookup (`if req.Scope != "" { if sp, ok := p.ScopedPolicies[req.Scope]; ok { policy = sp } }`) is present in the source but disabled by a preceding return path.
+
+**Impact (Behavior%):** Providers that rely on per-scope access control (e.g., read vs. write scope) cannot enforce scoped policies through ConsumerAuthorization. All verifications reduce to the default policy regardless of the scope field.
+
+**Status:** Open (Phase 4)
+
+---
+
+### G47 — JWT-based token variants return 501; signing infrastructure absent
+
+Three token variants defined by AH5 are not implemented:
+
+- `RSA_SHA256_JSON_WEB_TOKEN` — RSA-2048 + SHA-256 signed JWT
+- `RSA_SHA512_JSON_WEB_TOKEN` — RSA-4096 + SHA-512 signed JWT
+- `TRANSLATION_BRIDGE_TOKEN` — token conveying translation metadata for cross-format calls
+
+All three return `501 Not Implemented` from `GenerateAuthToken`. The `/authorization-token/public-key` endpoint returns 404 (JWT key pair never generated). No RSA key pair is managed at startup.
+
+**Impact (Endpoint%, Model%):** Three of the six defined token variants are non-functional. Providers that verify tokens by fetching the public key cannot validate any token issued by this implementation.
+
+**Dependency:** A Go JWT library (e.g., `github.com/golang-jwt/jwt/v5`) or standard `crypto/rsa` + `encoding/pem` key generation. The `TRANSLATION_BRIDGE_TOKEN` also requires coordination with the Translation Manager (G36).
+
+**Status:** Open (Phase 5) — JWT key management requires a non-trivial crypto bootstrap; deferred after Phase 4 correctness work.
+
+---
+
+### G48 — `ONLY_EXCLUSIVE` orchestration flag is a no-op stub
+
+`OrchestrationFlags.OnlyExclusive` is parsed and stored on the orchestration request but never evaluated. AH5 semantics for `ONLY_EXCLUSIVE`: the orchestrator should only return providers that are not currently locked by another consumer (i.e., not in the active lock store).
+
+**Implementation gap:** The lock store (`mgmt/lock/query`) exists and is populated on orchestration requests that set `exclusiveUntil`. However, the filter step in `Orchestrate` does not consult the lock store to exclude already-locked providers when `ONLY_EXCLUSIVE` is true.
+
+**Impact (Behavior%):** Consumers that request exclusive access receive non-exclusive results; lock store is populated for successful requests but not used as an exclusion filter.
+
+**Status:** Open (Phase 4)
+
+---
+
+### G49 — Orchestration history query has no filtering
+
+`POST /serviceorchestration/orchestration/mgmt/history/query` accepts an empty JSON body and returns all history entries. The AH5 spec implies filtering by requester, service definition, status, and date range. No filter fields are currently honoured.
+
+**Impact (Behavior%):** In any non-trivial deployment the history accumulates unboundedly and every query returns the full set. Sysops cannot query history for a specific consumer or time window.
+
+**Status:** Open (Phase 4)
+
+---
+
+### G50 — Blacklist expired entries are never auto-purged
+
+`DELETE /blacklist/mgmt/remove` sets `active: false` on entries rather than deleting records (correct per AH5 soft-delete semantics). However, entries whose `expiresAt` timestamp has passed accumulate in the store indefinitely. A `POST /blacklist/mgmt/query` with `mode: ALL` returns these expired entries, and the in-memory store grows without bound over time.
+
+**Impact (Behavior%):** Long-running deployments accumulate stale entries. Operators using mgmt queries to audit the blacklist see historically expired records alongside active ones, increasing noise and making accurate auditing harder.
+
+**Status:** Open (Phase 4)
+
+---
+
+### G51 — SimpleStore full rule update endpoint missing
+
+`POST /serviceorchestration/orchestration/mgmt/simple-store/create` and `PUT mgmt/simple-store/modify-priorities` allow creating rules and reordering them. There is no endpoint to update the full content of an existing rule (provider, consumer, service definition, service URI, interfaces) in place.
+
+**Impact (Endpoint%):** Operators must delete and recreate rules to change any field other than priority. This is inconvenient and loses the stable rule UUID, potentially breaking external references.
+
+**Status:** Open (Phase 4)
+
+---
+
+### G52 — Authentication identity creation does not enforce naming conventions
+
+`POST /authentication/mgmt/identities` creates identity records with a `systemName` field. G19 establishes that system names must follow PascalCase (regex `^[A-Z][A-Za-z0-9]{0,62}$`). That validation is enforced in the ServiceRegistry `handleSystemRegister` handler but not in the Authentication management identity endpoint.
+
+**Impact (Behavior%):** Identity records can be created with system names that would be rejected by the ServiceRegistry, creating a latent inconsistency between the two systems. A system that cannot register in the SR can still obtain tokens from the Authentication system.
+
+**Status:** Open (Phase 4)
+
+---
+
+### G53 — QoS measurements limited to TCP RTT; bandwidth and jitter not modelled
+
+The Device QoS Evaluator (G35) implements only TCP RTT measurement via `net.DialTimeout`. AH5 defines `qualityRequirements` that include latency, bandwidth, and jitter dimensions. The `QoSRecord` model has no `bandwidthBps`, `jitterMs`, or `packetLoss` fields. The `QoSRequirement` model (used in orchestration requests) has only `maxLatencyMs`.
+
+**Impact (Endpoint%, Model%, Behavior%):** Consumers that specify bandwidth or jitter requirements in their orchestration request cannot be served correctly. The Device QoS Evaluator cannot function as a complete AH5-compliant support system.
+
+**Scope:** Medium — requires additional probe logic (e.g., iPerf-style bandwidth probe or ICMP jitter), model extension, and wire format alignment. Probe timeout is also not configurable via env var.
+
+**Status:** Open (Phase 5) — deferred; latency filtering is the most common use case and is already implemented.
 
 ---
 
