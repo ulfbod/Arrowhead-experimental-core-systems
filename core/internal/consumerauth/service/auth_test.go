@@ -353,3 +353,88 @@ func TestJWTVariantReturns501(t *testing.T) {
 		t.Fatal("expected error for unsupported JWT variant")
 	}
 }
+
+// ─── G57 — Token descriptor fields (usageLimit, expiresAt optionality) ───────
+
+func TestGenerateAuthTokenUsageLimitedHasUsageLimitNoExpiresAt(t *testing.T) {
+	svc := newAuthService()
+	req := model.TokenGenerateRequest{
+		TokenVariant:  model.TokenVariantUsageLimited,
+		Provider:      "Provider1",
+		TargetType:    model.TargetServiceDef,
+		Target:        "tempService",
+		MaxUsageCount: 5,
+	}
+	desc, err := svc.GenerateAuthToken(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if desc.UsageLimit == nil {
+		t.Error("UsageLimit should not be nil for USAGE_LIMITED_TOKEN")
+	} else if *desc.UsageLimit != 5 {
+		t.Errorf("UsageLimit = %d, want 5", *desc.UsageLimit)
+	}
+	if desc.ExpiresAt != "" {
+		t.Errorf("ExpiresAt should be empty for USAGE_LIMITED_TOKEN, got %q", desc.ExpiresAt)
+	}
+}
+
+func TestGenerateAuthTokenTimeLimitedHasExpiresAtNoUsageLimit(t *testing.T) {
+	svc := newAuthService()
+	req := model.TokenGenerateRequest{
+		TokenVariant: model.TokenVariantTimeLimited,
+		Provider:     "Provider1",
+		TargetType:   model.TargetServiceDef,
+		Target:       "tempService",
+	}
+	desc, err := svc.GenerateAuthToken(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if desc.ExpiresAt == "" {
+		t.Error("ExpiresAt should be set for TIME_LIMITED_TOKEN")
+	}
+	if desc.UsageLimit != nil {
+		t.Errorf("UsageLimit should be nil for TIME_LIMITED_TOKEN, got %d", *desc.UsageLimit)
+	}
+}
+
+func TestGenerateAuthTokenBase64SelfContainedOmitsExpiresAtAndUsageLimit(t *testing.T) {
+	svc := newAuthService()
+	req := model.TokenGenerateRequest{
+		TokenVariant: model.TokenVariantBase64SelfContained,
+		Provider:     "Provider1",
+		TargetType:   model.TargetServiceDef,
+		Target:       "tempService",
+		Consumer:     "Consumer1",
+	}
+	desc, err := svc.GenerateAuthToken(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// BASE64_SELF_CONTAINED embeds expiry in the payload — descriptor should not carry expiresAt.
+	if desc.ExpiresAt != "" {
+		t.Errorf("ExpiresAt should be empty for BASE64_SELF_CONTAINED, got %q", desc.ExpiresAt)
+	}
+	if desc.UsageLimit != nil {
+		t.Errorf("UsageLimit should be nil for BASE64_SELF_CONTAINED, got %d", *desc.UsageLimit)
+	}
+}
+
+func TestGenerateAuthTokenUsageLimitedDefaultsToOne(t *testing.T) {
+	svc := newAuthService()
+	req := model.TokenGenerateRequest{
+		TokenVariant:  model.TokenVariantUsageLimited,
+		Provider:      "Provider1",
+		TargetType:    model.TargetServiceDef,
+		Target:        "tempService",
+		MaxUsageCount: 0, // should default to 1
+	}
+	desc, err := svc.GenerateAuthToken(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if desc.UsageLimit == nil || *desc.UsageLimit != 1 {
+		t.Errorf("UsageLimit should default to 1, got %v", desc.UsageLimit)
+	}
+}

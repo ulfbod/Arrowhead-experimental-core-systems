@@ -927,6 +927,11 @@ Generates an authorization token for the specified target.
 }
 ```
 
+Field presence by variant:
+- `TIME_LIMITED_TOKEN` — `expiresAt` is set; `usageLimit` omitted.
+- `USAGE_LIMITED_TOKEN` — `usageLimit` is set (defaults to 1 when `maxUsageCount` is 0); `expiresAt` omitted.
+- `BASE64_SELF_CONTAINED`, `RSA_SHA256_JSON_WEB_TOKEN`, `RSA_SHA512_JSON_WEB_TOKEN`, `TRANSLATION_BRIDGE_TOKEN` — both `expiresAt` and `usageLimit` omitted (expiry is embedded in the token payload or not applicable).
+
 **Response: 501 Not Implemented** — unsupported `tokenVariant`.
 
 Tokens expire after 1 hour.
@@ -1082,7 +1087,7 @@ The `serviceRequirement` field is the AH5 spec name; `requestedService` is accep
 ```json
 {
   "requesterSystem":    { "systemName": "", "address": "", "port": 0 },
-  "serviceRequirement": { "serviceDefinition": "", "interfaces": [], "metadata": {} },
+  "serviceRequirement": { "serviceDefinition": "", "interfaces": [], "metadata": {}, "versionRequirement": "" },
   "orchestrationFlags": {
     "MATCHMAKING":       false,
     "ONLY_PREFERRED":    false,
@@ -1105,7 +1110,18 @@ The `serviceRequirement` field is the AH5 spec name; `requestedService` is accep
       "serviceUri":          "string",
       "interfaces":          ["string"],
       "exclusiveUntil":      "RFC3339 (omitted when provider is not locked)",
-      "aliveUntil":          "string"
+      "aliveUntil":          "string",
+      "authorizationTokens": {
+        "<interfaceName>": {
+          "<scope>": {
+            "tokenType":  "string",
+            "targetType": "string",
+            "token":      "string",
+            "usageLimit": 0,
+            "expiresAt":  "RFC3339"
+          }
+        }
+      }
     }
   ]
 }
@@ -1124,7 +1140,8 @@ Note: `serviceDefinitition` (double 't') and `cloudIdentitifer` (missing 'n') ar
 4. If `ENABLE_AUTH=true`, calls `POST /consumerauthorization/authorization/verify` for each result and removes unauthorized providers.
 5. If `orchestrationFlags.ONLY_PREFERRED=true` and `preferredProviders` is non-empty, filters results to only those matching a preferred provider's `systemName`.
 6. If `orchestrationFlags.MATCHMAKING=true` and more than one result remains, truncates to the first result.
-7. Returns the remaining results with `cloudIdentitifer="LOCAL"` and `interfaces` forwarded from the SR response.
+7. If `RELAY_TOKENS=true`, calls `POST /consumerauthorization/authorization-token/generate` for each remaining result and populates `authorizationTokens` on that result (outer key = interface name, inner key = `""`). Token relay errors are silently skipped (fail-open).
+8. Returns the remaining results with `cloudIdentitifer="LOCAL"` and `interfaces` forwarded from the SR response.
 
 **Configuration (env vars):**
 - `SERVICE_REGISTRY_URL` — default `http://localhost:8080`
@@ -1136,6 +1153,7 @@ Note: `serviceDefinitition` (double 't') and `cloudIdentitifer` (missing 'n') ar
 - `BLACKLIST_URL` — when set, the Blacklist system is consulted to reject blacklisted requesters (step 2.5) and filter blacklisted providers (step 4). When empty, no blacklist check is performed.
 - `PUSH_DELIVERY_TIMEOUT_SECONDS` — HTTP timeout per push notification delivery attempt. Default: `5`.
 - `QOS_EVALUATOR_URL` — when set, DynamicOrchestration calls `POST <QOS_EVALUATOR_URL>/deviceqosevaluator/quality-evaluation/measure` for each candidate when `qualityRequirements[]` is present in the request. Fail-open: if the evaluator is unreachable, the candidate is included. When empty, a NopQoSClient (fail-open) is used. Added in Step 36 (G40).
+- `RELAY_TOKENS` — when `true`, DynamicOrchestration calls `POST <CONSUMER_AUTH_URL>/consumerauthorization/authorization-token/generate` per orchestration result and embeds the returned token in `authorizationTokens` on each `OrchestrationResult`. Key structure: outer = interface name (defaults to `"HTTP-INSECURE-JSON"` when empty), inner = scope (`""` for unscoped/default). Added in Step 60 (G54).
 
 **Push trigger delivery semantics (`mgmt/push/trigger`):**
 1. Records a `PUSH/PENDING` history entry.

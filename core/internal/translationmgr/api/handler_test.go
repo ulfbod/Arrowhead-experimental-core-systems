@@ -26,6 +26,15 @@ func postJSON(t *testing.T, h http.Handler, path string, body any) *httptest.Res
 	return w
 }
 
+func jsonBody(t *testing.T, v any) *bytes.Reader {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("jsonBody marshal: %v", err)
+	}
+	return bytes.NewReader(data)
+}
+
 func TestCreateBridgeAndTranslate(t *testing.T) {
 	h := newHandler()
 
@@ -126,5 +135,81 @@ func TestBridgeCRUD(t *testing.T) {
 	json.NewDecoder(wr.Body).Decode(&list) //nolint:errcheck
 	if len(list) != 0 {
 		t.Errorf("after delete: list count = %d, want 0", len(list))
+	}
+}
+
+// ─── Step 63 — TranslationManager behavior audit ─────────────────────────────
+
+// TestTranslateMissingBridgeIDReturns400 — translate with empty bridgeId → 400 not 404.
+func TestTranslateMissingBridgeIDReturns400(t *testing.T) {
+	h := newHandler()
+	body := jsonBody(t, map[string]any{
+		"bridgeId": "",
+		"payload":  map[string]any{"x": 1},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/translationmanager/translation/translate", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", w.Code)
+	}
+}
+
+// TestCreateBridgeDuplicateIDReturns409 — creating a bridge with an already-used ID → 409.
+func TestCreateBridgeDuplicateIDReturns409(t *testing.T) {
+	h := newHandler()
+	first := model.Bridge{
+		ID:           "bridge-001",
+		SourceFormat: "a",
+		TargetFormat: "b",
+		FieldMappings: map[string]string{"x": "y"},
+	}
+	// First create succeeds.
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/translationmanager/translation/mgmt/bridges", jsonBody(t, first)))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("first create: want 201, got %d", w.Code)
+	}
+	// Second create with same ID → 409.
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, httptest.NewRequest(http.MethodPost, "/translationmanager/translation/mgmt/bridges", jsonBody(t, first)))
+	if w2.Code != http.StatusConflict {
+		t.Errorf("duplicate create: want 409, got %d", w2.Code)
+	}
+}
+
+// TestTranslateNonObjectPayloadReturns400 — non-object payload → 400.
+func TestTranslateNonObjectPayloadReturns400(t *testing.T) {
+	h := newHandler()
+	// Create a bridge first.
+	w := httptest.NewRecorder()
+	bridge := model.Bridge{SourceFormat: "a", TargetFormat: "b", FieldMappings: map[string]string{"x": "y"}}
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/translationmanager/translation/mgmt/bridges", jsonBody(t, bridge)))
+	var created model.Bridge
+	json.NewDecoder(w.Body).Decode(&created) //nolint:errcheck
+
+	// Translate with an array payload instead of an object.
+	body := jsonBody(t, map[string]any{
+		"bridgeId": created.ID,
+		"payload":  []any{1, 2, 3},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/translationmanager/translation/translate", body)
+	req.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, req)
+	if w2.Code != http.StatusBadRequest {
+		t.Errorf("non-object payload: want 400, got %d", w2.Code)
+	}
+}
+
+// TestStatusUnknownBridgeReturns404 — status endpoint for unknown bridge → 404.
+func TestStatusUnknownBridgeReturns404(t *testing.T) {
+	h := newHandler()
+	req := httptest.NewRequest(http.MethodGet, "/translationmanager/translation/status/no-such-id", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
 	}
 }

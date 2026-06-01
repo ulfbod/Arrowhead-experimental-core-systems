@@ -16,9 +16,9 @@ Documentation sources (reviewed May 2026 — full site traversal):
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/communication_profiles/
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/general_management/
 
-**Implementation status (as of May 2026):** Phases 1–5 complete (Steps 1–56, E1–E5).
-Resolved: G2, G3, G4, G5, G6, G7, G8, G10, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G23, G24, G25, G26, G27, G28, G29, G30, G34, G35, G36, G37, G38, G39, G40, G41, G42, G43, G44, G45, G46, G47, G48, G49, G50, G51, G52, G53.
-Open: none.
+**Implementation status (as of June 2026):** Phases 1–6 complete (Steps 1–64, E1–E5).
+Resolved: G2, G3, G4, G5, G6, G7, G8, G10, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G23, G24, G25, G26, G27, G28, G29, G30, G34, G35, G36, G37, G38, G39, G40, G41, G42, G43, G44, G45, G46, G47, G48, G49, G50, G51, G52, G53, G54, G55, G57, G58.
+Reclassified (not AH5 gaps): G56 (AH4 artifact — `secure` field absent from AH5 5.2.0).
 Design decisions (not conformance gaps): G1 (FlexibleStore — no spec), G9 (CA — intentional extension).
 
 ---
@@ -784,6 +784,92 @@ The Device QoS Evaluator (G35) implements only TCP RTT measurement via `net.Dial
 
 ---
 
+### G54 — Token relay field absent from OrchestrationResult
+
+AH5 describes a token-relay mechanism in which the orchestration response carries a ConsumerAuthorization token that the consumer presents to the provider to prove its access grant. The `OrchestrationResult` type has no `token` field. DynamicOrchestration and SimpleStoreOrchestration do not call ConsumerAuthorization during the orchestration flow to obtain a token and do not include one in the response.
+
+Without this field, AH5-compliant consumers cannot complete the provider-level authorization handshake as the spec intends. They must implement a separate out-of-band ConsumerAuth flow, which is not the intended usage model.
+
+**Impact (Model%):** `OrchestrationResult` does not match the AH5 specified response shape.
+**Impact (Behavior%):** The AH5 authorization chain (Authentication → ConsumerAuth → token in orchestration response → provider) cannot be exercised end-to-end through this implementation.
+
+Note: Ambiguity A4 documents open questions about which token the provider validates and how. This gap addresses the ConsumerAuth token relay path, which is the more clearly specified part of the mechanism.
+
+**Status: Resolved in Step 60** — `authorizationTokens` map added to `OrchestrationResult` (outer key = interface name, inner key = scope string, `""` for default/unscoped). `TokenRelayClient` interface and `CATokenRelayHTTPClient` call `POST /consumerauthorization/authorization-token/generate` per result. Opt-in via `RELAY_TOKENS=true` env var. `AuthorizationTokenDescriptor` defined in the orchestration model package to avoid cross-package imports (D1). See D11 for key semantics.
+
+---
+
+### G55 — Version requirement absent from orchestration ServiceFilter
+
+The `ServiceFilter` type used in all orchestration request bodies has no `versionRequirement` field. The ServiceRegistry supports exact version matching when queried directly via `POST /serviceregistry/query` (`versionRequirement` field). Orchestration consumers cannot express version preferences through any of the three orchestrators; version filtering is silently absent.
+
+**Impact (Model%):** `ServiceFilter` is a strict subset of the SR query model; the missing field prevents symmetric filtering behaviour.
+**Impact (Behavior%):** Orchestration results may include providers running on incompatible API versions. Consumers that require a specific version must implement their own post-orchestration filtering.
+
+**Status: Resolved in Step 59** — `VersionRequirement string` added to `ServiceRequirement` in `core/internal/orchestration/model/types.go`. `SRHTTPClient.LookupServices` forwards the value as `Versions: []string{versionRequirement}` in the AH5 SR lookup body. JSON tag `versionRequirement,omitempty` — field is omitted when empty.
+
+---
+
+### G56 — `secure` field — reclassified as AH4 artifact
+
+**Status: Reclassified in Step 58 — not a conformance gap for AH5.**
+
+The original gap description assumed the `secure` field (`"NOT_SECURE"`, `"CERTIFICATE"`, `"TOKEN"`)
+was part of the AH5 ServiceRegistry model. Consultation of the AH5 5.2.0 Java reference
+implementation (`eclipse-arrowhead/ah5-core-java-spring`) confirmed the opposite:
+
+> The AH5 5.2.0 ServiceRegistry has **no `secure` field and no `ServiceSecurityType` enum**
+> anywhere in its entity or DTO layer.
+
+The `secure` field was an AH4 artifact. It was not carried forward into AH5, which instead
+uses policy-based `restricted` service discovery (controlled by `SERVICE_DISCOVERY_POLICY`
+and a boolean `restricted` flag on service instances). This approach has no direct equivalent
+in the current Go implementation, but it is a distinct mechanism from the AH4 `secure` field.
+
+**AH5 replacement mechanism (not yet implemented):**
+AH5 services can be flagged as `restricted` at registration. Discovery of restricted services
+requires authorization. This is catalogued as a future gap under the `restricted` discovery
+concept, separate from G56.
+
+**Go implementation:** The `secure` field exists only on the **legacy** `ServiceInstance` model
+(AH4-compatible surface). It is stored and returned verbatim but has no enforcement semantics.
+The AH5 surface (`AH5ServiceInstance`) has no `secure` field. No changes are required.
+
+**Evidence:** `draft-paper/ARROWHEAD_DOC_AMBIGUITIES.md` Part 1.3 documents this finding.
+
+---
+
+### G57 — ConsumerAuthorization token response omits `expiresAt`
+
+`POST /consumerauthorization/authorization/token/generate` returns `token`, `consumerSystemName`, and `serviceDefinition`. The response includes no `expiresAt` (or equivalent) field. Without expiry information, consumers cannot determine when a token will become invalid. They must either re-request a token before every interaction (wasteful) or hold it indefinitely (stale-token risk).
+
+The Authentication system addressed the analogous gap for identity tokens (G8 — background cleanup). ConsumerAuth tokens carry no expiry signal at all, making token lifecycle management impossible for the consumer.
+
+**Impact (Model%):** Response shape deviates from what AH5-compliant consumers expect.
+**Impact (Behavior%):** Token lifecycle is opaque to the consumer; rate-controlled or cached token use is not possible without guessing at expiry.
+
+**Status: Resolved in Step 57** — `UsageLimit *int` added to `TokenDescriptor` (omitempty). `ExpiresAt` changed to omitempty — TIME_LIMITED tokens still get `expiresAt`, USAGE_LIMITED tokens get `usageLimit` (defaults to 1 when `maxUsageCount` is 0), BASE64 and JWT variants get neither field. See `core/internal/consumerauth/model/types.go` and `service/auth.go`.
+
+---
+
+### G58 — ServiceRegistry AH5 discovery surface isolated from orchestration
+
+The ServiceRegistry exposes two independent API surfaces (see D10):
+
+- **AH5 surface:** `/serviceregistry/device-discovery/*`, `/serviceregistry/system-discovery/*`, `/serviceregistry/service-discovery/*` — uses AH5 model types (`Device`, `AH5System`, `ServiceDefinition`, `InterfaceTemplate`, `AH5ServiceInstance`) backed by separate in-memory stores.
+- **Legacy surface:** `POST /serviceregistry/register`, `POST /serviceregistry/query`, `DELETE /serviceregistry/unregister` — uses the AH4-compatible `ServiceInstance` model.
+
+DynamicOrchestration queries via `POST /serviceregistry/query` (D7), which reads only the legacy store. Services registered via the AH5 endpoints are completely invisible to orchestration. Services registered via the legacy endpoints do not appear in AH5 discovery queries. The two surfaces cannot interoperate.
+
+**Impact (Endpoint%):** AH5 discovery endpoints exist but cannot fulfil their purpose in an orchestrated stack.
+**Impact (Behavior%):** A spec-compliant AH5 client that registers via the AH5 endpoints will never be returned as a candidate by DynamicOrchestration. The full AH5 registration-to-orchestration flow cannot be exercised.
+
+Full closure requires: (1) unifying the AH5 and legacy SR stores, or providing a translation layer so the SR client can query across both; and (2) updating the SR client in DynamicOrchestration to use the AH5 service-discovery endpoint. SimpleStore and FlexibleStore are unaffected — they use pre-configured rules, not SR lookup.
+
+**Status: Resolved in Step 61** — `SRHTTPClient.LookupServices` now queries both the AH5 `POST /serviceregistry/service-discovery/lookup` endpoint and the legacy `POST /serviceregistry/query` endpoint. AH5 results take priority (deduplication by `providerName|serviceDefinition`); legacy results fill gaps. Fail-open for legacy: if the legacy call errors, AH5 results are returned as-is. This avoids breaking existing experiments while making AH5-registered services visible to DynamicOrchestration.
+
+---
+
 ## Design Decisions
 
 ### D1 — Six independent binaries, one Go module
@@ -880,6 +966,19 @@ The CA uses only Go standard library packages (`crypto/ecdsa`, `crypto/elliptic`
 The CA root certificate is self-signed ECDSA P-256, valid for 10 years from startup.  Leaf certificates use ECDSA P-256 as well, with both client and server extended key usages so they can represent any Arrowhead system in a future mTLS deployment.
 
 Serial numbers are allocated with an `atomic.Int64`, starting at 2 (1 is reserved for the CA root), ensuring uniqueness within a process lifetime without a database.
+
+---
+
+### D11 — `authorizationTokens` key semantics: interface name → scope → descriptor
+
+The AH5 spec does not define the exact key structure for `authorizationTokens` in `OrchestrationResult`. This implementation uses a two-level nested map:
+
+- **Outer key:** interface name from the result's `Interfaces` list (e.g., `"HTTP-INSECURE-JSON"`). Defaults to `"HTTP-INSECURE-JSON"` when the result has no interfaces.
+- **Inner key:** scope string. `""` (empty string) represents the default/unscoped grant — the most common case.
+
+This structure allows per-interface, per-scope tokens in future when multiple interfaces or scoped grants are needed, without requiring a schema change.
+
+The `AuthorizationTokenDescriptor` type is defined in the orchestration model package (not imported from `consumerauth`) to satisfy the D1 rule that systems communicate only via HTTP, not Go package imports.
 
 ---
 

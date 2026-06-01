@@ -343,10 +343,10 @@ Response `201 Created`:
 
 ```json
 {
-  "tokenType": "USAGE_LIMITED_TOKEN",
+  "tokenType":  "USAGE_LIMITED_TOKEN",
   "targetType": "SERVICE_DEF",
-  "token": "9f4e3b2a1d0c...",
-  "expiresAt": ""
+  "token":      "9f4e3b2a1d0c...",
+  "usageLimit": 2
 }
 ```
 
@@ -378,10 +378,9 @@ Response `201 Created`:
 
 ```json
 {
-  "tokenType": "BASE64_SELF_CONTAINED",
+  "tokenType":  "BASE64_SELF_CONTAINED",
   "targetType": "SERVICE_DEF",
-  "token": "eyJwcm92aWRlciI6Ii4uLiJ9.a3f9c2b1...",
-  "expiresAt": ""
+  "token":      "eyJwcm92aWRlciI6Ii4uLiJ9.a3f9c2b1..."
 }
 ```
 
@@ -477,3 +476,114 @@ Response `200 OK`:
   "translatedPayload": { "temp_celsius": 22.5, "rel_humidity": 61.0 }
 }
 ```
+
+---
+
+## Example 14: ConsumerAuth token with usageLimit and expiresAt (Step 57 — G57)
+
+**USAGE_LIMITED token** — response includes `usageLimit`, no `expiresAt`:
+
+`POST /consumerauthorization/authorization-token/generate` (requires sysop Bearer):
+
+```json
+{
+  "tokenVariant": "USAGE_LIMITED_TOKEN",
+  "provider": "SensorProvider",
+  "targetType": "SERVICE_DEF",
+  "target": "temperatureService",
+  "consumer": "ConsumerApp",
+  "maxUsageCount": 5
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "tokenType":  "USAGE_LIMITED_TOKEN",
+  "targetType": "SERVICE_DEF",
+  "token":      "a4f3b2e1d0c9...",
+  "usageLimit": 5
+}
+```
+
+**TIME_LIMITED token** — response includes `expiresAt`, no `usageLimit`:
+
+```json
+{
+  "tokenType":  "TIME_LIMITED_TOKEN",
+  "targetType": "SERVICE_DEF",
+  "token":      "f9e3b1a2d0c4...",
+  "expiresAt":  "2026-06-01T12:00:00Z"
+}
+```
+
+BASE64 and JWT variants include neither field — expiry is embedded in the token payload.
+
+---
+
+## Example 15: Orchestration with versionRequirement (Step 59 — G55)
+
+Request a specific service version through DynamicOrchestration:
+
+`POST /serviceorchestration/orchestration/pull`:
+
+```json
+{
+  "requesterSystem": { "systemName": "ConsumerApp", "address": "consumer-host", "port": 9090 },
+  "serviceRequirement": {
+    "serviceDefinition": "temperature-service",
+    "versionRequirement": "2.0.0"
+  },
+  "orchestrationFlags": {}
+}
+```
+
+DynamicOrchestration forwards `versionRequirement` to the AH5 SR lookup as `"versions": ["2.0.0"]`. Only providers registered with version `2.0.0` appear in the response. Omitting `versionRequirement` (or setting it to `""`) disables version filtering.
+
+---
+
+## Example 16: Orchestration with token relay (Step 60 — G54)
+
+Start DynamicOrchestration with token relay enabled:
+
+```bash
+RELAY_TOKENS=true ENABLE_AUTH=true go run ./cmd/dynamicorch
+```
+
+`POST /serviceorchestration/orchestration/pull`:
+
+```json
+{
+  "requesterSystem": { "systemName": "ConsumerApp", "address": "consumer-host", "port": 9090 },
+  "serviceRequirement": { "serviceDefinition": "temperature-service" },
+  "orchestrationFlags": {}
+}
+```
+
+Response `200 OK` — each result carries `authorizationTokens`:
+
+```json
+{
+  "results": [
+    {
+      "providerName":        "SensorProvider",
+      "serviceDefinitition": "temperature-service",
+      "cloudIdentitifer":    "LOCAL",
+      "interfaces":          ["HTTP-INSECURE-JSON"],
+      "authorizationTokens": {
+        "HTTP-INSECURE-JSON": {
+          "": {
+            "tokenType":  "TIME_LIMITED_TOKEN",
+            "targetType": "SERVICE_DEF",
+            "token":      "f9e3b1a2d0c4...",
+            "expiresAt":  "2026-06-01T12:00:00Z"
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+The consumer presents this token to the provider. The outer key is the interface name; the inner key `""` represents the default (unscoped) grant. `RELAY_TOKENS=false` (the default) omits `authorizationTokens` entirely.

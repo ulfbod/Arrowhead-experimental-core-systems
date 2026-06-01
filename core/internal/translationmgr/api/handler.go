@@ -42,6 +42,10 @@ func (h *Handler) handleTranslate(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON", tmOrigin)
 		return
 	}
+	if strings.TrimSpace(req.BridgeID) == "" {
+		httputil.WriteError(w, http.StatusBadRequest, "bridgeId is required", tmOrigin)
+		return
+	}
 	resp, err := h.svc.Translate(req.BridgeID, req.Payload)
 	if errors.Is(err, service.ErrBridgeNotFound) {
 		httputil.WriteError(w, http.StatusNotFound, "bridge not found", tmOrigin)
@@ -84,6 +88,10 @@ func (h *Handler) handleBridges(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		b, err := h.svc.CreateBridge(req)
+		if errors.Is(err, service.ErrDuplicateBridge) {
+			httputil.WriteError(w, http.StatusConflict, "bridge already exists", tmOrigin)
+			return
+		}
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, err.Error(), tmOrigin)
 			return

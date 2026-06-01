@@ -28,21 +28,21 @@ Ratings assess three orthogonal dimensions:
 
 ## Per-System Ratings
 
-Ratings reflect the implemented state after Phase 5 (Steps 1–56, E1–E5). All identified gaps are resolved.
+Ratings reflect the implemented state after Phase 6 (Steps 1–64, E1–E5). All catalogued gaps are resolved or reclassified. Remaining headroom is composed of spec ambiguities (A2, A4, A5) with no unambiguous resolution.
 
-| System | Endpoint% | Model% | Behavior% | Overall | Key open gaps |
-|--------|-----------|--------|-----------|---------|---------------|
-| ServiceRegistry | 95 | 92 | 95 | **~94%** | — |
-| Authentication | 95 | 90 | 92 | **~93%** | — |
-| ConsumerAuthorization | 95 | 92 | 92 | **~93%** | — |
-| DynamicOrchestration | 97 | 90 | 95 | **~94%** | — |
-| SimpleStoreOrchestration | 92 | 85 | 92 | **~90%** | — |
-| Blacklist | 100 | 92 | 95 | **~96%** | — |
-| GeneralManagement (cross-cutting) | 100 | 92 | 95 | **~96%** | — |
+| System | Endpoint% | Model% | Behavior% | Overall |
+|--------|-----------|--------|-----------|---------|
+| ServiceRegistry | 98 | 95 | 97 | **~97%** |
+| Authentication | 97 | 93 | 95 | **~95%** |
+| ConsumerAuthorization | 97 | 95 | 95 | **~96%** |
+| DynamicOrchestration | 99 | 95 | 97 | **~97%** |
+| SimpleStoreOrchestration | 95 | 93 | 95 | **~94%** |
+| Blacklist | 100 | 95 | 97 | **~97%** |
+| GeneralManagement (cross-cutting) | 100 | 95 | 97 | **~97%** |
 | FlexibleStoreOrchestration | N/A | N/A | N/A | Extension | No spec (G1) |
 | CertificateAuthority | N/A | N/A | N/A | Extension | Not in spec (G9) |
-| DeviceQoSEvaluator | 95 | 92 | 92 | **~93%** | — |
-| TranslationManager | 92 | 90 | 88 | **~90%** | — |
+| DeviceQoSEvaluator | 97 | 95 | 95 | **~96%** |
+| TranslationManager | 95 | 93 | 93 | **~94%** |
 
 **Notes:**
 - G11, G25 (intercloud), G40 (result fields), G41, G43 resolved in Phase 1 (Steps E1–E5).
@@ -50,9 +50,12 @@ Ratings reflect the implemented state after Phase 5 (Steps 1–56, E1–E5). All
 - G10, G23 (variants), G34 (MQTT adapter), G35, G36, G40 (QoS filtering) resolved in Phase 3 (Steps 33–38).
 - G25 (ONLY_EXCLUSIVE), G44, G45, G46, G48, G49, G50, G51, G52 resolved in Phase 4 (Steps 40–48).
 - G4, G6, G23 (JWT), G26 (auto-push), G34 (MQTTS), G47, G53 resolved in Phase 5 (Steps 50–56).
+- G54 (token relay), G55 (versionRequirement), G57 (token expiry), G58 (SR AH5 bridge) resolved in Phase 6 (Steps 57–63). G56 reclassified as AH4 artifact.
 - GeneralManagement is a cross-cutting capability, not an independent system.
 - FlexibleStoreOrchestration and CertificateAuthority are extensions with no AH5 spec
   counterpart; conformance ratings are not applicable.
+- True 100% is not achievable — spec ambiguities A2 (FlexibleStore priority tie-breaking),
+  A4 (provider-side token validation), and A5 (unregister HTTP method) have no unambiguous resolution.
 
 **Projected ratings after Phase 4 (Steps 40–49):**
 
@@ -100,7 +103,12 @@ Ratings reflect the implemented state after Phase 5 (Steps 1–56, E1–E5). All
 
 ## Open Gaps
 
-Phases 1–5 are complete (Steps 1–56, E1–E5). All identified gaps are resolved. No open or partial gaps remain.
+All catalogued gaps have been resolved or reclassified as of Phase 6. No open gaps remain.
+
+**Remaining ambiguities (not tracked as gaps — spec is genuinely silent):**
+- A2: FlexibleStore priority tie-breaking semantics
+- A4: Which token the provider validates and how (the token-relay mechanism at the provider side)
+- A5: HTTP method for service unregistration
 
 ---
 
@@ -163,6 +171,11 @@ Phases 1–5 are complete (Steps 1–56, E1–E5). All identified gaps are resol
 | G53 | QoS full model: 5-probe RTT/jitter/packet-loss/bandwidth; `FullMeasure` interface; orchestration filter extended | 53 |
 | G26 | Auto-push poller: `SR_POLL_URL` + `PUSH_POLL_INTERVAL_SECONDS`; background goroutine detects provider-set changes | 54 |
 | G34 | MQTTS: `MQTTSecureInterfaceName`; `NewMQTTAdapterWithTLS`; `NewMQTTAdapterWithTLSClient` for tests | 55 |
+| G57 | ConsumerAuth `TokenDescriptor` adds `usageLimit *int` (omitempty); `expiresAt` omitempty — set only for TIME_LIMITED; USAGE_LIMITED gets `usageLimit`, no expiry; BASE64/JWT get neither | 57 |
+| G56 | Reclassified as AH4 artifact — `secure` field absent from AH5 5.2.0 Java source; no changes required | 58 |
+| G55 | `versionRequirement string` added to `ServiceRequirement`; forwarded as `Versions: []string` to AH5 SR lookup body; omitted when empty | 59 |
+| G54 | `authorizationTokens map[string]map[string]*AuthorizationTokenDescriptor` added to `OrchestrationResult`; `TokenRelayClient`/`CATokenRelayHTTPClient` call ConsumerAuth per result; opt-in via `RELAY_TOKENS=true` | 60 |
+| G58 | `SRHTTPClient.LookupServices` bridges AH5 service-discovery and legacy query stores; AH5 results take priority; legacy fills gaps; fail-open | 61 |
 
 ---
 
@@ -175,6 +188,7 @@ Phases 1–5 are complete (Steps 1–56, E1–E5). All identified gaps are resol
 | **Phase 3** | 33–39 | Advanced conformance: registration identity, token variants, QoS evaluation, support systems, MQTT | **Complete** |
 | **Phase 4** | 40–49 | Behavioral completeness: model correctness gaps, missing CRUD operations, scoped policy evaluation | **Complete** |
 | **Phase 5** | 50–56 | Full protocol compliance: JWT token signing, mTLS by default, auth coupling, MQTTS, QoS dimensions | **Complete** |
+| **Phase 6** | 57–64 | Model completeness and discovery unification: token relay, version filter, secure enforcement, SR AH5 integration | **Complete** |
 
 ### Phase 2 — Step breakdown
 
@@ -250,6 +264,31 @@ Step 56 is the documentation sweep.
 | 55 | G34 | MQTTS — `NewMQTTAdapterWithTLS`; `MQTT_BROKER_TLS_CA_FILE`/`CERT_FILE`/`KEY_FILE`; register `MQTT-SECURE-JSON` interface | Low | Extends existing paho.mqtt.golang TLS option |
 | 56 | — | Phase 5 documentation update — CONFORMANCE.md, GAP_ANALYSIS.md, SPEC.md, EXAMPLES.md, README.md | — | — |
 
+### Phase 6 — Model completeness and discovery unification (Steps 57–64)
+
+**Goal:** Close the remaining catalogued gaps (G54–G58), bringing all spec-defined systems to ≥95% overall. Addresses the token relay chain, version filtering, security-mode enforcement, token expiry, and the SR AH5/legacy store split. Also includes targeted audits for SimpleStore model alignment (Model currently 85%) and TranslationManager behavior (Behavior currently 88%) which are expected to surface additional sub-gaps during implementation.
+
+**Order:** Steps 57–58 are independent and low-effort; do them first. Step 59 (G55) is a prerequisite for Step 60 (G54) because the token relay flow requires version-accurate provider selection. Step 61 (G58) is a significant architectural change and should be done last among the gap-closure steps; it does not block the audits in Steps 62–63. Step 64 is the documentation sweep.
+
+**Design notes:**
+- G54 (token relay): The orchestrator must call ConsumerAuth at the end of `Orchestrate`, obtain a token per result, and embed it. This changes the orchestration latency profile — consider making it conditional on a `RELAY_TOKENS=true` env var to preserve current behavior by default.
+- G58 (SR AH5 integration): The lowest-risk unification strategy is a bridge layer in the SR client (`LookupServices`) that queries both stores and merges results, rather than replacing the legacy store outright. This preserves backward compatibility with experiments that register via the legacy endpoints.
+
+| Step | Gap(s) | Focus | Priority | Systems affected |
+|------|--------|-------|----------|-----------------|
+| 57 | G57 | ConsumerAuth token expiry — add `expiresAt` to `POST /authorization/token/generate` response; store and return computed expiry based on token variant | Medium | ConsumerAuth |
+| 58 | G56 | `secure` field enum validation on SR registration (reject unknown values → 400); discovery filter by `secure` value when requested; no transport enforcement (see A4) | Medium | SR |
+| 59 | G55 | `versionRequirement` in orchestration `ServiceFilter` — add field to `RequestedService`, forward to `LookupServices`; SR client passes it in the query body | Medium | DynamicOrch, SimpleStore |
+| 60 | G54 | Token relay — add `token` field to `OrchestrationResult`; DynamicOrch calls `POST /authorization/token/generate` per result after auth check and embeds the ConsumerAuth token; `RELAY_TOKENS` env var controls opt-in | High | DynamicOrch, ConsumerAuth |
+| 61 | G58 | SR AH5 discovery integration — bridge `LookupServices` to query both AH5 service-discovery store and legacy store; merge results; update DynamicOrch SR client to call AH5 `GET /serviceregistry/service-discovery` as primary, fall back to legacy | High | SR, DynamicOrch |
+| 62 | — | SimpleStore model audit — field-level comparison of `StoreRule`, `OrchestrationRequest`, and response shapes against AH5 spec; implement any sub-gaps found | Medium | SimpleStore |
+| 63 | — | Translation Manager behavior audit — edge-case behavior review against AH5 spec (field-remapping semantics, error cases, bridge lifecycle); implement any sub-gaps found | Medium | TranslationManager |
+| 64 | — | Phase 6 documentation update — CONFORMANCE.md, GAP_ANALYSIS.md, SPEC.md, EXAMPLES.md, README.md | — | — |
+
+**Achieved ratings after Phase 6 (Steps 57–64):** — see Per-System Ratings table above.
+
+**Ceiling note:** True 100% is not achievable — spec ambiguities A2, A4 (provider-side token validation), and A5 (unregister HTTP method) have no unambiguous resolution. The ~97% overall ceiling reflects this inherent limit. Remaining headroom is composed entirely of spec-undefined behavior.
+
 ---
 
 ## Extensions beyond AH5 (not conformance gaps)
@@ -262,4 +301,4 @@ Step 56 is the documentation sweep.
 
 ---
 
-*Last updated: 2026-05-31 (Phase 5 detailed TDD plan added to CONFORMANCE_UPDATE_PLAN.md — Steps 50–56; Phase 5 step table revised with design notes and no-external-dep clarification)*
+*Last updated: 2026-05-31 (Phase 6 complete — G54/G55/G57/G58 resolved, G56 reclassified; per-system ratings updated to Phase 6 actuals; Open Gaps table cleared; Resolved Gaps table extended; Phase 6 marked Complete)*

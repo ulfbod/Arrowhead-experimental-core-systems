@@ -185,6 +185,7 @@ All systems except the CA support an optional HTTPS listener alongside the plain
 | `ENABLE_IDENTITY_CHECK` | `false` | Require a valid Bearer token; use verified identity for auth checks |
 | `PUSH_DELIVERY_TIMEOUT_SECONDS` | `5` | HTTP timeout (seconds) for each push notification delivery attempt via `mgmt/push/trigger` |
 | `QOS_EVALUATOR_URL` | *(unset)* | When set, DynamicOrchestration performs TCP RTT probes via the Device QoS Evaluator for candidates when `qualityRequirements[]` is present. Fail-open: evaluator unreachable → candidate included. |
+| `RELAY_TOKENS` | `false` | When `true`, DynamicOrchestration calls ConsumerAuthorization after each successful orchestration and embeds the returned token in `authorizationTokens` on each `OrchestrationResult`. Requires `CONSUMER_AUTH_URL`. |
 
 ### MQTT (Phase 3 / G34)
 

@@ -1,8 +1,8 @@
 # AH5 Conformance Update Plan
 
-**Status:** Phases 1–5 complete (Steps 1–56, E1–E5)  
+**Status:** Phases 1–6 complete (Steps 1–64, E1–E5)  
 **Scope:** `core/`, `core-evol/`, all active experiments  
-**Source of truth for gaps:** `core/GAP_ANALYSIS.md` (gaps G1–G53)  
+**Source of truth for gaps:** `core/GAP_ANALYSIS.md` (gaps G1–G58)  
 **Source of truth for API spec:** `core/SPEC.md` and `core/GAP_ANALYSIS.md`  
 **Conformance assessment:** `CONFORMANCE.md`
 
@@ -8406,3 +8406,433 @@ Run after all Phase 5 steps are complete (Steps 50–55):
 | `bash core/test-system.sh` | All Phase 5 |
 | `go build ./...` (workspace root) | All Phase 5 |
 
+
+
+# Phase 6 — Model completeness and discovery unification (Steps 57–64)
+
+**Scope:** Steps 57–64. Closes G54–G58. Reclassifies G56 as an AH4 artifact.
+Includes model audits for SimpleStore (Step 62) and TranslationManager (Step 63).
+
+**Source of truth for gaps:** `core/GAP_ANALYSIS.md` (G54–G58)
+**Conformance target:** ≥ 95% overall for all spec-defined systems.
+
+**TDD cycle and coverage standard** are the same as Phase 1 (see sections 2 and 3 above).
+
+**Order:**
+- Steps 57 and 58 are independent and low-effort — do them first.
+- Step 59 (G55 version filter) must precede Step 60 (G54 token relay) because version-accurate
+  SR results feed into the relay token request.
+- Step 61 (G58 SR bridge) is a significant architectural change; do it after Steps 57–60.
+- Steps 62 and 63 (audits) are independent of Step 61 and can be done in any order.
+- Step 64 is the documentation sweep.
+
+---
+
+## Step 57 — ConsumerAuth token response: add `usageLimit`, fix `expiresAt` optionality (G57)
+
+**Gap addressed:** G57 — `POST /consumerauthorization/authorization-token/generate` response
+omits `usageLimit` for USAGE_LIMITED tokens and always emits `expiresAt` regardless of token
+variant. Per AH5 5.2.0 (`AuthorizationTokenGenerationResponseDTO`):
+- `expiresAt`: present for TIME_LIMITED only; null for all others.
+- `usageLimit`: present for USAGE_LIMITED only; null for all others.
+
+**Files to modify:**
+- `core/internal/consumerauth/model/types.go`
+- `core/internal/consumerauth/service/auth.go`
+
+**Test files:**
+- `core/internal/consumerauth/service/auth_test.go`
+
+---
+
+### TDD cycle 57.1 — USAGE_LIMITED response has usageLimit, no expiresAt
+
+**Write this failing test first** in `consumerauth/service/auth_test.go`:
+
+```go
+func TestGenerateAuthTokenUsageLimitedHasUsageLimit(t *testing.T) {
+    svc := NewAuthService(repository.NewMemoryRepository())
+    req := model.TokenGenerateRequest{
+        TokenVariant:  model.TokenVariantUsageLimited,
+        Provider:      "Provider1",
+        TargetType:    "SERVICE_DEF",
+        Target:        "tempService",
+        MaxUsageCount: 5,
+    }
+    desc, err := svc.GenerateAuthToken(req)
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+    if desc.UsageLimit == nil {
+        t.Error("UsageLimit should not be nil for USAGE_LIMITED_TOKEN")
+    } else if *desc.UsageLimit != 5 {
+        t.Errorf("UsageLimit = %d, want 5", *desc.UsageLimit)
+    }
+    if desc.ExpiresAt != "" {
+        t.Errorf("ExpiresAt should be empty for USAGE_LIMITED_TOKEN, got %q", desc.ExpiresAt)
+    }
+}
+```
+
+**Implementation:**
+1. In `model/types.go`, add `UsageLimit *int \`json:"usageLimit,omitempty"\`` and add
+   `omitempty` to `ExpiresAt` on `TokenDescriptor`.
+2. In `service/auth.go` for `TokenVariantUsageLimited`: set `UsageLimit: &maxUsage` and
+   omit `ExpiresAt` (leave empty).
+3. For `TokenVariantTimeLimited`: keep `ExpiresAt`, leave `UsageLimit` nil.
+4. For `TokenVariantBase64SelfContained` and JWT variants: omit `ExpiresAt` from the
+   descriptor (the expiry is embedded in the token payload itself).
+
+---
+
+### TDD cycle 57.2 — TIME_LIMITED response has expiresAt, no usageLimit
+
+```go
+func TestGenerateAuthTokenTimeLimitedHasExpiresAtNoUsageLimit(t *testing.T) {
+    svc := NewAuthService(repository.NewMemoryRepository())
+    req := model.TokenGenerateRequest{
+        TokenVariant: model.TokenVariantTimeLimited,
+        Provider:     "Provider1",
+        TargetType:   "SERVICE_DEF",
+        Target:       "tempService",
+    }
+    desc, err := svc.GenerateAuthToken(req)
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+    if desc.ExpiresAt == "" {
+        t.Error("ExpiresAt should be set for TIME_LIMITED_TOKEN")
+    }
+    if desc.UsageLimit != nil {
+        t.Errorf("UsageLimit should be nil for TIME_LIMITED_TOKEN, got %d", *desc.UsageLimit)
+    }
+}
+```
+
+---
+
+### Completion criteria
+
+- [ ] `TestGenerateAuthTokenUsageLimitedHasUsageLimit` passes
+- [ ] `TestGenerateAuthTokenTimeLimitedHasExpiresAtNoUsageLimit` passes
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] Coverage ≥ 80% on `internal/consumerauth/service/`
+
+---
+
+## Step 58 — G56 reclassification: `secure` field is an AH4 artifact (no code change)
+
+**Gap addressed:** G56 — described as "`secure` field not validated or enforced on SR".
+Java 5.2.0 source confirms: `ServiceRegistry` has **no `secure` field** and no
+`ServiceSecurityType` enum in AH5. The field is an AH4 artifact. AH5 replaces it with
+`restricted` discovery (see G56 in GAP_ANALYSIS.md).
+
+**Action:** Documentation-only update. No code changes.
+
+**Files to update:**
+- `core/GAP_ANALYSIS.md` — reclassify G56; update status to "Reclassified"
+- `CONFORMANCE.md` — remove G56 from Open Gaps; update Per-System Ratings
+
+---
+
+### Completion criteria
+
+- [ ] `core/GAP_ANALYSIS.md` G56 entry states "Reclassified — AH4 artifact" with Java source evidence
+- [ ] `CONFORMANCE.md` Open Gaps table has G56 removed
+- [ ] No test changes required
+
+---
+
+## Step 59 — `versionRequirement` in orchestration ServiceFilter (G55)
+
+**Gap addressed:** G55 — `ServiceFilter` in orchestration requests has no
+`versionRequirement` field. SR already supports version filtering in its `Versions` field.
+
+**Files to modify:**
+- `core/internal/orchestration/model/types.go`
+- `core/internal/orchestration/dynamic/client/sr_http.go`
+
+**Test files:**
+- `core/internal/orchestration/model/types_test.go`
+- `core/internal/orchestration/dynamic/client/` (new `sr_http_test.go` or extend existing)
+
+---
+
+### TDD cycle 59.1 — VersionRequirement marshals in orchestration request
+
+```go
+func TestOrchestrationRequestIncludesVersionRequirement(t *testing.T) {
+    req := model.OrchestrationRequest{
+        RequesterSystem:  model.System{SystemName: "C"},
+        RequestedService: model.ServiceRequirement{
+            ServiceDefinition:  "temp",
+            VersionRequirement: "2.0.0",
+        },
+    }
+    data, _ := json.Marshal(req)
+    var raw map[string]any
+    json.Unmarshal(data, &raw)
+    sr, _ := raw["serviceRequirement"].(map[string]any)
+    if v, ok := sr["versionRequirement"]; !ok || v != "2.0.0" {
+        t.Errorf("versionRequirement missing or wrong in serialized serviceRequirement")
+    }
+}
+```
+
+**Implementation:**
+1. Add `VersionRequirement string \`json:"versionRequirement,omitempty"\`` to
+   `ServiceRequirement` in `orchestration/model/types.go`.
+2. Update `orchestrationRequestWire` to include the field and propagate it in
+   `UnmarshalJSON` and `MarshalJSON`.
+3. In `sr_http.go`, update `srLookupRequest` to add `Versions []string \`json:"versions,omitempty"\``.
+4. In `LookupServices`, if `req.RequestedService.VersionRequirement != ""`, set
+   `body.Versions = []string{req.RequestedService.VersionRequirement}`.
+
+---
+
+### Completion criteria
+
+- [ ] `TestOrchestrationRequestIncludesVersionRequirement` passes
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] Coverage ≥ 80% on modified packages
+
+---
+
+## Step 60 — Token relay in OrchestrationResult (G54)
+
+**Gap addressed:** G54 — `OrchestrationResult` has no `authorizationTokens` field.
+DynamicOrchestration does not call ConsumerAuth during orchestration to obtain tokens.
+
+**Design (D11):** `authorizationTokens` is `map[string]map[string]*AuthorizationTokenDescriptor`
+where outer key = interface name (e.g. `"HTTP-INSECURE-JSON"`) and inner key = scope
+(`""` for the default unscoped grant). Opt-in via `RELAY_TOKENS=true` env var.
+
+**Files to modify/create:**
+- `core/internal/orchestration/model/types.go` — add `AuthorizationTokenDescriptor`, add field to `OrchestrationResult`
+- `core/internal/orchestration/dynamic/client/token_relay.go` (new) — `TokenRelayClient` interface
+- `core/internal/orchestration/dynamic/client/token_relay_http.go` (new) — HTTP implementation
+- `core/internal/orchestration/dynamic/service/orchestrator.go` — wire token relay into Orchestrate
+- `core/cmd/dynamicorch/main.go` — `RELAY_TOKENS` env var
+
+**Test files:**
+- `core/internal/orchestration/dynamic/service/orchestrator_test.go`
+
+---
+
+### TDD cycle 60.1 — AuthorizationTokens populated when relay enabled
+
+```go
+// In orchestrator_test.go — add a stub TokenRelayClient
+type stubTokenRelayClient struct{ called bool }
+func (s *stubTokenRelayClient) GenerateToken(ctx context.Context, consumer, provider, svcDef, variant string) (*orchmodel.AuthorizationTokenDescriptor, error) {
+    s.called = true
+    return &orchmodel.AuthorizationTokenDescriptor{
+        TokenType: "TIME_LIMITED_TOKEN", TargetType: "SERVICE_DEF", Token: "tok-abc",
+    }, nil
+}
+
+func TestOrchestrateRelayTokens(t *testing.T) {
+    // Set up orchestrator with relay enabled, stub CA that authorises, stub SR that returns one result.
+    stub := &stubTokenRelayClient{}
+    orch := NewDynamicOrchestratorWithClients(...)
+    orch.SetRelayTokens(true)
+    orch.SetTokenRelayClient(stub)
+    resp, err := orch.Orchestrate(req, "")
+    if err != nil { t.Fatal(err) }
+    if !stub.called { t.Error("token relay client was not called") }
+    if len(resp.Results) == 0 { t.Fatal("no results") }
+    if resp.Results[0].AuthorizationTokens == nil {
+        t.Error("AuthorizationTokens should be populated")
+    }
+}
+```
+
+**Implementation:**
+1. `model/types.go`: add `AuthorizationTokenDescriptor` struct; add
+   `AuthorizationTokens map[string]map[string]*AuthorizationTokenDescriptor \`json:"authorizationTokens,omitempty"\``
+   to `OrchestrationResult`.
+2. `client/token_relay.go`: define `TokenRelayClient` interface with
+   `GenerateToken(ctx, consumer, provider, serviceDefinition, tokenVariant string) (*orchmodel.AuthorizationTokenDescriptor, error)`.
+3. `client/token_relay_http.go`: `CATokenRelayHTTPClient` calls
+   `POST /consumerauthorization/authorization-token/generate`.
+4. `service/orchestrator.go`: add `relayTokens bool` + `tokenRelayClient TokenRelayClient`;
+   add `SetRelayTokens(bool)` + `SetTokenRelayClient(TokenRelayClient)`;
+   after auth filter loop, when `relayTokens=true` and client is non-nil, call
+   `tokenRelayClient.GenerateToken(ctx, consumer, provider, serviceDef, "TIME_LIMITED_TOKEN")`
+   per result per interface name; store in `r.AuthorizationTokens`.
+5. `cmd/dynamicorch/main.go`: read `RELAY_TOKENS` env var; when true, create
+   `CATokenRelayHTTPClient` and wire it via `SetRelayTokens`/`SetTokenRelayClient`.
+
+---
+
+### Completion criteria
+
+- [ ] `TestOrchestrateRelayTokens` passes
+- [ ] `TestOrchestrateRelayTokensDisabled` (no relay when `RELAY_TOKENS` not set) passes
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] Coverage ≥ 80% on modified packages
+
+---
+
+## Step 61 — SR AH5 discovery integration: bridge legacy and AH5 stores (G58)
+
+**Gap addressed:** G58 — AH5-registered services invisible to DynamicOrchestration because
+`SRHTTPClient.LookupServices` queries only the legacy store via the AH5 endpoint.
+Experiments register via legacy `POST /serviceregistry/register`; AH5 stores are separate.
+
+**Strategy:** Bridge both stores in `SRHTTPClient.LookupServices`:
+1. Query AH5 endpoint `POST /serviceregistry/service-discovery/lookup` (existing).
+2. Query legacy endpoint `POST /serviceregistry/query` for the same service definition.
+3. Merge: AH5 results take priority; legacy results fill in providers not already present
+   (deduplicate by `providerName|serviceDefinition`).
+
+**Files to modify:**
+- `core/internal/orchestration/dynamic/client/sr_http.go`
+
+**Test files:**
+- Extend `core/internal/orchestration/dynamic/` test files (or add new test)
+
+---
+
+### TDD cycle 61.1 — legacy results merged when AH5 empty
+
+A mock HTTP server returns an empty AH5 response but a legacy response with one entry.
+`LookupServices` should return that legacy entry.
+
+**Implementation:**
+1. Add private `srLegacyQueryRequest` and `srLegacyQueryResponse` structs in `sr_http.go`.
+2. After the AH5 call, make a second HTTP call to `POST /serviceregistry/query` with
+   `{"serviceDefinition": req.RequestedService.ServiceDefinition}`.
+3. Build a `seen` set from AH5 results (key = `providerName|serviceDefinition`).
+4. Append legacy results whose key is not in `seen`. Fail-open: legacy call error → skip.
+
+---
+
+### Completion criteria
+
+- [ ] `TestSRHTTPClientBridgesLegacyStore` passes (legacy results added when not in AH5)
+- [ ] `TestSRHTTPClientAH5TakesPriority` passes (AH5 result wins when same provider in both)
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] Coverage ≥ 80% on `client/`
+
+---
+
+## Step 62 — SimpleStore model audit
+
+**Purpose:** Verify field-level conformance of `StoreRule`, `OrchestrationRequest` (shared),
+and response shapes against AH5 SimpleStore spec. Steps 59 and 60 already add
+`versionRequirement` and `authorizationTokens`. This step checks remaining gaps.
+
+**Audit checklist:**
+- `OrchestrationResult` fields populated by SimpleStore: all required fields present?
+- `StoreRule` response shape: any missing fields the spec requires?
+- Error codes: do wrong inputs return 400 vs 404 correctly?
+
+**Files to examine:**
+- `core/internal/orchestration/simplestore/service/orchestrator.go`
+- `core/internal/orchestration/simplestore/api/handler.go`
+- `core/SPEC.md` (SimpleStore section)
+
+Implement any sub-gaps found with TDD cycle (write failing test, implement, verify).
+
+---
+
+### Completion criteria
+
+- [ ] Audit complete; all sub-gaps documented and fixed or explicitly deferred
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] Coverage ≥ 80% on modified packages
+
+---
+
+## Step 63 — TranslationManager behavior audit
+
+**Purpose:** Review edge-case behavior of `POST /translationmanager/translation/translate`
+against AH5 spec. Known thin coverage: missing bridge ID, missing fields, bridge lifecycle.
+
+**Files to examine:**
+- `core/internal/translationmgr/service/translator.go`
+- `core/internal/translationmgr/api/handler.go`
+- `core/SPEC.md` (TranslationManager section)
+
+Implement any sub-gaps found with TDD cycle.
+
+---
+
+### Completion criteria
+
+- [ ] Audit complete; all sub-gaps documented and fixed or explicitly deferred
+- [ ] `go test -race ./...` from `core/` passes
+- [ ] Coverage ≥ 80% on modified packages
+
+---
+
+## Step 64 — Phase 6 documentation update
+
+**Purpose:** Ensure every authoritative document reflects the final state of Phase 6.
+Apply after all Phase 6 implementation steps (57–63) are complete and passing.
+
+**Prerequisites:** Steps 57–63 all complete and passing.
+
+### `core/GAP_ANALYSIS.md`
+
+- G54: Add `**Status: Resolved in Step 60**` + implementation summary (token relay, D11 map keys, RELAY_TOKENS opt-in)
+- G55: Add `**Status: Resolved in Step 59**` + `VersionRequirement string` wired to SR `Versions` field
+- G56: Add `**Status: Reclassified in Step 58**` — AH4 artifact; absent from AH5 5.2.0; no implementation
+- G57: Add `**Status: Resolved in Step 57**` + `UsageLimit *int` added; `ExpiresAt` omitempty
+- G58: Add `**Status: Resolved in Step 61**` + bridge strategy (dual-query + merge)
+
+### `CONFORMANCE.md`
+
+1. Move G54, G55, G57, G58 from Open Gaps table → Resolved Gaps table with step numbers.
+2. Note G56 as reclassified (not a gap).
+3. Update Per-System Ratings to Phase 6 projected values.
+4. Mark Phase 6 as **Complete** in Phase Plan table.
+5. Update **last updated** timestamp.
+
+### `CONFORMANCE_UPDATE_PLAN.md`
+
+1. Tick all completion criteria checkboxes in Steps 57–63.
+2. Add Phase 6 regression matrix (section 17).
+3. Update status header: `Phases 1–6 complete`.
+
+### `core/SPEC.md`
+
+- Add `RELAY_TOKENS` to DynamicOrchestration configuration table
+- Add `versionRequirement` to `ServiceRequirement` request shape
+- Add `authorizationTokens` to `OrchestrationResult` response shape
+- Document `UsageLimit` and `omitempty` behaviour for `TokenDescriptor`
+
+### `core/EXAMPLES.md`
+
+- Add example: orchestration request with `versionRequirement` (Step 59)
+- Add example: orchestration response with `authorizationTokens` when `RELAY_TOKENS=true` (Step 60)
+- Add example: ConsumerAuth `POST /authorization-token/generate` response with `usageLimit` (Step 57)
+
+### `README.md`
+
+- Add `RELAY_TOKENS` to DynamicOrchestration env var table
+
+### Completion criteria
+
+- [ ] G54, G55, G57, G58 appear in Resolved Gaps table in `CONFORMANCE.md`
+- [ ] G56 noted as reclassified (not a gap)
+- [ ] Phase Plan row for Phase 6 shows **Complete**
+- [ ] All Steps 57–63 completion criteria checkboxes are `[x]`
+- [ ] `core/SPEC.md` updated for all new env vars and response shapes
+- [ ] `core/EXAMPLES.md` updated with examples for Steps 57, 59, 60
+- [ ] `README.md` updated with `RELAY_TOKENS`
+
+---
+
+## 17. Phase 6 — Regression matrix
+
+Run after all Phase 6 steps are complete (Steps 57–63):
+
+| Check | Steps |
+|---|---|
+| `cd core && go build ./...` | All Phase 6 |
+| `cd core && go vet ./...` | All Phase 6 |
+| `cd core && go test -race ./...` | All Phase 6 |
+| `bash core/test-system.sh` | All Phase 6 |
+| `go build ./...` (workspace root) | All Phase 6 |

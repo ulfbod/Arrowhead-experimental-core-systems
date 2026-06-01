@@ -116,3 +116,48 @@ func keys(m map[string]any) []string {
 	}
 	return ks
 }
+
+// ─── Cycle 59 — versionRequirement in ServiceRequirement (G55) ───────────────
+
+func TestOrchestrationRequestVersionRequirementRoundTrips(t *testing.T) {
+	req := model.OrchestrationRequest{
+		RequesterSystem:  model.System{SystemName: "C"},
+		RequestedService: model.ServiceRequirement{ServiceDefinition: "temp", VersionRequirement: "2.0.0"},
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]any
+	json.Unmarshal(data, &raw)
+	sr, ok := raw["serviceRequirement"].(map[string]any)
+	if !ok {
+		t.Fatal("serviceRequirement not a map")
+	}
+	if v, ok := sr["versionRequirement"]; !ok || v != "2.0.0" {
+		t.Errorf("versionRequirement missing or wrong: %v", sr)
+	}
+
+	// Decode it back.
+	var req2 model.OrchestrationRequest
+	if err := json.Unmarshal(data, &req2); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if req2.RequestedService.VersionRequirement != "2.0.0" {
+		t.Errorf("decoded VersionRequirement = %q, want 2.0.0", req2.RequestedService.VersionRequirement)
+	}
+}
+
+func TestOrchestrationRequestVersionRequirementOmittedWhenEmpty(t *testing.T) {
+	req := model.OrchestrationRequest{
+		RequesterSystem:  model.System{SystemName: "C"},
+		RequestedService: model.ServiceRequirement{ServiceDefinition: "temp"},
+	}
+	data, _ := json.Marshal(req)
+	var raw map[string]any
+	json.Unmarshal(data, &raw)
+	sr := raw["serviceRequirement"].(map[string]any)
+	if _, ok := sr["versionRequirement"]; ok {
+		t.Error("versionRequirement should be omitted when empty")
+	}
+}

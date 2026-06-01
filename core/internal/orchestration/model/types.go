@@ -13,9 +13,10 @@ type System struct {
 // ServiceRequirement describes what service a consumer is looking for.
 // AH5 request field name: serviceRequirement.
 type ServiceRequirement struct {
-	ServiceDefinition string            `json:"serviceDefinition"`
-	Interfaces        []string          `json:"interfaces,omitempty"`
-	Metadata          map[string]string `json:"metadata,omitempty"`
+	ServiceDefinition  string            `json:"serviceDefinition"`
+	VersionRequirement string            `json:"versionRequirement,omitempty"`
+	Interfaces         []string          `json:"interfaces,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
 }
 
 // ServiceFilter is a backward-compatible alias for ServiceRequirement.
@@ -99,6 +100,21 @@ func (r OrchestrationRequest) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// AuthorizationTokenDescriptor mirrors consumerauth.TokenDescriptor for use in OrchestrationResult.
+// It is defined here (rather than imported from consumerauth) to avoid cross-package imports
+// between orchestration and consumerauth internals.
+//
+// AH5 5.2.0 field semantics (per Java source AuthorizationTokenGenerationResponseDTO):
+//   - ExpiresAt: present for TIME_LIMITED tokens only; omitted for all others.
+//   - UsageLimit: present for USAGE_LIMITED tokens only; omitted for all others.
+type AuthorizationTokenDescriptor struct {
+	TokenType  string `json:"tokenType"`
+	TargetType string `json:"targetType"`
+	Token      string `json:"token"`
+	UsageLimit *int   `json:"usageLimit,omitempty"`
+	ExpiresAt  string `json:"expiresAt,omitempty"`
+}
+
 // OrchestrationResult is one matched provider + service pair.
 //
 // Field names with typos (serviceDefinitition, cloudIdentitifer) are intentional:
@@ -124,6 +140,11 @@ type OrchestrationResult struct {
 	Priority int `json:"priority,omitempty"`
 	// ExclusiveUntil is set when the provider has an active lock; RFC3339 timestamp.
 	ExclusiveUntil string `json:"exclusiveUntil,omitempty"`
+	// AuthorizationTokens carries ConsumerAuth tokens per interface and scope (G54, D11).
+	// Outer key: interface name (e.g. "HTTP-INSECURE-JSON").
+	// Inner key: authorization scope ("" for the default/unscoped grant).
+	// Only populated when RELAY_TOKENS=true on the DynamicOrchestration binary.
+	AuthorizationTokens map[string]map[string]*AuthorizationTokenDescriptor `json:"authorizationTokens,omitempty"`
 }
 
 // OrchestrationResponse wraps the list of results.

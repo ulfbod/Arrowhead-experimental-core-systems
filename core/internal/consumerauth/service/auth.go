@@ -444,11 +444,12 @@ func (s *AuthService) GenerateAuthToken(req model.TokenGenerateRequest) (model.T
 			UsageCount:    0,
 		}
 		s.mu.Unlock()
+		// USAGE_LIMITED: usageLimit is set; expiresAt is omitted (no time-based expiry).
 		return model.TokenDescriptor{
 			TokenType:  req.TokenVariant,
 			TargetType: req.TargetType,
 			Token:      token,
-			ExpiresAt:  expiresAt.Format(time.RFC3339),
+			UsageLimit: &maxUsage,
 		}, nil
 
 	case model.TokenVariantBase64SelfContained:
@@ -470,11 +471,11 @@ func (s *AuthService) GenerateAuthToken(req model.TokenGenerateRequest) (model.T
 		mac.Write([]byte(b64Payload)) //nolint:errcheck
 		sig := hex.EncodeToString(mac.Sum(nil))
 		token := b64Payload + "." + sig
+		// BASE64_SELF_CONTAINED: expiry is embedded in the token payload; omit expiresAt from descriptor.
 		return model.TokenDescriptor{
 			TokenType:  req.TokenVariant,
 			TargetType: req.TargetType,
 			Token:      token,
-			ExpiresAt:  expiresAt.Format(time.RFC3339),
 		}, nil
 
 	case model.TokenVariantRSA256, model.TokenVariantRSA512, model.TokenVariantTranslationBridge:
@@ -501,11 +502,11 @@ func (s *AuthService) GenerateAuthToken(req model.TokenGenerateRequest) (model.T
 		if err != nil {
 			return model.TokenDescriptor{}, err
 		}
+		// JWT variants: expiry is embedded in the JWT exp claim; omit expiresAt from descriptor.
 		return model.TokenDescriptor{
 			TokenType:  req.TokenVariant,
 			TargetType: req.TargetType,
 			Token:      token,
-			ExpiresAt:  expiresAt.Format(time.RFC3339),
 		}, nil
 
 	default:

@@ -223,3 +223,55 @@ func TestOrchestrationResultHasCloudIdentifier(t *testing.T) {
 		t.Errorf("CloudIdentifier = %q, want \"LOCAL\"", resp.Results[0].CloudIdentifier)
 	}
 }
+
+// ─── Step 62 — SimpleStore model audit ───────────────────────────────────────
+
+// TestOrchestrationResultHasPriorityFromRule verifies that the rule priority is carried
+// through to the OrchestrationResult (model conformance, Step 62).
+func TestOrchestrationResultHasPriorityFromRule(t *testing.T) {
+	orch := newOrchestrator()
+	req := validCreateRule()
+	req.Priority = 3
+	orch.CreateRule(req) //nolint:errcheck
+
+	resp, err := orch.Orchestrate(orchmodel.OrchestrationRequest{
+		RequesterSystem:  orchmodel.System{SystemName: "consumer-app"},
+		RequestedService: orchmodel.ServiceFilter{ServiceDefinition: "temperature-service"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	if resp.Results[0].Priority != 3 {
+		t.Errorf("Priority = %d, want 3", resp.Results[0].Priority)
+	}
+}
+
+// TestOrchestrationResultHasProviderAddress verifies that ProviderAddress and ProviderPort
+// are set from the rule's Provider system (model conformance, Step 62).
+func TestOrchestrationResultHasProviderAddress(t *testing.T) {
+	orch := newOrchestrator()
+	req := validCreateRule()
+	req.Provider = orchmodel.System{SystemName: "sensor-1", Address: "192.168.1.10", Port: 9090}
+	orch.CreateRule(req) //nolint:errcheck
+
+	resp, err := orch.Orchestrate(orchmodel.OrchestrationRequest{
+		RequesterSystem:  orchmodel.System{SystemName: "consumer-app"},
+		RequestedService: orchmodel.ServiceFilter{ServiceDefinition: "temperature-service"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	r := resp.Results[0]
+	if r.ProviderAddress != "192.168.1.10" {
+		t.Errorf("ProviderAddress = %q, want 192.168.1.10", r.ProviderAddress)
+	}
+	if r.ProviderPort != 9090 {
+		t.Errorf("ProviderPort = %d, want 9090", r.ProviderPort)
+	}
+}

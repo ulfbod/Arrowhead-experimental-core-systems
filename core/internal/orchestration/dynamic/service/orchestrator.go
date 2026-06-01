@@ -38,6 +38,8 @@ type DynamicOrchestrator struct {
 	qosClient         client.QoSEvaluatorClient     // nil → NopQoSClient (fail-open)
 	translationClient client.TranslationClient      // nil → NopTranslationClient (ALLOW_TRANSLATION is no-op)
 	lockChecker       LockChecker                   // nil → NopLockChecker (ONLY_EXCLUSIVE is no-op)
+	tokenRelayClient  client.TokenRelayClient       // nil → no token relay
+	relayTokens       bool                          // when true, call ConsumerAuth per result and embed tokens (G54)
 	checkAuth         bool
 	checkIdentity     bool
 	hist              *historyStore
@@ -85,6 +87,16 @@ func (o *DynamicOrchestrator) SetPushClient(c *http.Client) { o.pushClient = c }
 // SetLockChecker configures the lock checker used for ONLY_EXCLUSIVE flag filtering (G48).
 // Pass NopLockChecker{} to disable exclusive-lock filtering (fail-open).
 func (o *DynamicOrchestrator) SetLockChecker(lc LockChecker) { o.lockChecker = lc }
+
+// SetRelayTokens enables or disables the ConsumerAuth token relay (G54, D11).
+// When enabled, Orchestrate calls ConsumerAuth per result and populates
+// OrchestrationResult.AuthorizationTokens. Requires a TokenRelayClient to be set.
+func (o *DynamicOrchestrator) SetRelayTokens(enabled bool) { o.relayTokens = enabled }
+
+// SetTokenRelayClient configures the client used for token relay (G54).
+func (o *DynamicOrchestrator) SetTokenRelayClient(c client.TokenRelayClient) {
+	o.tokenRelayClient = c
+}
 
 // QueryHistory returns orchestration history entries matching the given filter.
 // Pass a zero-value HistoryQueryFilter{} to return all entries.
@@ -375,6 +387,37 @@ func (o *DynamicOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest, to
 
 	if flags.Matchmaking && len(results) > 1 {
 		results = results[:1]
+	}
+
+	// Step 4.7: Token relay (G54, D11). When relayTokens=true and a TokenRelayClient is
+	// configured, call ConsumerAuth per result to obtain an authorization token and embed
+	// it in AuthorizationTokens. Fail-open: token generation error → result included without token.
+	if o.relayTokens && o.tokenRelayClient != nil {
+		for i := range results {
+			r := &results[i]
+			ifaces := r.Interfaces
+			if len(ifaces) == 0 {
+				ifaces = []string{"HTTP-INSECURE-JSON"} // default when provider has no explicit interfaces
+			}
+			tokens := make(map[string]map[string]*orchmodel.AuthorizationTokenDescriptor)
+			for _, iface := range ifaces {
+				desc, err := o.tokenRelayClient.GenerateToken(
+					ctx,
+					req.RequesterSystem.SystemName,
+					r.ProviderName,
+					r.ServiceDefinition,
+					"TIME_LIMITED_TOKEN",
+				)
+				if err == nil && desc != nil {
+					tokens[iface] = map[string]*orchmodel.AuthorizationTokenDescriptor{
+						"": desc, // default/unscoped grant per D11
+					}
+				}
+			}
+			if len(tokens) > 0 {
+				r.AuthorizationTokens = tokens
+			}
+		}
 	}
 
 	resp := orchmodel.OrchestrationResponse{Results: results}

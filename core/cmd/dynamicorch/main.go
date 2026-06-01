@@ -89,6 +89,12 @@ func main() {
 		checkAuth, checkIdentity,
 	)
 
+	// G54 — Token relay: when RELAY_TOKENS=true, embed ConsumerAuth tokens in each result.
+	if os.Getenv("RELAY_TOKENS") == "true" {
+		orch.SetRelayTokens(true)
+		orch.SetTokenRelayClient(dynclient.NewCATokenRelayHTTPClient(caURL, httpClient))
+	}
+
 	pushTimeoutSec := 5
 	if v := os.Getenv("PUSH_DELIVERY_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -119,6 +125,7 @@ func main() {
 		"MGMT_AUTH_URL":                 os.Getenv("MGMT_AUTH_URL"),
 		"BLACKLIST_URL":                 os.Getenv("BLACKLIST_URL"),
 		"PUSH_DELIVERY_TIMEOUT_SECONDS": os.Getenv("PUSH_DELIVERY_TIMEOUT_SECONDS"),
+		"RELAY_TOKENS":                  os.Getenv("RELAY_TOKENS"),
 	})
 
 	root := http.NewServeMux()

@@ -111,12 +111,16 @@ type TokenGenerateRequest struct {
 	ToInterface   string `json:"toInterface,omitempty"`
 }
 
-// TokenDescriptor is returned on successful token generation (AuthorizationTokenDescriptor).
+// TokenDescriptor is returned on successful token generation (AuthorizationTokenGenerationResponseDTO).
+// AH5 5.2.0 field semantics (per Java source):
+//   - ExpiresAt: present for TIME_LIMITED tokens only; omitted for all others.
+//   - UsageLimit: present for USAGE_LIMITED tokens only; omitted for all others.
 type TokenDescriptor struct {
 	TokenType  string `json:"tokenType"`
 	TargetType string `json:"targetType"`
 	Token      string `json:"token"`
-	ExpiresAt  string `json:"expiresAt"`
+	UsageLimit *int   `json:"usageLimit,omitempty"`
+	ExpiresAt  string `json:"expiresAt,omitempty"`
 }
 
 // TokenVerifyResponse is returned by GET /authorization-token/verify/{accessToken}.

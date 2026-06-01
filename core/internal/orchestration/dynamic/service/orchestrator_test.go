@@ -1008,3 +1008,83 @@ func TestOrchestrationQoSNoRequirementsPassesAll(t *testing.T) {
 		t.Errorf("no requirements: expected 2 results, got %d", len(resp.Results))
 	}
 }
+
+// ─── Step 60 — Token relay (G54) ─────────────────────────────────────────────
+
+// stubTokenRelayClient records calls and returns a fixed descriptor.
+type stubTokenRelayClient struct {
+	called int
+}
+
+func (s *stubTokenRelayClient) GenerateToken(_ context.Context, consumer, provider, svcDef, variant string) (*orchmodel.AuthorizationTokenDescriptor, error) {
+	s.called++
+	return &orchmodel.AuthorizationTokenDescriptor{
+		TokenType:  "TIME_LIMITED_TOKEN",
+		TargetType: "SERVICE_DEF",
+		Token:      "relay-token-" + provider,
+		ExpiresAt:  "2099-01-01T00:00:00Z",
+	}, nil
+}
+
+func TestOrchestrateRelayTokensPopulatesAuthorizationTokens(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	stub := &stubTokenRelayClient{}
+	orch.SetRelayTokens(true)
+	orch.SetTokenRelayClient(stub)
+
+	resp, err := orch.Orchestrate(validRequest(), "")
+	if err != nil {
+		t.Fatalf("orchestrate: %v", err)
+	}
+	if len(resp.Results) == 0 {
+		t.Fatal("no results")
+	}
+	r := resp.Results[0]
+	if r.AuthorizationTokens == nil {
+		t.Fatal("AuthorizationTokens should be populated when relayTokens=true")
+	}
+	if stub.called == 0 {
+		t.Error("token relay client was not called")
+	}
+	// Verify the token is embedded under a non-empty interface key and default scope "".
+	for iface, scopes := range r.AuthorizationTokens {
+		if iface == "" {
+			t.Error("interface key should not be empty")
+		}
+		desc, ok := scopes[""]
+		if !ok {
+			t.Errorf("default scope '' missing under interface %q", iface)
+			continue
+		}
+		if desc.Token == "" {
+			t.Errorf("token missing in descriptor under interface %q", iface)
+		}
+	}
+}
+
+func TestOrchestrateRelayTokensDisabledByDefault(t *testing.T) {
+	sr := httptest.NewServer(http.HandlerFunc(srResponse("sensor-1")))
+	defer sr.Close()
+
+	orch := newOrchestrator(sr.URL, "", false)
+	stub := &stubTokenRelayClient{}
+	// Do NOT call SetRelayTokens(true) — relay should be off by default.
+	orch.SetTokenRelayClient(stub)
+
+	resp, err := orch.Orchestrate(validRequest(), "")
+	if err != nil {
+		t.Fatalf("orchestrate: %v", err)
+	}
+	if len(resp.Results) == 0 {
+		t.Fatal("no results")
+	}
+	if resp.Results[0].AuthorizationTokens != nil {
+		t.Error("AuthorizationTokens should be nil when relay is disabled")
+	}
+	if stub.called != 0 {
+		t.Error("token relay client should not be called when relay is disabled")
+	}
+}

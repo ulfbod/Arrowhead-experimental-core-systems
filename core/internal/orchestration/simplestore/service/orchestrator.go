@@ -56,11 +56,14 @@ func (o *SimpleStoreOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest
 		}
 		results = append(results, orchmodel.OrchestrationResult{
 			ProviderName:      rule.Provider.SystemName,
+			ProviderAddress:   rule.Provider.Address,
+			ProviderPort:      rule.Provider.Port,
 			ServiceDefinition: rule.ServiceDefinition,
 			ServiceUri:        rule.ServiceUri,
 			Interfaces:        rule.Interfaces,
 			Metadata:          rule.Metadata,
 			CloudIdentifier:   "LOCAL",
+			Priority:          rule.Priority,
 		})
 	}
 	if results == nil {
