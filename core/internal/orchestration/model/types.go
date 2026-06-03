@@ -117,8 +117,9 @@ type AuthorizationTokenDescriptor struct {
 
 // OrchestrationResult is one matched provider + service pair.
 //
-// Field names with typos (serviceDefinitition, cloudIdentitifer) are intentional:
-// they are mandated by the AH5 wire format and must match exactly.
+// JSON field names match the official AH5 docs as of June 2026, correcting the
+// typos present in the original Java source (serviceDefinitition, cloudIdentitifer,
+// authorizationTokens). These corrections align with the normative AH5 specification.
 type OrchestrationResult struct {
 	// ProviderName is the system name of the matched provider.
 	ProviderName string `json:"providerName"`
@@ -126,10 +127,10 @@ type OrchestrationResult struct {
 	// Used by QoS filtering (G40); not emitted in the AH5 wire response.
 	ProviderAddress string `json:"-"`
 	ProviderPort    int    `json:"-"`
-	// ServiceDefinitition — spec typo (double 't') is intentional, must match AH5 wire format.
-	ServiceDefinition string `json:"serviceDefinitition"`
-	// CloudIdentitifer — spec typo (missing 'n') is intentional, must match AH5 wire format.
-	CloudIdentifier   string            `json:"cloudIdentitifer,omitempty"`
+	// ServiceDefinition — correct spelling per official AH5 docs (June 2026).
+	ServiceDefinition string `json:"serviceDefinition"`
+	// CloudIdentifier — correct spelling per official AH5 docs (June 2026).
+	CloudIdentifier   string            `json:"cloudIdentifier,omitempty"`
 	ServiceInstanceId string            `json:"serviceInstanceId,omitempty"`
 	ServiceUri        string            `json:"serviceUri,omitempty"`
 	Interfaces        []string          `json:"interfaces,omitempty"`
@@ -140,11 +141,12 @@ type OrchestrationResult struct {
 	Priority int `json:"priority,omitempty"`
 	// ExclusiveUntil is set when the provider has an active lock; RFC3339 timestamp.
 	ExclusiveUntil string `json:"exclusiveUntil,omitempty"`
-	// AuthorizationTokens carries ConsumerAuth tokens per interface and scope (G54, D11).
+	// AuthorizationToken carries ConsumerAuth tokens per interface and scope (G54, D11).
 	// Outer key: interface name (e.g. "HTTP-INSECURE-JSON").
 	// Inner key: authorization scope ("" for the default/unscoped grant).
 	// Only populated when RELAY_TOKENS=true on the DynamicOrchestration binary.
-	AuthorizationTokens map[string]map[string]*AuthorizationTokenDescriptor `json:"authorizationTokens,omitempty"`
+	// Singular form per official AH5 docs (June 2026).
+	AuthorizationToken map[string]map[string]*AuthorizationTokenDescriptor `json:"authorizationToken,omitempty"`
 }
 
 // OrchestrationResponse wraps the list of results.

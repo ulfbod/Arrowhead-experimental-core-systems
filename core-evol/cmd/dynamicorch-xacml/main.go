@@ -65,16 +65,20 @@ func main() {
 	sr := orchestration.NewSRClient(srURL)
 	orch := orchestration.NewXACMLOrchestrator(sr, decider, domainID, enableAuth)
 
+	mgmtAuthURL := envOr("MGMT_AUTH_URL", "")
+
 	mgmtHandler := generalmgmt.NewHandler(buf, "serviceorchestration/orchestration", map[string]string{
-		"srUrl":       srURL,
-		"authBackend": authBackend,
-		"domainId":    domainID,
-		"enableAuth":  envOr("ENABLE_AUTH", "true"),
-		"port":        port,
+		"srUrl":                        srURL,
+		"authBackend":                  authBackend,
+		"domainId":                     domainID,
+		"enableAuth":                   envOr("ENABLE_AUTH", "true"),
+		"port":                         port,
+		"MGMT_AUTH_URL":                mgmtAuthURL,
+		"PUSH_DELIVERY_TIMEOUT_SECONDS": envOr("PUSH_DELIVERY_TIMEOUT_SECONDS", "5"),
 	})
 
 	sysHandler := http.NewServeMux()
-	orchestration.RegisterRoutes(sysHandler, orch, domainID, enableAuth)
+	orchestration.RegisterRoutes(sysHandler, orch, domainID, enableAuth, mgmtAuthURL)
 
 	root := http.NewServeMux()
 	root.Handle("/serviceorchestration/orchestration/general/", mgmtHandler)

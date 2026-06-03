@@ -38,8 +38,10 @@ type ServiceInfo struct {
 
 // OrchestrationResult is one matched provider + service pair.
 type OrchestrationResult struct {
-	Provider System      `json:"provider"`
-	Service  ServiceInfo `json:"service"`
+	Provider        System      `json:"provider"`
+	Service         ServiceInfo `json:"service"`
+	CloudIdentifier string      `json:"cloudIdentifier,omitempty"`
+	ExclusiveUntil  string      `json:"exclusiveUntil,omitempty"`
 }
 
 // OrchestrationResponse wraps the list of results.

@@ -1,8 +1,8 @@
 # AH5 Conformance Update Plan
 
-**Status:** Phases 1–6 complete (Steps 1–64, E1–E5)  
+**Status:** Phases 1–7 complete (Steps 1–68, E1–E5).  
 **Scope:** `core/`, `core-evol/`, all active experiments  
-**Source of truth for gaps:** `core/GAP_ANALYSIS.md` (gaps G1–G58)  
+**Source of truth for gaps:** `core/GAP_ANALYSIS.md` (gaps G1–G62)  
 **Source of truth for API spec:** `core/SPEC.md` and `core/GAP_ANALYSIS.md`  
 **Conformance assessment:** `CONFORMANCE.md`
 
@@ -8836,3 +8836,798 @@ Run after all Phase 6 steps are complete (Steps 57–63):
 | `cd core && go test -race ./...` | All Phase 6 |
 | `bash core/test-system.sh` | All Phase 6 |
 | `go build ./...` (workspace root) | All Phase 6 |
+
+---
+
+## Phase 7 — Docs-review conformance (Steps 65–68) — **PLANNED**
+
+**Goal:** Close the four gaps (G59–G62) identified in the official AH5 documentation review
+of June 2026. These are targeted, low-to-medium-effort fixes. No new external Go dependencies.
+
+**Status:** Not started. Phase 6 complete (all Steps 57–64 passing).
+
+**Gaps addressed:** G59 (`authorizationToken` singular), G60 (unregister path/params),
+G61 (OrchestrationResult field typos), G62 (restricted service discovery policy).
+
+**Order:**
+- Step 65 (G59 + G61) first — both are pure JSON-tag and comment changes in the same file;
+  doing them together avoids two passes over the same struct. Update tests BEFORE changing
+  tags (TDD exception: existing tests explicitly assert the wrong names and must be corrected
+  first so they fail for the right reason after the tags change).
+- Step 66 (G60) is independent of Step 65. The AH5 `/service-discovery/revoke/{id}` endpoint
+  already exists from G13; this step audits it, adds missing edge-case tests, and documents it
+  as the canonical path.
+- Step 67 (G62) is independent and the largest change — adds a new server-wide policy knob
+  to ServiceRegistry. Must not break experiments that rely on open discovery (default is `open`).
+- Step 68 — documentation sweep; apply after Steps 65–67 all pass.
+
+**Regression focus — experiments 9, 13, and 14:**
+These experiments use `dynamicorch-xacml` (core-evol), which has its own type definitions with
+correct field names. They do NOT call core's `dynamicorch` directly. JSON tag changes in
+`core/internal/orchestration/model/types.go` therefore do NOT affect their wire format.
+The AH5 ServiceRegistry endpoints ARE used by all three experiments (registration and lookup).
+`SERVICE_DISCOVERY_POLICY` defaults to `open`, so Step 67 is backward-compatible.
+The critical regression check is `go test -race ./...` in both `core/` and `core-evol/` after
+each step, followed by `bash core/test-system.sh`.
+
+---
+
+## Step 65 — OrchestrationResult field name fixes (G59 + G61)
+
+**Gaps addressed:**
+- **G61** — `OrchestrationResult` JSON tags preserve Java-source typos (`serviceDefinitition`,
+  `cloudIdentitifer`) that the official AH5 docs spell correctly (`serviceDefinition`,
+  `cloudIdentifier`). Any AH5-compliant client parsing these field names will silently discard
+  the values.
+- **G59** — The token map field is `authorizationTokens` (plural, following the Java source)
+  but the official docs name it `authorizationToken` (singular, type `AuthorizationTokenMap`).
+
+**Why together:** Both gaps are single-line JSON tag changes in the same struct in the same
+file. The test file references both typos and the plural token field — fixing together avoids
+two partial test states.
+
+**TDD exception — update tests before changing production code:**
+`core/internal/orchestration/model/types_test.go` has tests that explicitly assert the typo
+names as the wire-format keys. These must be updated to expect the correct names BEFORE the
+JSON tags are changed. After the test update, the tests will still pass (old tags still in
+place). Then change the tags: tests will fail immediately. Then implement — tests pass.
+
+**Prerequisites:** Pre-flight check passes in both `core/` and `core-evol/`.
+
+**Files to modify (core/):**
+- `core/internal/orchestration/model/types.go` — change JSON tags and update comments
+- `core/internal/orchestration/model/types_test.go` — update assertions to expect correct names
+
+**Files to check (core-evol/):**
+- `core-evol/internal/orchestration/types.go` — already uses `cloudIdentifier` (correct);
+  no `authorizationTokens` field present; no changes required
+- `core-evol/internal/orchestration/handler_test.go` — does not assert these field names;
+  no changes required
+
+**Experiments 9, 13, 14 impact:** These experiments use `dynamicorch-xacml`, which produces
+its own JSON from core-evol types. They do not produce output from `core/internal/orchestration/model`.
+No experiment service code changes are needed.
+
+---
+
+### TDD exception — update existing tests first
+
+In `core/internal/orchestration/model/types_test.go`, locate tests that assert the typo keys.
+Change the assertions to expect the correct names. Run the tests — they should STILL PASS
+(because the JSON tags have not changed yet). This is the refactor that enables the TDD cycle.
+
+Current assertions to change:
+
+```go
+// Before:
+if _, ok := raw["serviceDefinitition"]; !ok {
+    t.Errorf("JSON key serviceDefinitition missing ...")
+}
+if _, ok := raw["cloudIdentitifer"]; !ok {
+    t.Errorf("JSON key cloudIdentitifer missing ...")
+}
+if _, ok := raw["authorizationTokens"]; !ok {
+    t.Errorf("...")
+}
+
+// After:
+if _, ok := raw["serviceDefinition"]; !ok {
+    t.Errorf("JSON key serviceDefinition missing — got keys: %v", keys(raw))
+}
+if _, ok := raw["cloudIdentifier"]; !ok {
+    t.Errorf("JSON key cloudIdentifier missing — got keys: %v", keys(raw))
+}
+if _, ok := raw["authorizationToken"]; !ok {
+    t.Errorf("JSON key authorizationToken (singular) missing — got keys: %v", keys(raw))
+}
+```
+
+Confirm `go test ./internal/orchestration/model/...` still passes after updating tests.
+
+---
+
+### TDD cycle 65.1 — `serviceDefinition` is the wire-format key
+
+**Write this failing test first** in `types_test.go` (or confirm the updated assertion above
+now fails):
+
+```go
+func TestOrchestrationResultUsesCorrectServiceDefinitionKey(t *testing.T) {
+    r := OrchestrationResult{ServiceDefinition: "temperature"}
+    data, _ := json.Marshal(r)
+    var raw map[string]any
+    json.Unmarshal(data, &raw)
+    if _, ok := raw["serviceDefinition"]; !ok {
+        t.Errorf("expected JSON key 'serviceDefinition', got keys: %v", maps.Keys(raw))
+    }
+    if _, ok := raw["serviceDefinitition"]; ok {
+        t.Errorf("typo key 'serviceDefinitition' must not appear in JSON output")
+    }
+}
+```
+
+**Expected failure before implementation:** `expected JSON key 'serviceDefinition'` — because
+the tag still says `serviceDefinitition`.
+
+**Implementation:** In `core/internal/orchestration/model/types.go`, change:
+
+```go
+// Before:
+// Field names with typos (serviceDefinitition, cloudIdentitifer) are intentional:
+// they are mandated by the AH5 wire format and must match exactly.
+ServiceDefinition string `json:"serviceDefinitition"`
+CloudIdentifier   string `json:"cloudIdentitifer,omitempty"`
+AuthorizationTokens map[string]map[string]*AuthorizationTokenDescriptor `json:"authorizationTokens,omitempty"`
+
+// After:
+// Field names match the AH5 published documentation (June 2026).
+// The Java 5.2.0 source had typos (serviceDefinitition, cloudIdentitifer, authorizationTokens)
+// that are corrected in the official docs. See GAP_ANALYSIS.md G59, G61.
+ServiceDefinition string `json:"serviceDefinition"`
+CloudIdentifier   string `json:"cloudIdentifier,omitempty"`
+AuthorizationToken map[string]map[string]*AuthorizationTokenDescriptor `json:"authorizationToken,omitempty"`
+```
+
+Note the Go field name for the token map changes from `AuthorizationTokens` to
+`AuthorizationToken` to match the JSON key. Update all callers:
+
+**Files to update after the tag change:**
+- `core/internal/orchestration/dynamic/service/orchestrator.go` — all writes to
+  `result.AuthorizationTokens` → `result.AuthorizationToken`
+- `core/internal/orchestration/dynamic/client/token_relay.go` / `token_relay_http.go` —
+  if they reference the field name
+- `core/internal/integration/e2e_test.go` — if it reads the token field (check with grep)
+
+```bash
+grep -rn "AuthorizationTokens\|\.AuthorizationTokens" core/ --include="*.go"
+```
+
+Run this before implementing to produce the full list of callers.
+
+---
+
+### TDD cycle 65.2 — `cloudIdentifier` is the wire-format key
+
+```go
+func TestOrchestrationResultUsesCorrectCloudIdentifierKey(t *testing.T) {
+    r := OrchestrationResult{CloudIdentifier: "LOCAL"}
+    data, _ := json.Marshal(r)
+    var raw map[string]any
+    json.Unmarshal(data, &raw)
+    if v, ok := raw["cloudIdentifier"]; !ok || v != "LOCAL" {
+        t.Errorf("expected JSON key 'cloudIdentifier'='LOCAL', got keys: %v", maps.Keys(raw))
+    }
+    if _, ok := raw["cloudIdentitifer"]; ok {
+        t.Errorf("typo key 'cloudIdentitifer' must not appear in JSON output")
+    }
+}
+```
+
+**Expected failure before implementation:** key not found or wrong value.
+
+**Implementation:** Covered by the tag change in TDD cycle 65.1.
+
+---
+
+### TDD cycle 65.3 — `authorizationToken` (singular) is the wire-format key
+
+```go
+func TestOrchestrationResultUsesAuthorizationTokenSingular(t *testing.T) {
+    desc := &AuthorizationTokenDescriptor{TokenType: "TIME_LIMITED_TOKEN", Token: "t1"}
+    r := OrchestrationResult{
+        AuthorizationToken: map[string]map[string]*AuthorizationTokenDescriptor{
+            "HTTP-INSECURE-JSON": {"": desc},
+        },
+    }
+    data, _ := json.Marshal(r)
+    var raw map[string]any
+    json.Unmarshal(data, &raw)
+    if _, ok := raw["authorizationToken"]; !ok {
+        t.Errorf("expected singular JSON key 'authorizationToken', got keys: %v", maps.Keys(raw))
+    }
+    if _, ok := raw["authorizationTokens"]; ok {
+        t.Errorf("plural key 'authorizationTokens' must not appear — should be singular")
+    }
+}
+```
+
+**Expected failure before implementation:** key `authorizationToken` missing; `authorizationTokens` found.
+
+**Implementation:** Covered by the tag change in TDD cycle 65.1. Also rename Go struct field
+`AuthorizationTokens` → `AuthorizationToken` and update all callers.
+
+---
+
+### System test — experiments 9, 13, 14
+
+Run `bash core/test-system.sh` (no Docker). Then:
+
+```bash
+# Confirm no experiment Go service imports or hard-codes the typo field names:
+grep -rn "serviceDefinitition\|cloudIdentitifer\|authorizationTokens" \
+    experiments/experiment-9/services/ \
+    experiments/experiment-13/services/ \
+    experiments/experiment-14/services/ \
+    --include="*.go"
+```
+
+Expected output: empty (no matches). Experiments use core-evol types which already use
+correct names.
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/orchestration/model/... \
+    ./internal/orchestration/dynamic/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on both packages.
+
+### Completion criteria
+
+- [x] `TestOrchestrationResultUsesCorrectServiceDefinitionKey` passes
+- [x] `TestOrchestrationResultUsesCorrectCloudIdentifierKey` passes
+- [x] `TestOrchestrationResultUsesAuthorizationTokenSingular` passes
+- [x] No test references `serviceDefinitition`, `cloudIdentitifer`, or `authorizationTokens` as expected keys
+- [x] `go test -race ./...` from `core/` passes (all existing tests still pass)
+- [x] `go test -race ./...` from `core-evol/` passes (no core-evol changes, but confirm)
+- [x] `bash core/test-system.sh` passes
+- [x] `grep -rn "serviceDefinitition\|cloudIdentitifer" core/ --include="*.go"` returns only
+  the historical comments in GAP_ANALYSIS.md (no production Go code)
+- [x] Coverage ≥ 80% on modified packages
+
+---
+
+## Step 66 — ServiceRegistry unregister: verify AH5-aligned path (G60)
+
+**Gap addressed:**
+- **G60** — The official AH5 docs specify `DELETE /serviceregistry/service-discovery/revoke/{ServiceInstanceID}`
+  with a URL path parameter in composite format (`ProviderName|ServiceName|Version`,
+  percent-encoded). The ARROWHEAD_DOC_AMBIGUITIES analysis found that the Go implementation
+  used `/serviceregistry/unregister` with a request body.
+
+**Audit finding:** The AH5 endpoint already exists — `handleServiceRevoke` is registered at
+`/serviceregistry/service-discovery/revoke/` in `ah5_handler.go`. Go's HTTP router passes
+`r.URL.Path` with `%7C` decoded to `|`, so the composite ID is correctly extracted. An
+existing test at `ah5_handler_test.go:434-437` covers the URL-encoded composite ID path.
+
+**What this step does:**
+1. Confirms the existing implementation is correct via a thorough audit.
+2. Adds a missing test: verifying the 200 response when an existing service is revoked by its
+   full composite ID.
+3. Adds a test: verifying 204 when the composite ID is not found.
+4. Documents `/service-discovery/revoke/{id}` as the canonical path in `SPEC.md`.
+5. Documents `/serviceregistry/unregister` as the backward-compatibility alias.
+
+**No net new production code.** This step is primarily test coverage and documentation.
+
+**Prerequisites:** Step 65 complete (or can be done in parallel; independent).
+
+**Files to modify:**
+- `core/internal/api/ah5_handler_test.go` — add explicit revoke-by-composite-ID tests
+- `core/SPEC.md` — document canonical vs. legacy path
+
+---
+
+### TDD cycle 66.1 — Revoke existing service by full composite ID returns 200
+
+```go
+func TestServiceRevokeByCompositeID_Found(t *testing.T) {
+    h := newAH5Handler(t)
+    // Register a service so its composite ID exists in the store.
+    reg := ah5Post(t, h, "/serviceregistry/service-discovery/register", `{
+        "systemName": "Provider1",
+        "serviceDefinitionName": "temperature",
+        "version": "1.0.0",
+        "interfaces": [{"templateName":"generic_http","protocol":"http","policy":"NONE"}]
+    }`)
+    assert.Equal(t, http.StatusCreated, reg.Code)
+
+    // Revoke using percent-encoded composite ID: Provider1|temperature|1.0.0
+    encodedID := url.PathEscape("Provider1|temperature|1.0.0")
+    w := ah5Delete(t, h, "/serviceregistry/service-discovery/revoke/"+encodedID)
+    assert.Equal(t, http.StatusOK, w.Code)
+}
+```
+
+**Expected failure before this test exists:** no test at this level; existing test at line 434
+revokes a freshly registered instance but does not assert 200 separately.
+
+**Note:** `url.PathEscape` encodes `|` as `%7C`. `r.URL.Path` in Go's HTTP server decodes
+this back to `|` before the handler sees it. The store lookup uses the decoded composite key.
+
+---
+
+### TDD cycle 66.2 — Revoke non-existent composite ID returns 204
+
+```go
+func TestServiceRevokeByCompositeID_NotFound(t *testing.T) {
+    h := newAH5Handler(t)
+    encodedID := url.PathEscape("Ghost|svc|1.0.0")
+    w := ah5Delete(t, h, "/serviceregistry/service-discovery/revoke/"+encodedID)
+    assert.Equal(t, http.StatusNoContent, w.Code)
+}
+```
+
+**Expected failure before implementation:** this test may already pass. Confirm existing
+behavior is 204 for unknown IDs, then mark as a regression guard.
+
+---
+
+### TDD cycle 66.3 — Revoke without path segment returns 400
+
+```go
+func TestServiceRevokeWithoutID_Returns400(t *testing.T) {
+    h := newAH5Handler(t)
+    // DELETE /serviceregistry/service-discovery/revoke/ (empty segment)
+    w := ah5Delete(t, h, "/serviceregistry/service-discovery/revoke/")
+    assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+```
+
+---
+
+### System test — experiments 9, 13, 14
+
+Experiment services that call `/serviceregistry/unregister` (legacy path, body-based) must
+continue to work. Verify the legacy handler is still registered:
+
+```bash
+grep -n "serviceregistry/unregister" core/internal/api/handler.go
+```
+
+Confirm the output shows the legacy route. No experiment changes required.
+
+### Completion criteria
+
+- [x] `TestServiceRevokeByCompositeID_Found` passes (200)
+- [x] `TestServiceRevokeByCompositeID_NotFound` passes (204)
+- [x] `TestServiceRevokeWithoutID_Returns400` passes (400)
+- [x] `grep -n "serviceregistry/unregister" core/internal/api/handler.go` confirms legacy path retained
+- [x] `core/SPEC.md` documents `/service-discovery/revoke/{instanceId}` as the canonical path
+  and `/serviceregistry/unregister` as the backward-compat alias
+- [x] `go test -race ./...` from `core/` passes
+- [x] `bash core/test-system.sh` passes
+- [x] Coverage ≥ 80% on `internal/api/`
+
+---
+
+## Step 67 — Restricted service discovery policy (G62)
+
+**Gap addressed:**
+- **G62** — AH5 ServiceRegistry has a `service.discovery.policy` configuration property
+  (`open` | `restricted`). When `restricted`, service lookup requires authorization. Services
+  registered with `unrestrictedDiscovery: true` in their metadata are exempt and always
+  discoverable, including to unauthenticated callers.
+
+**Design:**
+
+Add `SERVICE_DISCOVERY_POLICY` env var (`open` | `restricted`, default `open`) to the
+ServiceRegistry binary. When `restricted`:
+
+- `POST /serviceregistry/service-discovery/lookup` inspects the `Authorization: Bearer`
+  header and validates the token via `LOOKUP_AUTH_URL` (same pattern as `REGISTER_AUTH_URL`).
+- If the token is valid: return all matching services (normal behavior).
+- If no token is present or the token is invalid: return only matching services whose metadata
+  contains `"unrestrictedDiscovery": true`. Fail-closed on auth-system unreachable: return
+  only the unrestricted subset.
+- When `SERVICE_DISCOVERY_POLICY=open` (default): no auth required; all matching services
+  returned (current behavior, unchanged).
+
+This design avoids a hard 401 for unauthenticated callers in restricted mode — they still
+receive the unrestricted subset, which is how AH5 bootstrapping works (SR services themselves
+register with `unrestrictedDiscovery: true` so they are always self-discoverable).
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `SERVICE_DISCOVERY_POLICY` | `open` | Set to `restricted` to require auth on lookup. |
+| `LOOKUP_AUTH_URL` | *(unset)* | Authentication system base URL for token validation when `SERVICE_DISCOVERY_POLICY=restricted`. Unset = no token validation (open mode always). |
+
+**New helper function:** `filterUnrestricted(instances []AH5ServiceInstance) []AH5ServiceInstance`
+returns only instances with `"unrestrictedDiscovery": true` in their `Metadata` map.
+
+**Prerequisites:** Step 65 complete or in parallel (independent). Pre-flight check passes.
+
+**Files to modify (core/):**
+- `core/internal/api/ah5_handler.go` — update `handleServiceLookup` to apply policy check
+- `core/internal/api/ah5_handler_test.go` — add restricted-policy tests
+- `core/cmd/serviceregistry/main.go` — read `SERVICE_DISCOVERY_POLICY` and `LOOKUP_AUTH_URL`
+  env vars; pass to `AH5Handler`
+- `core/internal/api/ah5_handler.go` — add `discoveryPolicy string` and `lookupAuthURL string`
+  fields to `AH5Handler`; add `AH5HandlerOption` for setting them (or add params to
+  constructor)
+
+**Files to check (core-evol/):**
+- `core-evol/internal/orchestration/service.go` — calls `POST /serviceregistry/service-discovery/lookup`
+  (from `SRLookup` or equivalent). When core SR runs with `SERVICE_DISCOVERY_POLICY=restricted`,
+  core-evol's lookup calls will be unauthenticated. Verify what happens. If core-evol sends no
+  Bearer token, it receives only unrestricted services.
+- If experiments 9/13/14 depend on restricted services being visible to dynamicorch-xacml, a
+  `LOOKUP_AUTH_URL` + Bearer token must be threaded into core-evol. Since `open` is the default
+  and experiments do not set `SERVICE_DISCOVERY_POLICY=restricted`, this is a non-issue for
+  the current experiment stacks.
+
+**Experiments 9, 13, 14 impact:** All three use `SERVICE_DISCOVERY_POLICY=open` (default) —
+no behavior change. The system tests will pass without any experiment-side changes.
+
+---
+
+### TDD cycle 67.1 — Open policy: lookup succeeds without auth
+
+**Regression guard — write before implementation. Must pass before and after Step 67.**
+
+```go
+func TestServiceLookupOpenPolicyNoAuthRequired(t *testing.T) {
+    h := newAH5HandlerWithPolicy(t, "open", "")
+    // Register a service.
+    ah5Post(t, h, "/serviceregistry/service-discovery/register", `{
+        "systemName": "Provider1",
+        "serviceDefinitionName": "temperature",
+        "version": "1.0.0",
+        "interfaces": [{"templateName":"generic_http","protocol":"http","policy":"NONE"}]
+    }`)
+    // Lookup without any Authorization header.
+    body := `{"providerNames":["Provider1"]}`
+    w := ah5Post(t, h, "/serviceregistry/service-discovery/lookup", body)
+    assert.Equal(t, http.StatusOK, w.Code)
+    var resp AH5ServiceLookupResponse
+    json.Unmarshal(w.Body.Bytes(), &resp)
+    assert.Equal(t, 1, len(resp.Entries))
+}
+```
+
+**Expected:** passes before and after implementation (no regression).
+
+---
+
+### TDD cycle 67.2 — Restricted policy: unauthenticated caller gets only unrestricted services
+
+```go
+func TestServiceLookupRestrictedPolicyUnauthedGetsUnrestrictedOnly(t *testing.T) {
+    // Mock auth server (not used for this test — no token provided).
+    h := newAH5HandlerWithPolicy(t, "restricted", "http://localhost:0")
+
+    // Register a "normal" service — no unrestrictedDiscovery metadata.
+    ah5Post(t, h, "/serviceregistry/service-discovery/register", `{
+        "systemName":            "Provider1",
+        "serviceDefinitionName": "temperature",
+        "version":               "1.0.0",
+        "interfaces":            [{"templateName":"generic_http","protocol":"http","policy":"NONE"}]
+    }`)
+    // Register a service with unrestrictedDiscovery: true.
+    ah5Post(t, h, "/serviceregistry/service-discovery/register", `{
+        "systemName":            "Provider2",
+        "serviceDefinitionName": "bootstrap",
+        "version":               "1.0.0",
+        "metadata":              {"unrestrictedDiscovery": true},
+        "interfaces":            [{"templateName":"generic_http","protocol":"http","policy":"NONE"}]
+    }`)
+
+    // Lookup both services — no Authorization header.
+    w := ah5Post(t, h, "/serviceregistry/service-discovery/lookup",
+        `{"serviceDefinitionNames":["temperature","bootstrap"]}`)
+    assert.Equal(t, http.StatusOK, w.Code)
+
+    var resp AH5ServiceLookupResponse
+    json.Unmarshal(w.Body.Bytes(), &resp)
+    // Only the unrestricted service should appear.
+    assert.Equal(t, 1, len(resp.Entries), "restricted: only unrestricted services visible without auth")
+    assert.Equal(t, "Provider2", resp.Entries[0].ProviderName)
+}
+```
+
+**Expected failure before implementation:** 2 entries (current behavior, policy not checked).
+
+**Implementation sketch** in `handleServiceLookup`:
+
+```go
+if h.discoveryPolicy == "restricted" {
+    token := httputil.ExtractBearer(r)
+    if token == "" || !h.validateLookupToken(token) {
+        // Return only unrestricted subset.
+        results = filterUnrestricted(results)
+    }
+}
+```
+
+where `filterUnrestricted` checks `instance.Metadata["unrestrictedDiscovery"] == "true"`.
+
+---
+
+### TDD cycle 67.3 — Restricted policy: authenticated caller gets all services
+
+```go
+func TestServiceLookupRestrictedPolicyAuthedGetsAll(t *testing.T) {
+    // Mock auth server that validates any token as belonging to "SomeSystem".
+    mockAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        json.NewEncoder(w).Encode(map[string]any{
+            "verified": true, "systemName": "SomeSystem",
+        })
+    }))
+    defer mockAuth.Close()
+
+    h := newAH5HandlerWithPolicy(t, "restricted", mockAuth.URL)
+
+    // Register a restricted and an unrestricted service.
+    ah5Post(t, h, "/serviceregistry/service-discovery/register", `{
+        "systemName": "Provider1", "serviceDefinitionName": "temperature",
+        "version": "1.0.0",
+        "interfaces": [{"templateName":"generic_http","protocol":"http","policy":"NONE"}]
+    }`)
+    ah5Post(t, h, "/serviceregistry/service-discovery/register", `{
+        "systemName": "Provider2", "serviceDefinitionName": "bootstrap",
+        "version": "1.0.0",
+        "metadata": {"unrestrictedDiscovery": true},
+        "interfaces": [{"templateName":"generic_http","protocol":"http","policy":"NONE"}]
+    }`)
+
+    // Lookup with a valid Bearer token.
+    req := httptest.NewRequest(http.MethodPost,
+        "/serviceregistry/service-discovery/lookup",
+        strings.NewReader(`{"serviceDefinitionNames":["temperature","bootstrap"]}`))
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Authorization", "Bearer valid-token")
+    w := httptest.NewRecorder()
+    h.ServeHTTP(w, req)
+    assert.Equal(t, http.StatusOK, w.Code)
+
+    var resp AH5ServiceLookupResponse
+    json.Unmarshal(w.Body.Bytes(), &resp)
+    assert.Equal(t, 2, len(resp.Entries), "authenticated caller should see all services")
+}
+```
+
+**Expected failure before implementation:** 2 entries already — but not because of auth.
+After implementation: still 2, but now because auth check passed.
+
+---
+
+### TDD cycle 67.4 — Restricted policy: auth system unreachable → unrestricted subset only
+
+```go
+func TestServiceLookupRestrictedPolicyAuthUnreachable_ReturnsFallback(t *testing.T) {
+    // Non-listening address.
+    h := newAH5HandlerWithPolicy(t, "restricted", "http://127.0.0.1:1")
+
+    ah5Post(t, h, "/serviceregistry/service-discovery/register", `{
+        "systemName": "Provider1", "serviceDefinitionName": "temperature",
+        "version": "1.0.0",
+        "interfaces": [{"templateName":"generic_http","protocol":"http","policy":"NONE"}]
+    }`)
+    ah5Post(t, h, "/serviceregistry/service-discovery/register", `{
+        "systemName": "Provider2", "serviceDefinitionName": "bootstrap",
+        "version": "1.0.0",
+        "metadata": {"unrestrictedDiscovery": true},
+        "interfaces": [{"templateName":"generic_http","protocol":"http","policy":"NONE"}]
+    }`)
+
+    req := httptest.NewRequest(http.MethodPost,
+        "/serviceregistry/service-discovery/lookup",
+        strings.NewReader(`{"serviceDefinitionNames":["temperature","bootstrap"]}`))
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Authorization", "Bearer some-token")
+    w := httptest.NewRecorder()
+    h.ServeHTTP(w, req)
+    assert.Equal(t, http.StatusOK, w.Code)
+
+    var resp AH5ServiceLookupResponse
+    json.Unmarshal(w.Body.Bytes(), &resp)
+    // Fail-closed: auth unreachable → treat as unauthenticated → unrestricted only.
+    assert.Equal(t, 1, len(resp.Entries))
+    assert.Equal(t, "Provider2", resp.Entries[0].ProviderName)
+}
+```
+
+---
+
+### System test — experiments 9, 13, 14
+
+Since `SERVICE_DISCOVERY_POLICY` defaults to `open`, existing stacks are unaffected. Verify by
+checking that none of the experiment `docker-compose.yml` files set this env var:
+
+```bash
+grep -rn "SERVICE_DISCOVERY_POLICY\|LOOKUP_AUTH_URL" \
+    experiments/experiment-9/ \
+    experiments/experiment-13/ \
+    experiments/experiment-14/
+```
+
+Expected: no matches. No changes to experiment stacks required.
+
+Also confirm the `core/test-system.sh` result (no Docker, unit + integration tests):
+
+```bash
+bash core/test-system.sh
+```
+
+### Coverage check
+
+```bash
+cd core
+go test -coverprofile=coverage.out ./internal/api/...
+go tool cover -func=coverage.out
+```
+
+Target: ≥ 80% on `internal/api/`.
+
+### Completion criteria
+
+- [x] `TestServiceLookupOpenPolicyNoAuthRequired` passes (regression guard)
+- [x] `TestServiceLookupRestrictedPolicyUnauthedGetsUnrestrictedOnly` passes
+- [x] `TestServiceLookupRestrictedPolicyAuthedGetsAll` passes
+- [x] `TestServiceLookupRestrictedPolicyAuthUnreachable_ReturnsFallback` passes
+- [x] `go test -race ./...` from `core/` passes
+- [x] `go test -race ./...` from `core-evol/` passes (no core-evol changes; confirm clean)
+- [x] `bash core/test-system.sh` passes
+- [x] `grep -rn "SERVICE_DISCOVERY_POLICY\|LOOKUP_AUTH_URL" experiments/experiment-{9,13,14}/` returns empty
+- [x] Coverage ≥ 80% on `internal/api/`
+
+---
+
+## Step 68 — Phase 7 documentation update
+
+**Purpose:** Ensure every authoritative document reflects the final state of Phase 7.
+Apply after Steps 65–67 are all complete and passing.
+
+**Prerequisites:** Steps 65, 66, and 67 all complete and passing.
+
+### `core/GAP_ANALYSIS.md`
+
+- G59: Add `**Status: Resolved in Step 65**` — `AuthorizationToken` (singular) field name;
+  JSON tag changed to `authorizationToken`; Go field renamed `AuthorizationToken`.
+- G60: Add `**Status: Resolved in Step 66**` — AH5 path already implemented; tests added;
+  legacy `/unregister` retained as backward-compat alias.
+- G61: Add `**Status: Resolved in Step 65**` — `serviceDefinition` and `cloudIdentifier`
+  JSON tags corrected; old typo comment removed.
+- G62: Add `**Status: Resolved in Step 67**` — `SERVICE_DISCOVERY_POLICY` + `LOOKUP_AUTH_URL`;
+  `filterUnrestricted` applies unrestricted-metadata exemption.
+- Update implementation status line: add G59–G62 to resolved list; remove from open list.
+- Remove the "Note on field name" from D11 (G59 is resolved); update D11 body to use
+  `authorizationToken` (singular) throughout.
+
+### `CONFORMANCE.md`
+
+1. Move G59, G60, G61, G62 from Open Gaps table → Resolved Gaps table with step numbers.
+2. Update Per-System Ratings to Phase 7 projected values.
+3. Mark Phase 7 as **Complete** in Phase Plan table.
+4. Update **last updated** timestamp.
+
+### `CONFORMANCE_UPDATE_PLAN.md`
+
+1. Tick all completion criteria checkboxes for Steps 65–67.
+2. Add Phase 7 regression matrix (section 18).
+3. Update status header: `Phases 1–7 complete`.
+
+### `core/SPEC.md`
+
+- Update `OrchestrationResult` response shape: `serviceDefinition` (corrected),
+  `cloudIdentifier` (corrected), `authorizationToken` (singular).
+- Add `SERVICE_DISCOVERY_POLICY` and `LOOKUP_AUTH_URL` to ServiceRegistry configuration table.
+- Document `/service-discovery/revoke/{ServiceInstanceID}` as canonical; note legacy alias.
+
+### `core/EXAMPLES.md`
+
+- Update any orchestration response examples that show `serviceDefinitition`,
+  `cloudIdentitifer`, or `authorizationTokens`.
+- Add example: service lookup with `SERVICE_DISCOVERY_POLICY=restricted` (Section: ServiceRegistry).
+
+### `draft-paper/ARROWHEAD_DOC_AMBIGUITIES.md`
+
+- Update summary table: G59, G60, G61, G62 rows → mark "Resolved in Phase 7".
+- Note that A5 is fully resolved (HTTP method confirmed + G60 gap closed).
+
+### Completion criteria
+
+- [x] G59, G60, G61, G62 appear in Resolved Gaps table in `CONFORMANCE.md`
+- [x] Phase Plan row for Phase 7 shows **Complete**
+- [x] All Steps 65–67 completion criteria checkboxes are `[x]`
+- [x] `core/SPEC.md` updated: correct field names, new env vars, canonical revoke path
+- [x] `core/EXAMPLES.md` updated: no typo field names in examples
+- [x] `ARROWHEAD_DOC_AMBIGUITIES.md` summary table updated
+- [x] `go test -race ./...` from `core/` passes (final check)
+- [x] `go test -race ./...` from `core-evol/` passes (final check)
+- [x] `bash core/test-system.sh` passes
+
+---
+
+## 18. Phase 7 — Regression matrix
+
+Run after all Phase 7 steps are complete (Steps 65–68).
+
+### Core regression
+
+| Check | Command | Expected |
+|---|---|---|
+| Build all | `cd core && go build ./...` | No errors |
+| Vet all | `cd core && go vet ./...` | No warnings |
+| Race-detector | `cd core && go test -race ./...` | All pass |
+| System test | `bash core/test-system.sh` | All PASS |
+| Workspace build | `go build ./...` (repo root) | No errors |
+| core-evol build | `cd core-evol && go build ./...` | No errors |
+| core-evol race | `cd core-evol && go test -race ./...` | All pass |
+
+### Field-name grep guards
+
+Run after Step 65 to confirm no stale typo names remain in production code:
+
+```bash
+# Must return ONLY comments/docs, not Go struct tags or JSON literals:
+grep -rn "serviceDefinitition\|cloudIdentitifer" core/ --include="*.go"
+grep -rn "authorizationTokens" core/internal/orchestration/ --include="*.go"
+```
+
+Expected: zero matches in `*.go` files (comments in GAP_ANALYSIS.md are markdown, not Go).
+
+### Experiment regression
+
+These checks confirm no experiment stack is broken by Phase 7 changes.
+
+| Experiment | Command | Scope |
+|---|---|---|
+| exp-9 pre-flight | `grep -rn "serviceDefinitition\|cloudIdentitifer\|authorizationTokens" experiments/experiment-9/ --include="*.go"` | Must be empty |
+| exp-13 pre-flight | Same grep for experiment-13 | Must be empty |
+| exp-14 pre-flight | Same grep for experiment-14 | Must be empty |
+| exp-9 service build | `go build ./experiments/experiment-9/services/...` | No errors |
+| exp-13 service build | `go build ./experiments/experiment-13/services/...` | No errors |
+| exp-14 service build | `go build ./experiments/experiment-14/services/...` | No errors |
+
+**Docker-based system tests** (require running stacks — run manually):
+
+```bash
+# experiment-9
+cd experiments/experiment-9 && docker compose up -d --build && bash test-system.sh
+
+# experiment-13
+cd experiments/experiment-13 && docker compose up -d --build && bash test-system.sh
+
+# experiment-14
+cd experiments/experiment-14 && docker compose up -d --build && bash test-system.sh
+```
+
+### Policy backward-compatibility check
+
+Confirm `SERVICE_DISCOVERY_POLICY` is not set in any active experiment stack:
+
+```bash
+grep -rn "SERVICE_DISCOVERY_POLICY\|LOOKUP_AUTH_URL" \
+    experiments/experiment-9/ \
+    experiments/experiment-13/ \
+    experiments/experiment-14/ \
+    core/docker-compose.yml
+```
+
+Expected: no matches. Open policy is the default; all experiment stacks continue to function
+with unrestricted service discovery.
+
+### Workspace-wide check
+
+```bash
+cd /path/to/ArrowheadCore
+go build ./...
+```
+
+Expected: no errors across the entire workspace.

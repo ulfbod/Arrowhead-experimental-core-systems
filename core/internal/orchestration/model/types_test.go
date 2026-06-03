@@ -50,7 +50,7 @@ func TestOrchestrationRequestMarshalUsesServiceRequirement(t *testing.T) {
 	}
 }
 
-// ─── Cycle 17.2 — Response field names include spec typos ────────────────────
+// ─── Cycle 17.2 — Response field names match official AH5 docs (June 2026) ───
 
 func TestOrchestrationResultSpecTypoFieldNames(t *testing.T) {
 	result := model.OrchestrationResult{
@@ -61,18 +61,13 @@ func TestOrchestrationResultSpecTypoFieldNames(t *testing.T) {
 	var raw map[string]any
 	json.Unmarshal(data, &raw)
 
-	// Spec typo: double 't' in serviceDefinitition
-	if _, ok := raw["serviceDefinitition"]; !ok {
-		t.Errorf("JSON key serviceDefinitition missing (double t) — got keys: %v", keys(raw))
+	// Correct key: serviceDefinition (single 't')
+	if _, ok := raw["serviceDefinition"]; !ok {
+		t.Errorf("JSON key serviceDefinition missing — got keys: %v", keys(raw))
 	}
-	// Spec typo: missing 'n' in cloudIdentitifer
-	if _, ok := raw["cloudIdentitifer"]; ok {
-		// cloudIdentitifer is omitempty — only present when non-empty
-		// This test verifies the field NAME is correct when populated.
-	}
-	// Old key must NOT be present.
-	if _, ok := raw["serviceDefinition"]; ok {
-		t.Error("old key serviceDefinition must not appear in encoded output")
+	// Old typo key must NOT be present.
+	if _, ok := raw["serviceDefinitition"]; ok {
+		t.Error("typo key 'serviceDefinitition' must not appear in JSON output")
 	}
 }
 
@@ -85,12 +80,12 @@ func TestOrchestrationResultCloudIdentifierTypo(t *testing.T) {
 	data, _ := json.Marshal(result)
 	var raw map[string]any
 	json.Unmarshal(data, &raw)
-	// Spec typo: missing 'n' in cloudIdentitifer (not cloudIdentifier)
-	if _, ok := raw["cloudIdentitifer"]; !ok {
-		t.Errorf("JSON key cloudIdentitifer missing (missing n) — got keys: %v", keys(raw))
+	// Correct key: cloudIdentifier (with 'n')
+	if v, ok := raw["cloudIdentifier"]; !ok || v != "LOCAL" {
+		t.Errorf("expected JSON key 'cloudIdentifier'='LOCAL', got %v", raw)
 	}
-	if _, ok := raw["cloudIdentifier"]; ok {
-		t.Error("old key cloudIdentifier must not appear in encoded output")
+	if _, ok := raw["cloudIdentitifer"]; ok {
+		t.Error("typo key 'cloudIdentitifer' must not appear in JSON output")
 	}
 }
 
@@ -159,5 +154,51 @@ func TestOrchestrationRequestVersionRequirementOmittedWhenEmpty(t *testing.T) {
 	sr := raw["serviceRequirement"].(map[string]any)
 	if _, ok := sr["versionRequirement"]; ok {
 		t.Error("versionRequirement should be omitted when empty")
+	}
+}
+
+// ─── Cycle 65 — G59+G61: correct JSON field names in OrchestrationResult ────
+
+func TestOrchestrationResultUsesCorrectServiceDefinitionKey(t *testing.T) {
+	r := model.OrchestrationResult{ServiceDefinition: "temperature"}
+	data, _ := json.Marshal(r)
+	var raw map[string]any
+	json.Unmarshal(data, &raw)
+	if _, ok := raw["serviceDefinition"]; !ok {
+		t.Errorf("expected JSON key 'serviceDefinition', got keys: %v", keys(raw))
+	}
+	if _, ok := raw["serviceDefinitition"]; ok {
+		t.Error("typo key 'serviceDefinitition' must not appear in JSON output")
+	}
+}
+
+func TestOrchestrationResultUsesCorrectCloudIdentifierKey(t *testing.T) {
+	r := model.OrchestrationResult{CloudIdentifier: "LOCAL"}
+	data, _ := json.Marshal(r)
+	var raw map[string]any
+	json.Unmarshal(data, &raw)
+	if v, ok := raw["cloudIdentifier"]; !ok || v != "LOCAL" {
+		t.Errorf("expected JSON key 'cloudIdentifier'='LOCAL', got %v", raw)
+	}
+	if _, ok := raw["cloudIdentitifer"]; ok {
+		t.Error("typo key 'cloudIdentitifer' must not appear in JSON output")
+	}
+}
+
+func TestOrchestrationResultUsesAuthorizationTokenSingular(t *testing.T) {
+	desc := &model.AuthorizationTokenDescriptor{TokenType: "TIME_LIMITED_TOKEN", Token: "t1"}
+	r := model.OrchestrationResult{
+		AuthorizationToken: map[string]map[string]*model.AuthorizationTokenDescriptor{
+			"HTTP-INSECURE-JSON": {"": desc},
+		},
+	}
+	data, _ := json.Marshal(r)
+	var raw map[string]any
+	json.Unmarshal(data, &raw)
+	if _, ok := raw["authorizationToken"]; !ok {
+		t.Errorf("expected singular 'authorizationToken', got keys: %v", raw)
+	}
+	if _, ok := raw["authorizationTokens"]; ok {
+		t.Error("plural 'authorizationTokens' must not appear")
 	}
 }

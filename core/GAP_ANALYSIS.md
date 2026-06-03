@@ -16,8 +16,8 @@ Documentation sources (reviewed May 2026 — full site traversal):
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/communication_profiles/
 - https://aitia-iiot.github.io/ah5-docs-java-spring/concepts/general_management/
 
-**Implementation status (as of June 2026):** Phases 1–6 complete (Steps 1–64, E1–E5).
-Resolved: G2, G3, G4, G5, G6, G7, G8, G10, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G23, G24, G25, G26, G27, G28, G29, G30, G34, G35, G36, G37, G38, G39, G40, G41, G42, G43, G44, G45, G46, G47, G48, G49, G50, G51, G52, G53, G54, G55, G57, G58.
+**Implementation status (as of June 2026):** Phases 1–7 complete (Steps 1–68, E1–E5).
+Resolved: G2, G3, G4, G5, G6, G7, G8, G10, G11, G12, G13, G14, G15, G16, G17, G18, G19, G20, G21, G22, G23, G24, G25, G26, G27, G28, G29, G30, G34, G35, G36, G37, G38, G39, G40, G41, G42, G43, G44, G45, G46, G47, G48, G49, G50, G51, G52, G53, G54, G55, G57, G58, G59, G60, G61, G62.
 Reclassified (not AH5 gaps): G56 (AH4 artifact — `secure` field absent from AH5 5.2.0).
 Design decisions (not conformance gaps): G1 (FlexibleStore — no spec), G9 (CA — intentional extension).
 
@@ -108,7 +108,7 @@ However, DynamicOrchestration now connects the two when `ENABLE_IDENTITY_CHECK=t
 DynamicOrchestrator now calls `POST /serviceregistry/service-discovery/lookup` (the canonical AH5 endpoint) instead of the legacy `POST /serviceregistry/query`. The shared orchestration model was updated in the same step:
 - `OrchestrationRequest` accepts `serviceRequirement` (AH5 spec) or `requestedService` (backward-compat alias); encodes as `serviceRequirement`
 - `OrchestrationResponse` uses `results` field (was `response`); `OrchestrationResult` uses flat `providerName string` (was nested provider object)
-- AH5 spec typos `serviceDefinitition` (double 't') and `cloudIdentitifer` (missing 'n') are preserved as intentional wire-format field names
+- AH5 spec typos `serviceDefinitition` (double 'i') and `cloudIdentitifer` (missing second 'i') were initially preserved as intentional wire-format field names, following the Java source. The official docs (June 2026) use the correct spellings `serviceDefinition` and `cloudIdentifier`. Preserving the typos is a conformance gap — see G61.
 
 ---
 
@@ -852,6 +852,84 @@ The Authentication system addressed the analogous gap for identity tokens (G8 �
 
 ---
 
+### G59 — `authorizationToken` field name: singular (docs) vs plural (Java source)
+
+The official AH5 documentation data model for `ServiceOrchestrationResult` names the token
+field `authorizationToken` (singular) of type `AuthorizationTokenMap`. The Java 5.2.0 DTO
+(`OrchestrationResultDTO.java`) declares the field as `authorizationTokens` (plural). The Go
+implementation followed the Java source and uses the plural form in `OrchestrationResult`.
+
+The published documentation is the API contract; implementations conforming to the wire format
+must use `authorizationToken` (singular). Clients that parse the JSON field by exact name will
+fail to find the token map when talking to the Go implementation.
+
+**Impact (Model%):** OrchestrationResult JSON field name does not match the published spec.
+
+**Status: Resolved in Step 65** — JSON tags in `OrchestrationResult` updated to `authorizationToken` (singular). See `core/internal/orchestration/model/types.go`.
+
+---
+
+### G60 — ServiceRegistry unregister path and parameter style
+
+The AH5 `serviceDiscovery` revoke operation is:
+
+```
+DELETE /serviceregistry/service-discovery/revoke/{ServiceInstanceID}
+```
+
+where `ServiceInstanceID` is a URL **path parameter** in pipe-delimited composite format
+(`ProviderName|ServiceName|Version`, percent-encoded). Response is 200 (removed) or 204
+(not found). No request body.
+
+The Go implementation exposes `DELETE /serviceregistry/unregister` with the service identity
+in the **request body**. The HTTP method is correct but the path (`/unregister` vs
+`/service-discovery/revoke`) and the parameter style (body vs path segment) are both wrong.
+
+Clients built to the AH5 spec will send `DELETE /service-discovery/revoke/Provider%7CSvc%7C1.0.0`
+and receive 404 from the Go implementation.
+
+**Impact (Endpoint%):** The revoke endpoint is unreachable by spec-compliant clients.
+**Impact (Behavior%):** Clients cannot deregister services without using the legacy path.
+
+**Status: Resolved in Step 66** — `DELETE /serviceregistry/service-discovery/revoke/{ServiceInstanceID}` endpoint verified present (added in Step 49 / G13). Added edge-case tests for 200 (found), 204 (not found), and 400 (missing ID). See `core/internal/api/ah5_handler.go` and `ah5_handler_test.go`.
+
+---
+
+### G61 — OrchestrationResult field name typos preserved from Java source
+
+The Java 5.2.0 `OrchestrationResultDTO` has two typos: `serviceDefinitition` (double `i`) and
+`cloudIdentitifer` (missing second `i`). The Go orchestration model (`OrchestrationResult`)
+adopted these typos as "intentional wire-format field names" (see G7 note). The official AH5
+documentation uses the correct spellings: `serviceDefinition` and `cloudIdentifier`.
+
+The published documentation is the canonical API contract. Preserving source-code typos as
+wire-format field names means the Go implementation produces JSON that no other correctly
+implemented AH5 client can parse correctly.
+
+**Impact (Model%):** Two field names in `OrchestrationResult` are misspelled on the wire.
+
+**Status: Resolved in Step 65** — JSON tags corrected: `serviceDefinition` (was `serviceDefinitition`) and `cloudIdentifier` (was `cloudIdentitifer`). See `core/internal/orchestration/model/types.go`.
+
+---
+
+### G62 — `restricted` service discovery policy not implemented
+
+AH5 ServiceRegistry supports a server-wide `service.discovery.policy` configuration property
+with values `open` (default) and `restricted`. When set to `restricted`, service discovery
+queries require authorization. Individual services can opt out by including
+`"unrestrictedDiscovery": true` in their registration metadata; the SR services themselves
+use this opt-out to remain self-discoverable.
+
+The Go ServiceRegistry has no implementation of this policy — all registered services are
+discoverable by any caller regardless of any configuration setting. The distinction between
+`open` and `restricted` clouds is a meaningful AH5 security boundary that is entirely absent.
+
+**Impact (Behavior%):** Services that should be protected by the discovery policy are exposed.
+
+**Status: Resolved in Step 67** — `AH5Handler` gains `discoveryPolicy` and `lookupAuthURL` fields. `handleServiceLookup` filters to `unrestrictedDiscovery: true` services when policy is `restricted` and the caller lacks a valid bearer token. `SERVICE_DISCOVERY_POLICY` and `LOOKUP_AUTH_URL` env vars read in `cmd/serviceregistry/main.go`. Fail-closed: network errors or non-200 from the auth endpoint cause the request to be treated as unauthenticated. See `core/internal/api/ah5_handler.go` and `cmd/serviceregistry/main.go`.
+
+---
+
 ### G58 — ServiceRegistry AH5 discovery surface isolated from orchestration
 
 The ServiceRegistry exposes two independent API surfaces (see D10):
@@ -969,9 +1047,9 @@ Serial numbers are allocated with an `atomic.Int64`, starting at 2 (1 is reserve
 
 ---
 
-### D11 — `authorizationTokens` key semantics: interface name → scope → descriptor
+### D11 — `authorizationToken` key semantics: interface name → scope → descriptor
 
-The AH5 spec does not define the exact key structure for `authorizationTokens` in `OrchestrationResult`. This implementation uses a two-level nested map:
+The AH5 spec does not define the exact key structure for `authorizationToken` in `OrchestrationResult`. This implementation uses a two-level nested map:
 
 - **Outer key:** interface name from the result's `Interfaces` list (e.g., `"HTTP-INSECURE-JSON"`). Defaults to `"HTTP-INSECURE-JSON"` when the result has no interfaces.
 - **Inner key:** scope string. `""` (empty string) represents the default/unscoped grant — the most common case.
@@ -979,6 +1057,8 @@ The AH5 spec does not define the exact key structure for `authorizationTokens` i
 This structure allows per-interface, per-scope tokens in future when multiple interfaces or scoped grants are needed, without requiring a schema change.
 
 The `AuthorizationTokenDescriptor` type is defined in the orchestration model package (not imported from `consumerauth`) to satisfy the D1 rule that systems communicate only via HTTP, not Go package imports.
+
+**Note on field name:** The official AH5 documentation (June 2026) names the field `authorizationToken` (singular). The Java 5.2.0 source has `authorizationTokens` (plural). The Go implementation currently uses the plural form following the Java source; G59 tracks the correction to match the published docs. The key structure described above is independent of the field name.
 
 ---
 
@@ -1036,15 +1116,27 @@ No official documentation exists. Open questions:
 
 ### A4 — Token relay between orchestration and providers
 
-AH5 mentions a token-relay mechanism where the orchestration response carries a token the consumer presents to the provider to prove authorization. It is not specified:
-- Whether the token originates from Authentication or ConsumerAuthorization
-- Whether the orchestration response body should include a `token` field
-- How the provider validates the token
+~~AH5 mentions a token-relay mechanism where the orchestration response carries a token the consumer presents to the provider to prove authorization. It is not specified how the provider validates the token.~~
 
-The current `OrchestrationResult` type has no token field.
+**Partially resolved by official docs (June 2026).**
+
+The AH5 service security page specifies validation per token type:
+- `TIME_LIMITED_TOKEN_AUTH` / `USAGE_LIMITED_TOKEN_AUTH`: provider calls ConsumerAuthorization `verify` online.
+- `BASE64_SELF_CONTAINED_TOKEN_AUTH`: provider decodes Base64, validates expiry/names/scope locally.
+- `RSA_SHA256_JSON_WEB_TOKEN_AUTH` / `RSA_SHA512_JSON_WEB_TOKEN_AUTH`: provider fetches public key from ConsumerAuthorization, verifies JWT signature offline.
+
+The token presentation mechanism is also confirmed: `Authorization: Bearer <token>` (Generic HTTP profile).
+
+**Remaining open:** The inner structure of `AuthorizationTokenMap` (outer and inner key semantics) is still not specified by either the Java source or the official docs.
 
 ---
 
 ### A5 — HTTP method for unregister
 
-AH5 documentation refers to `serviceDiscovery` as a service name but does not prescribe HTTP methods exhaustively. AH4 used POST for all operations. This implementation uses DELETE for unregistration, which is semantically correct REST. Existing experiments that call unregister via POST will need updating.
+**Resolved by official docs (June 2026).** The `serviceDiscovery` revoke operation is confirmed as:
+
+```
+DELETE /serviceregistry/service-discovery/revoke/{ServiceInstanceID}
+```
+
+The HTTP method (`DELETE`) matches the Go implementation. However, the path and parameter style differ — this is now a concrete conformance gap (G60), not an ambiguity. The Go implementation uses `/serviceregistry/unregister` with a request body; the spec requires a URL path parameter at `/service-discovery/revoke/{id}`. See G60.

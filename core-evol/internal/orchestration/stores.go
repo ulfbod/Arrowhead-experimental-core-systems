@@ -132,10 +132,24 @@ type historyStore struct {
 
 func newHistoryStore() *historyStore { return &historyStore{} }
 
-func (s *historyStore) add(e HistoryEntry) {
+func (s *historyStore) add(e HistoryEntry) string {
 	s.mu.Lock()
 	s.entries = append(s.entries, e)
 	s.mu.Unlock()
+	return e.ID
+}
+
+func (s *historyStore) updateStatus(id, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for i, e := range s.entries {
+		if e.ID == id {
+			s.entries[i].Status = status
+			s.entries[i].FinishedAt = &now
+			return
+		}
+	}
 }
 
 func (s *historyStore) query() HistoryQueryResponse {

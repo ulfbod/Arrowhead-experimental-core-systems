@@ -1345,6 +1345,50 @@ func TestServiceRegisterInvalidSecurityPolicy(t *testing.T) {
 	}
 }
 
+// ─── Step 66 — G60: service revoke edge cases ────────────────────────────────
+
+func TestAH5ServiceRevokeByCompositeID_Found(t *testing.T) {
+	// Registers then revokes a service by composite ID; asserts 200 OK.
+	h := newAH5Handler()
+	body := `{"systemName":"ProviderX","serviceDefinitionName":"humidity","version":"2.0.0"}`
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST",
+		"/serviceregistry/service-discovery/register", strings.NewReader(body)))
+	if rr.Code != http.StatusCreated && rr.Code != http.StatusOK {
+		t.Fatalf("register failed: %d %s", rr.Code, rr.Body.String())
+	}
+	encodedID := url.PathEscape("ProviderX|humidity|2.0.0")
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, httptest.NewRequest("DELETE",
+		"/serviceregistry/service-discovery/revoke/"+encodedID, nil))
+	if rr2.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+}
+
+func TestAH5ServiceRevokeByCompositeID_NotFound(t *testing.T) {
+	// Attempt to revoke a non-existent composite ID — should return 204 No Content.
+	h := newAH5Handler()
+	encodedID := url.PathEscape("NoSuch|service|9.9.9")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("DELETE",
+		"/serviceregistry/service-discovery/revoke/"+encodedID, nil))
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("expected 204 for not-found revoke, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAH5ServiceRevokeWithoutID_Returns400(t *testing.T) {
+	// DELETE /serviceregistry/service-discovery/revoke/ with empty segment — should return 400.
+	h := newAH5Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("DELETE",
+		"/serviceregistry/service-discovery/revoke/", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty ID, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestServiceRegisterAbsentSecurityPolicyDefaultsToNone(t *testing.T) {
 	h := newAH5Handler()
 	w := ah5Post(t, h, "/serviceregistry/service-discovery/register", map[string]any{
@@ -1355,5 +1399,126 @@ func TestServiceRegisterAbsentSecurityPolicyDefaultsToNone(t *testing.T) {
 	})
 	if w.Code != http.StatusCreated {
 		t.Errorf("absent policy: want 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// ─── Step 67 — G62: restricted service discovery policy ──────────────────────
+
+// newAH5HandlerWithPolicy creates an AH5Handler with a given discovery policy and
+// optional lookupAuthURL, forwarding empty strings for the other auth URLs.
+func newAH5HandlerWithPolicy(policy, lookupAuthURL string) http.Handler {
+	return api.NewAH5HandlerWithPolicy(
+		service.NewAH5RegistryService(repository.NewAH5Store()),
+		"", "", "", policy, lookupAuthURL,
+	)
+}
+
+// registerServiceForPolicy is a helper that registers a service instance.
+func registerServiceForPolicy(t *testing.T, h http.Handler, systemName, svcDef string, meta map[string]string) {
+	t.Helper()
+	body := map[string]any{
+		"systemName":            systemName,
+		"serviceDefinitionName": svcDef,
+	}
+	if meta != nil {
+		body["metadata"] = meta
+	}
+	rr := httptest.NewRecorder()
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/serviceregistry/service-discovery/register",
+		bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated && rr.Code != http.StatusOK {
+		t.Fatalf("register failed: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// lookupAllServices posts an empty lookup that matches all services by instanceIds being nil
+// but using providerNames as a broad search — we use service definitions to find our test ones.
+func lookupServicesByDef(t *testing.T, h http.Handler, svcDef, bearerToken string) model.ServiceLookupResponse {
+	t.Helper()
+	body := map[string]any{
+		"serviceDefinitionNames": []string{svcDef},
+	}
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/serviceregistry/service-discovery/lookup",
+		bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	if bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("lookup failed: %d %s", rr.Code, rr.Body.String())
+	}
+	var resp model.ServiceLookupResponse
+	json.NewDecoder(rr.Body).Decode(&resp) //nolint
+	return resp
+}
+
+// TestDiscoveryPolicyOpen verifies that open policy (default) returns all services
+// without any Authorization header (regression guard).
+func TestDiscoveryPolicyOpen(t *testing.T) {
+	h := newAH5HandlerWithPolicy("open", "")
+	registerServiceForPolicy(t, h, "Provider1", "temperature", nil)
+	resp := lookupServicesByDef(t, h, "temperature", "")
+	if resp.Count != 1 {
+		t.Errorf("open policy: expected 1 result, got %d", resp.Count)
+	}
+}
+
+// TestDiscoveryPolicyRestrictedUnauthenticated verifies that restricted policy with no
+// Authorization header returns only services marked unrestrictedDiscovery=true.
+func TestDiscoveryPolicyRestrictedUnauthenticated(t *testing.T) {
+	h := newAH5HandlerWithPolicy("restricted", "")
+	registerServiceForPolicy(t, h, "ProviderA", "temperature", nil)
+	registerServiceForPolicy(t, h, "ProviderB", "temperature", map[string]string{"unrestrictedDiscovery": "true"})
+
+	resp := lookupServicesByDef(t, h, "temperature", "")
+	if resp.Count != 1 {
+		t.Errorf("restricted+unauthenticated: expected 1 result, got %d", resp.Count)
+	}
+	if resp.Count > 0 {
+		entry := resp.Entries[0]
+		if entry.Provider == nil || entry.Provider.Name != "ProviderB" {
+			t.Errorf("expected unrestricted provider ProviderB, got %v", entry.Provider)
+		}
+	}
+}
+
+// TestDiscoveryPolicyRestrictedValidToken verifies that restricted policy with a valid
+// token returns all services.
+func TestDiscoveryPolicyRestrictedValidToken(t *testing.T) {
+	// Mock auth server that returns {"verified": true}
+	authSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"verified":true}`)
+	}))
+	defer authSrv.Close()
+
+	h := newAH5HandlerWithPolicy("restricted", authSrv.URL)
+	registerServiceForPolicy(t, h, "ProviderA", "temperature", nil)
+	registerServiceForPolicy(t, h, "ProviderB", "temperature", map[string]string{"unrestrictedDiscovery": "true"})
+
+	resp := lookupServicesByDef(t, h, "temperature", "valid-token")
+	if resp.Count != 2 {
+		t.Errorf("restricted+valid token: expected 2 results, got %d", resp.Count)
+	}
+}
+
+// TestDiscoveryPolicyRestrictedAuthUnreachable verifies that restricted policy with an
+// unreachable auth server (fail-closed) returns only unrestricted services.
+func TestDiscoveryPolicyRestrictedAuthUnreachable(t *testing.T) {
+	// Port 1 is not listening
+	h := newAH5HandlerWithPolicy("restricted", "http://127.0.0.1:1")
+	registerServiceForPolicy(t, h, "ProviderA", "temperature", nil)
+	registerServiceForPolicy(t, h, "ProviderB", "temperature", map[string]string{"unrestrictedDiscovery": "true"})
+
+	resp := lookupServicesByDef(t, h, "temperature", "any-token")
+	if resp.Count != 1 {
+		t.Errorf("restricted+auth unreachable: expected 1 (unrestricted) result, got %d", resp.Count)
 	}
 }

@@ -90,7 +90,7 @@ func (o *DynamicOrchestrator) SetLockChecker(lc LockChecker) { o.lockChecker = l
 
 // SetRelayTokens enables or disables the ConsumerAuth token relay (G54, D11).
 // When enabled, Orchestrate calls ConsumerAuth per result and populates
-// OrchestrationResult.AuthorizationTokens. Requires a TokenRelayClient to be set.
+// OrchestrationResult.AuthorizationToken. Requires a TokenRelayClient to be set.
 func (o *DynamicOrchestrator) SetRelayTokens(enabled bool) { o.relayTokens = enabled }
 
 // SetTokenRelayClient configures the client used for token relay (G54).
@@ -415,7 +415,7 @@ func (o *DynamicOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest, to
 				}
 			}
 			if len(tokens) > 0 {
-				r.AuthorizationTokens = tokens
+				r.AuthorizationToken = tokens
 			}
 		}
 	}

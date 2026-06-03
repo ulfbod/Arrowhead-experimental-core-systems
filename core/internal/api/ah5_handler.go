@@ -13,6 +13,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -39,6 +40,8 @@ type AH5Handler struct {
 	authURL         string // optional: Authentication URL for token-based system revoke
 	mgmtAuthURL     string // optional: Authentication URL for management endpoint access control
 	registerAuthURL string // optional: Authentication URL for registration identity enforcement (G10)
+	discoveryPolicy string // "open" (default) or "restricted" (G62)
+	lookupAuthURL   string // Auth URL for token validation in restricted discovery mode (G62)
 }
 
 // NewAH5Handler returns an http.Handler that handles all AH5 discovery and
@@ -49,7 +52,25 @@ type AH5Handler struct {
 // registerAuthURL is the Authentication URL for registration identity enforcement (REGISTER_AUTH_URL env var);
 // pass "" for open registration (development/PoC mode).
 func NewAH5Handler(svc *service.AH5RegistryService, authURL, mgmtAuthURL, registerAuthURL string) http.Handler {
-	h := &AH5Handler{svc: svc, authURL: authURL, mgmtAuthURL: mgmtAuthURL, registerAuthURL: registerAuthURL}
+	return NewAH5HandlerWithPolicy(svc, authURL, mgmtAuthURL, registerAuthURL, "open", "")
+}
+
+// NewAH5HandlerWithPolicy is like NewAH5Handler but also configures the service
+// discovery policy (G62). policy is "open" (default) or "restricted"; lookupAuthURL is
+// the Authentication URL used to validate tokens in restricted mode (pass "" to treat
+// all lookup requests as unauthenticated in restricted mode).
+func NewAH5HandlerWithPolicy(svc *service.AH5RegistryService, authURL, mgmtAuthURL, registerAuthURL, policy, lookupAuthURL string) http.Handler {
+	if policy == "" {
+		policy = "open"
+	}
+	h := &AH5Handler{
+		svc:             svc,
+		authURL:         authURL,
+		mgmtAuthURL:     mgmtAuthURL,
+		registerAuthURL: registerAuthURL,
+		discoveryPolicy: policy,
+		lookupAuthURL:   lookupAuthURL,
+	}
 	mux := http.NewServeMux()
 
 	// Device discovery
@@ -311,8 +332,57 @@ func (h *AH5Handler) handleServiceLookup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	full := h.svc.LookupServices(raw.ServiceLookupRequest)
-	page, total := model.Paginate(full.Entries, pageReqOrZero(raw.Pagination), func(si *model.AH5ServiceInstance) string { return si.InstanceID })
+	results := full.Entries
+
+	// G62: apply restricted discovery policy if configured.
+	if h.discoveryPolicy == "restricted" {
+		token := httputil.ExtractBearer(r)
+		if token == "" || !h.validateLookupToken(r.Context(), token) {
+			results = filterUnrestricted(results)
+		}
+	}
+
+	page, total := model.Paginate(results, pageReqOrZero(raw.Pagination), func(si *model.AH5ServiceInstance) string { return si.InstanceID })
 	httputil.WriteJSON(w, http.StatusOK, model.ServiceLookupResponse{Entries: page, Count: len(page), TotalCount: total}, srOrigin)
+}
+
+// filterUnrestricted returns only service instances that carry metadata
+// "unrestrictedDiscovery"="true". Used in restricted discovery policy (G62).
+func filterUnrestricted(instances []*model.AH5ServiceInstance) []*model.AH5ServiceInstance {
+	var out []*model.AH5ServiceInstance
+	for _, inst := range instances {
+		if v, ok := inst.Metadata["unrestrictedDiscovery"]; ok && v == "true" {
+			out = append(out, inst)
+		}
+	}
+	return out
+}
+
+// validateLookupToken calls the Authentication system to verify a Bearer token for
+// service discovery. Returns true only when the Auth system returns 200 with
+// "verified": true. Fails closed on any error or non-200 response.
+func (h *AH5Handler) validateLookupToken(ctx context.Context, token string) bool {
+	if h.lookupAuthURL == "" {
+		return false
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		h.lookupAuthURL+"/authentication/identity/verify/"+token, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var body struct {
+		Verified bool `json:"verified"`
+	}
+	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+	return body.Verified
 }
 
 // DELETE /serviceregistry/service-discovery/revoke/{instanceId}

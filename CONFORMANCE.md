@@ -28,7 +28,10 @@ Ratings assess three orthogonal dimensions:
 
 ## Per-System Ratings
 
-Ratings reflect the implemented state after Phase 6 (Steps 1–64, E1–E5). All catalogued gaps are resolved or reclassified. Remaining headroom is composed of spec ambiguities (A2, A4, A5) with no unambiguous resolution.
+Ratings reflect the implemented state after Phase 7 (Steps 1–68, E1–E5). All gaps G59–G62
+discovered in the official AH5 documentation review of June 2026 have been resolved.
+
+**Phase 6 achieved (pre-doc-review):**
 
 | System | Endpoint% | Model% | Behavior% | Overall |
 |--------|-----------|--------|-----------|---------|
@@ -39,10 +42,34 @@ Ratings reflect the implemented state after Phase 6 (Steps 1–64, E1–E5). All
 | SimpleStoreOrchestration | 95 | 93 | 95 | **~94%** |
 | Blacklist | 100 | 95 | 97 | **~97%** |
 | GeneralManagement (cross-cutting) | 100 | 95 | 97 | **~97%** |
-| FlexibleStoreOrchestration | N/A | N/A | N/A | Extension | No spec (G1) |
-| CertificateAuthority | N/A | N/A | N/A | Extension | Not in spec (G9) |
+| FlexibleStoreOrchestration | N/A | N/A | N/A | Extension — no spec (G1) |
+| CertificateAuthority | N/A | N/A | N/A | Extension — not in spec (G9) |
 | DeviceQoSEvaluator | 97 | 95 | 95 | **~96%** |
 | TranslationManager | 95 | 93 | 93 | **~94%** |
+
+**Current (post-doc-review, G59–G62 open):**
+
+| System | Endpoint% | Model% | Behavior% | Overall |
+|--------|-----------|--------|-----------|---------|
+| ServiceRegistry | 96 | 95 | 94 | **~95%** |
+| Authentication | 97 | 93 | 95 | **~95%** |
+| ConsumerAuthorization | 97 | 95 | 95 | **~96%** |
+| DynamicOrchestration | 99 | 90 | 97 | **~95%** |
+| SimpleStoreOrchestration | 95 | 93 | 95 | **~94%** |
+| Blacklist | 100 | 95 | 97 | **~97%** |
+| GeneralManagement (cross-cutting) | 100 | 95 | 97 | **~97%** |
+| FlexibleStoreOrchestration | N/A | N/A | N/A | Extension — no spec (G1) |
+| CertificateAuthority | N/A | N/A | N/A | Extension — not in spec (G9) |
+| DeviceQoSEvaluator | 97 | 95 | 95 | **~96%** |
+| TranslationManager | 95 | 93 | 93 | **~94%** |
+
+**Actual after Phase 7 (G59–G62 resolved):**
+
+| System | Endpoint% | Model% | Behavior% | Overall |
+|--------|-----------|--------|-----------|---------|
+| ServiceRegistry | 99 | 96 | 97 | **~97%** |
+| DynamicOrchestration | 99 | 97 | 97 | **~98%** |
+| (all others unchanged from post-doc-review) | | | | |
 
 **Notes:**
 - G11, G25 (intercloud), G40 (result fields), G41, G43 resolved in Phase 1 (Steps E1–E5).
@@ -51,11 +78,13 @@ Ratings reflect the implemented state after Phase 6 (Steps 1–64, E1–E5). All
 - G25 (ONLY_EXCLUSIVE), G44, G45, G46, G48, G49, G50, G51, G52 resolved in Phase 4 (Steps 40–48).
 - G4, G6, G23 (JWT), G26 (auto-push), G34 (MQTTS), G47, G53 resolved in Phase 5 (Steps 50–56).
 - G54 (token relay), G55 (versionRequirement), G57 (token expiry), G58 (SR AH5 bridge) resolved in Phase 6 (Steps 57–63). G56 reclassified as AH4 artifact.
+- G59–G62 discovered in official docs review (June 2026); resolved in Phase 7 (Steps 65–67).
 - GeneralManagement is a cross-cutting capability, not an independent system.
 - FlexibleStoreOrchestration and CertificateAuthority are extensions with no AH5 spec
   counterpart; conformance ratings are not applicable.
-- True 100% is not achievable — spec ambiguities A2 (FlexibleStore priority tie-breaking),
-  A4 (provider-side token validation), and A5 (unregister HTTP method) have no unambiguous resolution.
+- True 100% is not achievable — spec ambiguity A2 (FlexibleStore priority tie-breaking) and
+  the `AuthorizationTokenMap` key structure (A4 remainder) have no unambiguous resolution.
+  A5 (unregister HTTP method) is resolved; G60 (path + param style) resolved in Phase 7 Step 66.
 
 **Projected ratings after Phase 4 (Steps 40–49):**
 
@@ -103,12 +132,11 @@ Ratings reflect the implemented state after Phase 6 (Steps 1–64, E1–E5). All
 
 ## Open Gaps
 
-All catalogued gaps have been resolved or reclassified as of Phase 6. No open gaps remain.
+No open conformance gaps remain after Phase 7 (Steps 1–68 complete).
 
 **Remaining ambiguities (not tracked as gaps — spec is genuinely silent):**
 - A2: FlexibleStore priority tie-breaking semantics
-- A4: Which token the provider validates and how (the token-relay mechanism at the provider side)
-- A5: HTTP method for service unregistration
+- A4: `AuthorizationTokenMap` key structure (outer = interface name? inner = scope?) — validation mechanism per token type is now resolved (see docs review June 2026)
 
 ---
 
@@ -176,6 +204,10 @@ All catalogued gaps have been resolved or reclassified as of Phase 6. No open ga
 | G55 | `versionRequirement string` added to `ServiceRequirement`; forwarded as `Versions: []string` to AH5 SR lookup body; omitted when empty | 59 |
 | G54 | `authorizationTokens map[string]map[string]*AuthorizationTokenDescriptor` added to `OrchestrationResult`; `TokenRelayClient`/`CATokenRelayHTTPClient` call ConsumerAuth per result; opt-in via `RELAY_TOKENS=true` | 60 |
 | G58 | `SRHTTPClient.LookupServices` bridges AH5 service-discovery and legacy query stores; AH5 results take priority; legacy fills gaps; fail-open | 61 |
+| G61 | OrchestrationResult JSON tag typos corrected: `serviceDefinition` (was `serviceDefinitition`), `cloudIdentifier` (was `cloudIdentitifer`) | 65 |
+| G59 | `authorizationToken` (singular) JSON tag in `OrchestrationResult` (was `authorizationTokens` plural) | 65 |
+| G60 | `DELETE /serviceregistry/service-discovery/revoke/{ServiceInstanceID}` verified present; edge-case tests added (200/204/400) | 66 |
+| G62 | `restricted` service discovery policy: `SERVICE_DISCOVERY_POLICY` env var; fail-closed token validation; `unrestrictedDiscovery: true` metadata bypass | 67 |
 
 ---
 
@@ -189,6 +221,7 @@ All catalogued gaps have been resolved or reclassified as of Phase 6. No open ga
 | **Phase 4** | 40–49 | Behavioral completeness: model correctness gaps, missing CRUD operations, scoped policy evaluation | **Complete** |
 | **Phase 5** | 50–56 | Full protocol compliance: JWT token signing, mTLS by default, auth coupling, MQTTS, QoS dimensions | **Complete** |
 | **Phase 6** | 57–64 | Model completeness and discovery unification: token relay, version filter, secure enforcement, SR AH5 integration | **Complete** |
+| **Phase 7** | 65–68 | Docs-review conformance: fix field names/typos in OrchestrationResult (G59, G61), align unregister path (G60), implement restricted discovery policy (G62) | **Complete** |
 
 ### Phase 2 — Step breakdown
 
@@ -285,9 +318,25 @@ Step 56 is the documentation sweep.
 | 63 | — | Translation Manager behavior audit — edge-case behavior review against AH5 spec (field-remapping semantics, error cases, bridge lifecycle); implement any sub-gaps found | Medium | TranslationManager |
 | 64 | — | Phase 6 documentation update — CONFORMANCE.md, GAP_ANALYSIS.md, SPEC.md, EXAMPLES.md, README.md | — | — |
 
-**Achieved ratings after Phase 6 (Steps 57–64):** — see Per-System Ratings table above.
+**Achieved ratings after Phase 6 (Steps 57–64):** — see Per-System Ratings table above (pre-doc-review column).
 
-**Ceiling note:** True 100% is not achievable — spec ambiguities A2, A4 (provider-side token validation), and A5 (unregister HTTP method) have no unambiguous resolution. The ~97% overall ceiling reflects this inherent limit. Remaining headroom is composed entirely of spec-undefined behavior.
+**Ceiling note:** True 100% is not achievable — spec ambiguity A2 (FlexibleStore priority tie-breaking) and the `AuthorizationTokenMap` key structure remain unresolved. A5 (unregister HTTP method) is now resolved; the remaining concrete gap (G60) is the path and parameter style.
+
+### Phase 7 — Docs-review conformance (Steps 65–68)
+
+**Goal:** Close the four gaps (G59–G62) discovered in the official AH5 documentation review of
+June 2026. These are targeted, low-to-medium effort fixes. Steps 65 and 66 are independent of
+each other and can be done in either order. Step 66 (G60) requires care because the legacy
+`DELETE /serviceregistry/unregister` path must remain functional for backward compatibility
+with existing experiments. Step 67 (G62) is the largest change: it adds a server-wide policy
+configuration that gates all service discovery. Step 68 is the documentation sweep.
+
+| Step | Gap(s) | Focus | Priority | Systems affected |
+|------|--------|-------|----------|-----------------|
+| 65 | G59, G61 | Fix `OrchestrationResult` field names: rename JSON field `authorizationTokens` → `authorizationToken` (singular); correct `serviceDefinitition` → `serviceDefinition` and `cloudIdentitifer` → `cloudIdentifier` | Medium | DynamicOrch, core orchestration model |
+| 66 | G60 | Audit and extend AH5 revoke path: `/service-discovery/revoke/{id}` already exists; add missing edge-case tests (composite ID encoding, 200 vs 204); document as canonical path; retain legacy `/unregister` as backward-compat alias | Low | SR |
+| 67 | G62 | Implement `restricted` service discovery policy: `SERVICE_DISCOVERY_POLICY` env var (`open` \| `restricted`); when restricted, require `Authorization: Bearer` on `/service-discovery/lookup`; services with `unrestrictedDiscovery: true` in metadata bypass restriction | Medium | SR |
+| 68 | — | Phase 7 documentation update — CONFORMANCE.md, GAP_ANALYSIS.md, SPEC.md, EXAMPLES.md, README.md, ARROWHEAD_DOC_AMBIGUITIES.md | — | — |
 
 ---
 
@@ -301,4 +350,4 @@ Step 56 is the documentation sweep.
 
 ---
 
-*Last updated: 2026-05-31 (Phase 6 complete — G54/G55/G57/G58 resolved, G56 reclassified; per-system ratings updated to Phase 6 actuals; Open Gaps table cleared; Resolved Gaps table extended; Phase 6 marked Complete)*
+*Last updated: 2026-06-03 (Phase 7 complete — G59/G60/G61/G62 resolved; OrchestrationResult field names corrected to match published docs; restricted service discovery policy implemented; all open conformance gaps closed; ambiguities A2 and A4 remainder persist as spec is genuinely silent)*

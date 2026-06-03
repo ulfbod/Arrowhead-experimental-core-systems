@@ -57,9 +57,13 @@ type srUnregisterRequest struct {
 	Version           int      `json:"version"`
 }
 
+type authCredentials struct {
+	Password string `json:"password"`
+}
+
 type authLoginRequest struct {
-	SystemName  string `json:"systemName"`
-	Credentials string `json:"credentials"`
+	SystemName  string          `json:"systemName"`
+	Credentials authCredentials `json:"credentials"`
 }
 
 type authLoginResponse struct {
@@ -81,7 +85,7 @@ func login(authURL, systemName, credentials string) (string, error) {
 	if authURL == "" {
 		return "", nil
 	}
-	body, _ := json.Marshal(authLoginRequest{SystemName: systemName, Credentials: credentials})
+	body, _ := json.Marshal(authLoginRequest{SystemName: systemName, Credentials: authCredentials{Password: credentials}})
 	resp, err := http.Post(authURL+"/authentication/identity/login", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("auth login: %w", err)

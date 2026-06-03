@@ -1043,14 +1043,14 @@ func TestOrchestrateRelayTokensPopulatesAuthorizationTokens(t *testing.T) {
 		t.Fatal("no results")
 	}
 	r := resp.Results[0]
-	if r.AuthorizationTokens == nil {
-		t.Fatal("AuthorizationTokens should be populated when relayTokens=true")
+	if r.AuthorizationToken == nil {
+		t.Fatal("AuthorizationToken should be populated when relayTokens=true")
 	}
 	if stub.called == 0 {
 		t.Error("token relay client was not called")
 	}
 	// Verify the token is embedded under a non-empty interface key and default scope "".
-	for iface, scopes := range r.AuthorizationTokens {
+	for iface, scopes := range r.AuthorizationToken {
 		if iface == "" {
 			t.Error("interface key should not be empty")
 		}
@@ -1081,8 +1081,8 @@ func TestOrchestrateRelayTokensDisabledByDefault(t *testing.T) {
 	if len(resp.Results) == 0 {
 		t.Fatal("no results")
 	}
-	if resp.Results[0].AuthorizationTokens != nil {
-		t.Error("AuthorizationTokens should be nil when relay is disabled")
+	if resp.Results[0].AuthorizationToken != nil {
+		t.Error("AuthorizationToken should be nil when relay is disabled")
 	}
 	if stub.called != 0 {
 		t.Error("token relay client should not be called when relay is disabled")

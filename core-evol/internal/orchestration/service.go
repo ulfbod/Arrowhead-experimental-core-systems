@@ -113,6 +113,7 @@ func (o *XACMLOrchestrator) Orchestrate(req OrchestrationRequest) (Orchestration
 				Version:           inst.Version,
 				Metadata:          inst.Metadata,
 			},
+			CloudIdentifier: "LOCAL",
 		})
 	}
 	return OrchestrationResponse{Response: results}, nil
@@ -130,6 +131,7 @@ func buildResponse(instances []ServiceInstance) OrchestrationResponse {
 				Version:           inst.Version,
 				Metadata:          inst.Metadata,
 			},
+			CloudIdentifier: "LOCAL",
 		})
 	}
 	return OrchestrationResponse{Response: results}

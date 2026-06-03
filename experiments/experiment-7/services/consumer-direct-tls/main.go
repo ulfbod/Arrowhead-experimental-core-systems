@@ -156,9 +156,13 @@ func (st *statsTracker) snapshot(name string) map[string]interface{} {
 
 // ── AHC wire types ────────────────────────────────────────────────────────────
 
+type authCredentials struct {
+	Password string `json:"password"`
+}
+
 type authLoginRequest struct {
-	SystemName  string `json:"systemName"`
-	Credentials string `json:"credentials"`
+	SystemName  string          `json:"systemName"`
+	Credentials authCredentials `json:"credentials"`
 }
 
 type authLoginResponse struct {
@@ -215,7 +219,7 @@ type tokenResponse struct {
 // ── AHC calls ─────────────────────────────────────────────────────────────────
 
 func authLogin(client *http.Client, authURL, systemName, credentials string) (string, error) {
-	body, _ := json.Marshal(authLoginRequest{SystemName: systemName, Credentials: credentials})
+	body, _ := json.Marshal(authLoginRequest{SystemName: systemName, Credentials: authCredentials{Password: credentials}})
 	resp, err := client.Post(authURL+"/authentication/identity/login", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("auth login: %w", err)

@@ -60,14 +60,23 @@ func main() {
 
 	// AH5 discovery and management handler.
 	ah5Svc := service.NewAH5RegistryService(ah5Store)
-	ah5Handler := api.NewAH5Handler(ah5Svc, os.Getenv("SR_AUTH_URL"), os.Getenv("MGMT_AUTH_URL"), os.Getenv("REGISTER_AUTH_URL"))
+	ah5Handler := api.NewAH5HandlerWithPolicy(
+		ah5Svc,
+		os.Getenv("SR_AUTH_URL"),
+		os.Getenv("MGMT_AUTH_URL"),
+		os.Getenv("REGISTER_AUTH_URL"),
+		os.Getenv("SERVICE_DISCOVERY_POLICY"),
+		os.Getenv("LOOKUP_AUTH_URL"),
+	)
 
 	mgmtHandler := generalmgmt.NewHandler(buf, "serviceregistry", map[string]string{
-		"PORT":              cfg.Port,
-		"DB_PATH":           os.Getenv("DB_PATH"),
-		"TLS_PORT":          os.Getenv("TLS_PORT"),
-		"MGMT_AUTH_URL":     os.Getenv("MGMT_AUTH_URL"),
-		"REGISTER_AUTH_URL": os.Getenv("REGISTER_AUTH_URL"),
+		"PORT":                     cfg.Port,
+		"DB_PATH":                  os.Getenv("DB_PATH"),
+		"TLS_PORT":                 os.Getenv("TLS_PORT"),
+		"MGMT_AUTH_URL":            os.Getenv("MGMT_AUTH_URL"),
+		"REGISTER_AUTH_URL":        os.Getenv("REGISTER_AUTH_URL"),
+		"SERVICE_DISCOVERY_POLICY": os.Getenv("SERVICE_DISCOVERY_POLICY"),
+		"LOOKUP_AUTH_URL":          os.Getenv("LOOKUP_AUTH_URL"),
 	})
 
 	mux := http.NewServeMux()

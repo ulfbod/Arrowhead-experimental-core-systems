@@ -40,7 +40,7 @@ func NewCATokenRelayHTTPClient(baseURL string, httpClient *http.Client) *CAToken
 }
 
 // GenerateToken calls POST /consumerauthorization/authorization-token/generate and returns
-// the token descriptor for embedding in OrchestrationResult.AuthorizationTokens.
+// the token descriptor for embedding in OrchestrationResult.AuthorizationToken.
 // Fail-open: returns (nil, err) on network or decode errors so the orchestrator can proceed
 // without the token rather than returning an error to the consumer.
 func (c *CATokenRelayHTTPClient) GenerateToken(

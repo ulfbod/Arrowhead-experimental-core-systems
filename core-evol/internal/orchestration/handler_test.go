@@ -54,7 +54,7 @@ func TestHandler_ValidRequest_Returns200(t *testing.T) {
 			},
 		},
 	}
-	h := NewHandler(stub)
+	h := NewHandler(stub, "")
 	body := `{"requesterSystem":{"systemName":"c1","address":"1.2.3.4","port":8000},"requestedService":{"serviceDefinition":"telemetry"}}`
 	req := httptest.NewRequest(http.MethodPost, pullPath, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -77,7 +77,7 @@ func TestHandler_DenyReturnsEmptyResults(t *testing.T) {
 	stub := &stubOrchestrator{
 		resp: OrchestrationResponse{Response: []OrchestrationResult{}},
 	}
-	h := NewHandler(stub)
+	h := NewHandler(stub, "")
 	body := `{"requesterSystem":{"systemName":"c1"},"requestedService":{"serviceDefinition":"telemetry"}}`
 	req := httptest.NewRequest(http.MethodPost, pullPath, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -96,7 +96,7 @@ func TestHandler_DenyReturnsEmptyResults(t *testing.T) {
 
 func TestHandler_InvalidJSON_Returns400(t *testing.T) {
 	stub := &stubOrchestrator{}
-	h := NewHandler(stub)
+	h := NewHandler(stub, "")
 	req := httptest.NewRequest(http.MethodPost, pullPath, strings.NewReader("{bad json"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -109,7 +109,7 @@ func TestHandler_InvalidJSON_Returns400(t *testing.T) {
 
 func TestHandler_MissingRequester_Returns400(t *testing.T) {
 	stub := &stubOrchestrator{err: ErrMissingRequester}
-	h := NewHandler(stub)
+	h := NewHandler(stub, "")
 	body := `{"requesterSystem":{"systemName":""},"requestedService":{"serviceDefinition":"telemetry"}}`
 	req := httptest.NewRequest(http.MethodPost, pullPath, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -123,7 +123,7 @@ func TestHandler_MissingRequester_Returns400(t *testing.T) {
 
 func TestHandler_MissingService_Returns400(t *testing.T) {
 	stub := &stubOrchestrator{err: ErrMissingService}
-	h := NewHandler(stub)
+	h := NewHandler(stub, "")
 	body := `{"requesterSystem":{"systemName":"c1"},"requestedService":{"serviceDefinition":""}}`
 	req := httptest.NewRequest(http.MethodPost, pullPath, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -137,7 +137,7 @@ func TestHandler_MissingService_Returns400(t *testing.T) {
 
 func TestHandler_WrongMethod_Returns405(t *testing.T) {
 	stub := &stubOrchestrator{}
-	h := NewHandler(stub)
+	h := NewHandler(stub, "")
 	req := httptest.NewRequest(http.MethodGet, pullPath, nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -150,7 +150,7 @@ func TestHandler_WrongMethod_Returns405(t *testing.T) {
 // ---- Health -----------------------------------------------------------------
 
 func TestHealthEndpoints(t *testing.T) {
-	h := NewHandler(&stubOrchestrator{})
+	h := NewHandler(&stubOrchestrator{}, "")
 	for _, path := range []string{"/health", pullPath + "/health"} {
 		w := getReq(t, h, path)
 		if w.Code != http.StatusOK {
@@ -163,7 +163,7 @@ func TestHealthEndpoints(t *testing.T) {
 
 func TestStatusHandler_Returns200(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterRoutes(mux, &stubOrchestrator{}, "test-domain", true)
+	RegisterRoutes(mux, &stubOrchestrator{}, "test-domain", true, "")
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -183,7 +183,7 @@ func TestStatusHandler_Returns200(t *testing.T) {
 // ---- Step 18: Lock management -----------------------------------------------
 
 func TestLockCreate(t *testing.T) {
-	h := NewHandler(&stubOrchestrator{})
+	h := NewHandler(&stubOrchestrator{}, "")
 	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/lock/create", map[string]any{
 		"orchestrationJobId": "job-1",
 		"serviceInstanceId":  "svc-1",
@@ -201,7 +201,7 @@ func TestLockCreate(t *testing.T) {
 }
 
 func TestLockQuery(t *testing.T) {
-	h := NewHandler(&stubOrchestrator{})
+	h := NewHandler(&stubOrchestrator{}, "")
 	postJSON(t, h, "/serviceorchestration/orchestration/mgmt/lock/create", map[string]any{
 		"owner": "sys-a",
 	})
@@ -217,7 +217,7 @@ func TestLockQuery(t *testing.T) {
 }
 
 func TestLockRemoveByOwner(t *testing.T) {
-	h := NewHandler(&stubOrchestrator{})
+	h := NewHandler(&stubOrchestrator{}, "")
 	postJSON(t, h, "/serviceorchestration/orchestration/mgmt/lock/create", map[string]any{
 		"owner": "owner-x",
 	})
@@ -240,7 +240,7 @@ func TestLockRemoveByOwner(t *testing.T) {
 func TestHistoryRecordedOnPull(t *testing.T) {
 	h := NewHandler(&stubOrchestrator{
 		resp: OrchestrationResponse{Response: []OrchestrationResult{}},
-	})
+	}, "")
 	body := `{"requesterSystem":{"systemName":"c1"},"requestedService":{"serviceDefinition":"svc1"}}`
 	req := httptest.NewRequest(http.MethodPost, pullPath, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -268,7 +268,7 @@ var validSubscribeBody = map[string]any{
 }
 
 func TestSubscribeReturns201(t *testing.T) {
-	h := NewHandler(&stubOrchestrator{})
+	h := NewHandler(&stubOrchestrator{}, "")
 	w := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSubscribeBody)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -281,7 +281,7 @@ func TestSubscribeReturns201(t *testing.T) {
 }
 
 func TestSubscribeDuplicateReturns200(t *testing.T) {
-	h := NewHandler(&stubOrchestrator{})
+	h := NewHandler(&stubOrchestrator{}, "")
 	postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSubscribeBody)
 	w := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSubscribeBody)
 	if w.Code != http.StatusOK {
@@ -290,7 +290,7 @@ func TestSubscribeDuplicateReturns200(t *testing.T) {
 }
 
 func TestUnsubscribeFound200(t *testing.T) {
-	h := NewHandler(&stubOrchestrator{})
+	h := NewHandler(&stubOrchestrator{}, "")
 	sw := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSubscribeBody)
 	var sub struct{ ID string `json:"id"` }
 	json.NewDecoder(sw.Body).Decode(&sub)
@@ -305,7 +305,7 @@ func TestUnsubscribeFound200(t *testing.T) {
 }
 
 func TestUnsubscribeNotFound204(t *testing.T) {
-	h := NewHandler(&stubOrchestrator{})
+	h := NewHandler(&stubOrchestrator{}, "")
 	req := httptest.NewRequest(http.MethodDelete,
 		"/serviceorchestration/orchestration/unsubscribe/no-such-id", nil)
 	w := httptest.NewRecorder()
@@ -316,7 +316,7 @@ func TestUnsubscribeNotFound204(t *testing.T) {
 }
 
 func TestPushMgmtSubscribeAndQuery(t *testing.T) {
-	h := NewHandler(&stubOrchestrator{})
+	h := NewHandler(&stubOrchestrator{}, "")
 	postJSON(t, h, "/serviceorchestration/orchestration/mgmt/push/subscribe", validSubscribeBody)
 	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/push/query", map[string]any{})
 	if w.Code != http.StatusOK {
@@ -330,7 +330,7 @@ func TestPushMgmtSubscribeAndQuery(t *testing.T) {
 }
 
 func TestTriggerCreatesPendingHistory(t *testing.T) {
-	h := NewHandler(&stubOrchestrator{})
+	h := NewHandler(&stubOrchestrator{}, "")
 	sw := postJSON(t, h, "/serviceorchestration/orchestration/subscribe", validSubscribeBody)
 	var sub struct{ ID string `json:"id"` }
 	json.NewDecoder(sw.Body).Decode(&sub)
@@ -356,7 +356,7 @@ func TestTriggerCreatesPendingHistory(t *testing.T) {
 }
 
 func TestTriggerNotFoundReturns404(t *testing.T) {
-	h := NewHandler(&stubOrchestrator{})
+	h := NewHandler(&stubOrchestrator{}, "")
 	w := postJSON(t, h, "/serviceorchestration/orchestration/mgmt/push/trigger",
 		map[string]any{"subscriptionId": "no-such-id"})
 	if w.Code != http.StatusNotFound {
