@@ -97,7 +97,7 @@ Build a map and assert the rules above. No external dependencies needed — `os/
 files where they belong. Tests must fail before implementation (for the right reason, not
 a compile error) and pass after.
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 **Source:** For the full test body of each function listed below, read the TDD cycle
 sections in `CONFORMANCE_UPDATE_PLAN.md` Steps 22–26. This step is purely about placing
@@ -184,7 +184,7 @@ for now) so tests compile and then fail at runtime with wrong values.
 **Goal:** A short reference document describing the canonical shape of one core system.
 Every future step copies this shape rather than deriving the pattern independently.
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 ### What to write
 
@@ -234,7 +234,7 @@ Create `core/PATTERNS.md` containing:
 
 **Prerequisite:** Step C complete (`core/PATTERNS.md` written — it will reference this package).
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 **Goal:** Replace six verbatim copies of `writeJSON`, `writeError`, and `errTypeForStatus`
 with a single shared package. Eliminates the most common source of handler pattern drift:
@@ -309,7 +309,7 @@ Alternatively: the existing rules do not forbid `api/ → httputil` (httputil is
 
 **Prerequisite:** Step H complete (all handlers use `httputil.WriteError`).
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 **Goal:** Every handler error branch uses `errors.Is()` against the package's sentinel
 errors to determine the correct HTTP status code. No error is mapped via string comparison
@@ -386,7 +386,7 @@ closest to correct — read those first as a reference).
 constraint, reason, affected files, coverage gate, and completion criteria per step.
 The plan becomes a governance document, not a recipe book.
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 ### What to remove from Steps 22–26
 
@@ -434,7 +434,7 @@ For each step, retain:
 
 ### Step E1 — G11: System revoke derives identity from verified token
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 **Core change:** `core/internal/api/ah5_handler.go` `handleSystemRevoke` — extract
 `Authorization: Bearer <token>`, call `SR_AUTH_URL/authentication/identity/verify/<token>`,
@@ -454,7 +454,7 @@ unreachable auth server (fail-closed).
 
 ### Step E2 — G41: Blacklist Bearer enforcement and mode enum
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 **Core changes:**
 - `core/internal/blacklist/api/handler.go` — add Bearer middleware to `handleLookup` and
@@ -476,7 +476,7 @@ unreachable auth server (fail-closed).
 
 ### Step E3 — G40: OrchestrationResult missing spec-defined fields
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 **Core changes:**
 - `core/internal/orchestration/model/types.go` — add to `OrchestrationResult`:
@@ -495,7 +495,7 @@ unreachable auth server (fail-closed).
 
 ### Step E4 — G25: Intercloud flags return 501
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 **Core changes:**
 - `core/internal/orchestration/model/` — add `ErrInterclouNotSupported` sentinel error
@@ -513,7 +513,7 @@ unreachable auth server (fail-closed).
 
 ### Step E5 — G43: Credentials validated as structured object
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 **Core changes:**
 - `core/internal/authentication/model/types.go` — define `Credentials struct { Password string }`
@@ -560,7 +560,7 @@ And update the call site where the struct is populated.
 
 ## Step F — Add EXPERIENCES.md entry for core/core-evol sync risk
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 **Goal:** Document the synchronization failure mode so future sessions have a named,
 searchable record of the risk and its mitigation.
@@ -587,7 +587,7 @@ searchable record of the risk and its mitigation.
 **Prerequisite:** Steps A–F, H, I complete. This step must be done before implementing G42
 (Blacklist enforcement in core systems), which is Phase 2 work.
 
-**Status:** - [ ] Complete
+**Status:** - [x] Complete
 
 **Goal:** Apply the pattern described in `core/PATTERNS.md` (external HTTP dependency
 pattern) retroactively to the two existing concrete HTTP clients in DynamicOrchestration,
