@@ -384,12 +384,15 @@ services:
       SYSTEM_NAME: "portal-cloud-ml"
       PORT: "9207"
       TLS_PORT: "9294"
+      AMQP_URL: "amqps://portal-cloud-ml:consumer-secret@rabbitmq:5671/"
     ports:
       - "9207:9207"
     depends_on:
       kafka-authz:
         condition: service_healthy
       profile-ca:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9207/health || exit 1"]
