@@ -3398,6 +3398,94 @@ Specific checks before shipping a conformance step that changes identity validat
 
 ---
 
+## EXP-042 — `portal-cloud-ml` Docker build fails: `replace` directive source not copied into build context (experiments 9–14, 2026-06-03)
+
+### Symptom
+
+`docker compose up --build` fails during the `portal-cloud-ml` build stage:
+
+```
+ > [portal-cloud-ml builder 4/4] RUN go mod download && CGO_ENABLED=0 go build -o /app .:
+0.617 go: arrowhead/message-broker@v0.0.0 (replaced by ../../../../support/message-broker):
+      reading /build/support/message-broker/go.mod:
+      open /build/support/message-broker/go.mod: no such file or directory
+```
+
+The `go.sum` exists and `go build` works locally. Only Docker fails.
+
+### Root Cause
+
+`portal-cloud-ml/go.mod` added a `replace` directive for the workspace-local
+`arrowhead/message-broker` module:
+
+```
+replace arrowhead/message-broker => ../../../../support/message-broker
+```
+
+The Dockerfile only copied the portal-cloud-ml source directory:
+
+```dockerfile
+COPY experiments/experiment-9/services/portal-cloud-ml/ .
+```
+
+Inside Docker, the relative path `../../../../support/message-broker` resolves to
+a directory that was never copied into the image. `go mod download` resolves
+`replace` directives before fetching remote dependencies, so it immediately errors
+out — the `go.sum` is irrelevant because Go can't even locate the module root.
+
+This is the same class of failure as EXP-014 (missing `go.sum`) but in the opposite
+direction: the checksum file exists, but the source the checksum covers does not.
+Locally, `go.work` makes all workspace modules visible to every other module
+transparently. Docker has no `go.work` — each service is built in isolation.
+
+### Fix
+
+Follow the same pattern used by `robot-fleet-tls.Dockerfile`: use `/src` as
+`WORKDIR`, copy the replaced module's source directory first, then copy the service
+source to its correct path relative to the `WORKDIR` root so the relative `replace`
+path resolves correctly.
+
+```dockerfile
+# Before (broken):
+WORKDIR /build/experiments/experiment-9/services/portal-cloud-ml
+COPY experiments/experiment-9/services/portal-cloud-ml/ .
+RUN go mod download && CGO_ENABLED=0 go build -o /app .
+
+# After (correct):
+WORKDIR /src
+COPY support/message-broker/ ./support/message-broker/
+COPY experiments/experiment-9/services/portal-cloud-ml/ ./experiments/experiment-9/services/portal-cloud-ml/
+WORKDIR /src/experiments/experiment-9/services/portal-cloud-ml
+RUN go mod download && CGO_ENABLED=0 go build -o /app .
+```
+
+The relative path `../../../../support/message-broker` from
+`/src/experiments/experiment-9/services/portal-cloud-ml/` resolves to
+`/src/support/message-broker/` — which is now present in the image.
+
+All six portal-cloud-ml Dockerfiles (experiments 9–14) required this fix.
+
+### Guidance for Future Iterations
+
+**Any Dockerfile for a service whose `go.mod` contains a `replace` directive must
+COPY the replaced module's source directory into the build context, at the correct
+relative path.**
+
+The invariant to check: for every `replace X => <relpath>` in `go.mod`, the
+Dockerfile must contain a `COPY <resolved-path>/ ./<resolved-path>/` line, where
+`<resolved-path>` is the path as seen from the `WORKDIR` root, not from the
+service directory.
+
+Use the same directory layout in Docker as in the local workspace:
+- `WORKDIR /src` (repo root equivalent)
+- `COPY support/<module>/ ./support/<module>/` for each replaced module
+- `COPY experiments/<N>/services/<svc>/ ./experiments/<N>/services/<svc>/`
+- `WORKDIR /src/experiments/<N>/services/<svc>`
+
+`robot-fleet-tls.Dockerfile` is the canonical reference for this pattern.
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -3459,3 +3547,4 @@ Use this before marking an experiment implementation complete:
 - [ ] When the minimum Go version in any workspace `go.mod` is raised, update **all** `*.Dockerfile` files across all experiments — not just `core.Dockerfile`. Run `grep -rn "golang:1\." experiments/*/dockerfiles/*.Dockerfile | grep -v "golang:$(grep '^go ' core/go.mod | awk '{print $2}')-alpine"` to detect any Dockerfile below the required version. A single `find experiments/ -name "*.Dockerfile" | xargs sed -i 's/golang:OLD/golang:NEW/g'` fixes the whole repo in one pass (EXP-038)
 - [ ] After any Go toolchain version bump, re-run `go mod tidy` in **every** module — `core/`, `core-evol/`, all experiment services, all support packages — and then `go work sync`. Missing any module leaves its `go.sum` without the `/go.mod h1:` entries the new toolchain requires, causing Docker build failures. Commit all updated `go.sum` files together with the `go.mod` and Dockerfile changes (EXP-039, EXP-040)
 - [ ] After any conformance step that tightens identity validation in Authentication (PascalCase, length, character set), run `grep -rn "authentication/mgmt/identities" experiments/` and `grep -rn "SYSTEM_NAME:" experiments/` — every `systemName` registered by a `setup` container and every `SYSTEM_NAME` env var must satisfy the new rule. Diagnose `setup` exit-1 failures by temporarily removing `curl -s` to see the 400 error body; `-s` suppresses the response that reveals the validation message (EXP-041)
+- [ ] For every `replace X => <relpath>` in a service's `go.mod`, the service Dockerfile must COPY the replaced module's source at the correct path relative to `WORKDIR /src` — `go.work` makes workspace modules transparent locally but Docker has no `go.work`; the relative path must resolve inside the image or `go mod download` fails immediately. Use `WORKDIR /src`, copy each replaced module first, then copy the service source to its full workspace-relative path (EXP-042)
