@@ -340,7 +340,7 @@
     </g>
     <circle cx="460" cy="365" r="46" fill="none" stroke="rgba(13,148,136,0.12)" stroke-dasharray="3 5"/>
     <g id="entity-portal" class="entity-group" onclick="openPanel('portal',460,365)">
-      <circle cx="460" cy="365" r="38" fill="#091a18" stroke="#0d9488" stroke-width="2.5" filter="url(#glow-teal)"/>
+      <circle id="ring-portal" cx="460" cy="365" r="38" fill="#091a18" stroke="#0d9488" stroke-width="2.5" filter="url(#glow-teal)"/>
       <!-- Cloud icon -->
       <circle cx="451" cy="363" r="9" fill="#0d9488"/>
       <circle cx="466" cy="363" r="9" fill="#0d9488"/>
@@ -588,6 +588,13 @@
           <button id="btn-cert-revoke-sp2" class="btn btn-danger  ah-ctrl-btn" onclick="demoRevokeCert('service-partner-2','SP2')">Cert ✕</button>
           <button id="btn-cert-reissue-sp2" class="btn btn-neutral ah-ctrl-btn" onclick="demoReissueCert('service-partner-2','SP2')" disabled>Cert ↺</button>
         </div>
+
+        <div class="ah-ctrl-label" style="margin-top:8px">Portal &amp; Cloud ML</div>
+        <div class="ah-ctrl-row">
+          <span class="ah-ctrl-name">AMQP Feed</span>
+          <button class="btn btn-green  ah-ctrl-btn" onclick="demoGrantPortalAmqp()">Grant</button>
+          <button class="btn btn-red    ah-ctrl-btn" onclick="demoRevokePortalAmqp()">Revoke</button>
+        </div>
       </div>
 
       <div style="margin-top:10px;">
@@ -612,6 +619,7 @@ const state = {
   sp2Permit: false,
   sp1CertRevoked: false,
   sp2CertRevoked: false,
+  portalAmqpPermit: true,
 
   tickets: [],
   ticketSeq: 1,
@@ -684,6 +692,8 @@ async function refreshPolicies() {
     p.subject === 'service-partner-1' && p.resource === 'telemetry-rest' && p.action === 'consume');
   state.sp2Permit = Object.values(policyMap).some(p =>
     p.subject === 'service-partner-2' && p.resource === 'telemetry-rest' && p.action === 'consume');
+  state.portalAmqpPermit = Object.values(policyMap).some(p =>
+    p.subject === 'portal-cloud-ml' && p.resource === 'telemetry' && p.action === 'consume');
   updateMapVisuals();
 }
 
@@ -773,9 +783,15 @@ function updateMapVisuals() {
   applySPState('sp1', true, state.sp1Permit, state.sp1CertRevoked);
   applySPState('sp2', true, state.sp2Permit, state.sp2CertRevoked);
   // Flow paths — cert revocation suppresses the data flow regardless of policy
-  setFlowActive('fp-s1',  state.site1Active);
-  setFlowActive('fp-s2',  state.site2Active);
-  setFlowActive('fp-s3',  state.site3Active);
+  setFlowActive('fp-s1',  state.site1Active && state.portalAmqpPermit);
+  setFlowActive('fp-s2',  state.site2Active && state.portalAmqpPermit);
+  setFlowActive('fp-s3',  state.site3Active && state.portalAmqpPermit);
+  // Portal node — highlight red when AMQP consume grant revoked
+  const portalRing = document.getElementById('ring-portal');
+  if (portalRing) {
+    portalRing.setAttribute('stroke', state.portalAmqpPermit ? '#0d9488' : '#ef4444');
+    portalRing.setAttribute('filter', state.portalAmqpPermit ? 'url(#glow-teal)' : 'url(#glow-indigo)');
+  }
   setFlowActive('fp-sp1', state.sp1Permit && !state.sp1CertRevoked);
   setFlowActive('fp-sp2', state.sp2Permit && !state.sp2CertRevoked);
   // Cert revoke/reissue button states in AH panel
@@ -875,9 +891,9 @@ function setBadgeDot(id, ok) {
 //  PARTICLE ANIMATION
 // ═══════════════════════════════════════════════════════════
 const FLOW_DEFS = [
-  { pathId:'fp-s1',  pts:[[425,515],[445,430],[460,365]], color:'#0d9488', active:()=>state.site1Active, n:3 },
-  { pathId:'fp-s2',  pts:[[287,144],[360,250],[460,365]], color:'#0d9488', active:()=>state.site2Active, n:3 },
-  { pathId:'fp-s3',  pts:[[520,250],[500,300],[460,365]], color:'#0d9488', active:()=>state.site3Active, n:2 },
+  { pathId:'fp-s1',  pts:[[425,515],[445,430],[460,365]], color:'#0d9488', active:()=>state.site1Active && state.portalAmqpPermit, n:3 },
+  { pathId:'fp-s2',  pts:[[287,144],[360,250],[460,365]], color:'#0d9488', active:()=>state.site2Active && state.portalAmqpPermit, n:3 },
+  { pathId:'fp-s3',  pts:[[520,250],[500,300],[460,365]], color:'#0d9488', active:()=>state.site3Active && state.portalAmqpPermit, n:2 },
   { pathId:'fp-sp1', pts:[[460,365],[330,420],[196,480]], color:'#6366f1', active:()=>state.sp1Permit,   n:2 },
   { pathId:'fp-sp2', pts:[[460,365],[280,370],[ 63,375]], color:'#6366f1', active:()=>state.sp2Permit,   n:2 },
 ];
@@ -1332,11 +1348,14 @@ async function demoReset() {
   // Ensure SP1 consume policy exists
   if (!policyMap['service-partner-1|telemetry-rest|consume|'])
     await createPolicy('service-partner-1', 'telemetry-rest', 'consume', null);
+  // Ensure portal-cloud-ml AMQP consume policy exists
+  if (!policyMap['portal-cloud-ml|telemetry|consume|'])
+    await createPolicy('portal-cloud-ml', 'telemetry', 'consume', null);
   state.sp1CertRevoked = false;
   state.sp2CertRevoked = false;
   await refreshPolicies();
   updateMapVisuals();
-  toast('Demo reset — Sites 1+2 active, SP1 only');
+  toast('Demo reset — Sites 1+2 active, SP1 only, Portal AMQP enabled');
 }
 
 async function demoAddSite(siteId, siteNum) {
@@ -1377,6 +1396,22 @@ async function demoRevokeSP(spNum) {
   if (spNum === 1) state.sp1Permit = false; else state.sp2Permit = false;
   updateMapVisuals();
   toast(`Service Partner ${spNum} REVOKED`);
+}
+
+async function demoGrantPortalAmqp() {
+  if (policyMap['portal-cloud-ml|telemetry|consume|']) { toast('Portal already has AMQP access'); return; }
+  toast('Granting Portal AMQP access…');
+  await createPolicy('portal-cloud-ml', 'telemetry', 'consume', null);
+  await refreshPolicies();
+  toast('Portal & Cloud ML AMQP GRANTED');
+}
+
+async function demoRevokePortalAmqp() {
+  if (!policyMap['portal-cloud-ml|telemetry|consume|']) { toast('Portal already has no AMQP access'); return; }
+  toast('Revoking Portal AMQP access…');
+  await deletePolicy('portal-cloud-ml', 'telemetry', 'consume');
+  await refreshPolicies();
+  toast('Portal & Cloud ML AMQP REVOKED — feed stops within ~15s');
 }
 
 async function demoRevokeCert(cn, label) {
