@@ -595,6 +595,16 @@
           <button class="btn btn-green  ah-ctrl-btn" onclick="demoGrantPortalAmqp()">Grant</button>
           <button class="btn btn-red    ah-ctrl-btn" onclick="demoRevokePortalAmqp()">Revoke</button>
         </div>
+        <div class="ah-ctrl-row">
+          <span class="ah-ctrl-name">Kafka SSE</span>
+          <button class="btn btn-green  ah-ctrl-btn" onclick="demoGrantPortalKafka()">Grant</button>
+          <button class="btn btn-red    ah-ctrl-btn" onclick="demoRevokePortalKafka()">Revoke</button>
+        </div>
+        <div class="ah-ctrl-row">
+          <span class="ah-ctrl-name">Portal</span>
+          <button id="btn-cert-revoke-portal" class="btn btn-danger  ah-ctrl-btn" onclick="demoRevokeCert('portal-cloud-ml','Portal')">Cert ✕</button>
+          <button id="btn-cert-reissue-portal" class="btn btn-neutral ah-ctrl-btn" onclick="demoReissueCert('portal-cloud-ml','Portal')" disabled>Cert ↺</button>
+        </div>
       </div>
 
       <div style="margin-top:10px;">
@@ -620,6 +630,8 @@ const state = {
   sp1CertRevoked: false,
   sp2CertRevoked: false,
   portalAmqpPermit: true,
+  portalKafkaPermit: true,
+  portalCertRevoked: false,
 
   tickets: [],
   ticketSeq: 1,
@@ -693,6 +705,8 @@ async function refreshPolicies() {
   state.sp2Permit = Object.values(policyMap).some(p =>
     p.subject === 'service-partner-2' && p.resource === 'telemetry-rest' && p.action === 'consume');
   state.portalAmqpPermit = Object.values(policyMap).some(p =>
+    p.subject === 'portal-cloud-ml' && p.resource === 'telemetry' && p.action === 'subscribe');
+  state.portalKafkaPermit = Object.values(policyMap).some(p =>
     p.subject === 'portal-cloud-ml' && p.resource === 'telemetry' && p.action === 'consume');
   updateMapVisuals();
 }
@@ -783,17 +797,19 @@ function updateMapVisuals() {
   applySPState('sp1', true, state.sp1Permit, state.sp1CertRevoked);
   applySPState('sp2', true, state.sp2Permit, state.sp2CertRevoked);
   // Flow paths — cert revocation suppresses the data flow regardless of policy
-  setFlowActive('fp-s1',  state.site1Active && state.portalAmqpPermit);
-  setFlowActive('fp-s2',  state.site2Active && state.portalAmqpPermit);
-  setFlowActive('fp-s3',  state.site3Active && state.portalAmqpPermit);
-  // Portal node — highlight red when AMQP consume grant revoked
+  const portalFeedsActive = (state.portalAmqpPermit || state.portalKafkaPermit) && !state.portalCertRevoked;
+  setFlowActive('fp-s1',  state.site1Active && portalFeedsActive);
+  setFlowActive('fp-s2',  state.site2Active && portalFeedsActive);
+  setFlowActive('fp-s3',  state.site3Active && portalFeedsActive);
+  // Portal node — highlight red when all feeds revoked or cert revoked
   const portalRing = document.getElementById('ring-portal');
   if (portalRing) {
-    portalRing.setAttribute('stroke', state.portalAmqpPermit ? '#0d9488' : '#ef4444');
-    portalRing.setAttribute('filter', state.portalAmqpPermit ? 'url(#glow-teal)' : 'url(#glow-indigo)');
+    const portalOk = (state.portalAmqpPermit || state.portalKafkaPermit) && !state.portalCertRevoked;
+    portalRing.setAttribute('stroke', portalOk ? '#0d9488' : '#ef4444');
+    portalRing.setAttribute('filter', portalOk ? 'url(#glow-teal)' : 'url(#glow-indigo)');
   }
-  setFlowActive('fp-sp1', state.sp1Permit && !state.sp1CertRevoked);
-  setFlowActive('fp-sp2', state.sp2Permit && !state.sp2CertRevoked);
+  setFlowActive('fp-sp1', state.sp1Permit && !state.sp1CertRevoked && !state.portalCertRevoked);
+  setFlowActive('fp-sp2', state.sp2Permit && !state.sp2CertRevoked && !state.portalCertRevoked);
   // Cert revoke/reissue button states in AH panel
   const rBtn1 = document.getElementById('btn-cert-revoke-sp1');
   const xBtn1 = document.getElementById('btn-cert-reissue-sp1');
@@ -803,6 +819,10 @@ function updateMapVisuals() {
   const xBtn2 = document.getElementById('btn-cert-reissue-sp2');
   if (rBtn2) rBtn2.disabled = state.sp2CertRevoked;
   if (xBtn2) xBtn2.disabled = !state.sp2CertRevoked;
+  const rBtnP = document.getElementById('btn-cert-revoke-portal');
+  const xBtnP = document.getElementById('btn-cert-reissue-portal');
+  if (rBtnP) rBtnP.disabled = state.portalCertRevoked;
+  if (xBtnP) xBtnP.disabled = !state.portalCertRevoked;
   // Badge dots
   setBadgeDot('bdot-sr',   true);
   setBadgeDot('bdot-auth', state.sp1Permit   || state.sp2Permit);
@@ -893,9 +913,9 @@ function setBadgeDot(id, ok) {
 //  PARTICLE ANIMATION
 // ═══════════════════════════════════════════════════════════
 const FLOW_DEFS = [
-  { pathId:'fp-s1',  pts:[[425,515],[445,430],[460,365]], color:'#0d9488', active:()=>state.site1Active && state.portalAmqpPermit, n:3 },
-  { pathId:'fp-s2',  pts:[[287,144],[360,250],[460,365]], color:'#0d9488', active:()=>state.site2Active && state.portalAmqpPermit, n:3 },
-  { pathId:'fp-s3',  pts:[[520,250],[500,300],[460,365]], color:'#0d9488', active:()=>state.site3Active && state.portalAmqpPermit, n:2 },
+  { pathId:'fp-s1',  pts:[[425,515],[445,430],[460,365]], color:'#0d9488', active:()=>state.site1Active && (state.portalAmqpPermit || state.portalKafkaPermit) && !state.portalCertRevoked, n:3 },
+  { pathId:'fp-s2',  pts:[[287,144],[360,250],[460,365]], color:'#0d9488', active:()=>state.site2Active && (state.portalAmqpPermit || state.portalKafkaPermit) && !state.portalCertRevoked, n:3 },
+  { pathId:'fp-s3',  pts:[[520,250],[500,300],[460,365]], color:'#0d9488', active:()=>state.site3Active && (state.portalAmqpPermit || state.portalKafkaPermit) && !state.portalCertRevoked, n:2 },
   { pathId:'fp-sp1', pts:[[460,365],[330,420],[196,480]], color:'#6366f1', active:()=>state.sp1Permit,   n:2 },
   { pathId:'fp-sp2', pts:[[460,365],[280,370],[ 63,375]], color:'#6366f1', active:()=>state.sp2Permit,   n:2 },
 ];
@@ -1350,14 +1370,18 @@ async function demoReset() {
   // Ensure SP1 consume policy exists
   if (!policyMap['service-partner-1|telemetry-rest|consume|'])
     await createPolicy('service-partner-1', 'telemetry-rest', 'consume', null);
-  // Ensure portal-cloud-ml AMQP consume policy exists
+  // Ensure portal-cloud-ml AMQP subscribe policy exists
+  if (!policyMap['portal-cloud-ml|telemetry|subscribe|'])
+    await createPolicy('portal-cloud-ml', 'telemetry', 'subscribe', null);
+  // Ensure portal-cloud-ml Kafka SSE consume policy exists
   if (!policyMap['portal-cloud-ml|telemetry|consume|'])
     await createPolicy('portal-cloud-ml', 'telemetry', 'consume', null);
   state.sp1CertRevoked = false;
   state.sp2CertRevoked = false;
+  state.portalCertRevoked = false;
   await refreshPolicies();
   updateMapVisuals();
-  toast('Demo reset — Sites 1+2 active, SP1 only, Portal AMQP enabled');
+  toast('Demo reset — Sites 1+2 active, SP1 only, Portal feeds enabled');
 }
 
 async function demoAddSite(siteId, siteNum) {
@@ -1401,19 +1425,35 @@ async function demoRevokeSP(spNum) {
 }
 
 async function demoGrantPortalAmqp() {
-  if (policyMap['portal-cloud-ml|telemetry|consume|']) { toast('Portal already has AMQP access'); return; }
+  if (policyMap['portal-cloud-ml|telemetry|subscribe|']) { toast('Portal already has AMQP access'); return; }
   toast('Granting Portal AMQP access…');
-  await createPolicy('portal-cloud-ml', 'telemetry', 'consume', null);
+  await createPolicy('portal-cloud-ml', 'telemetry', 'subscribe', null);
   await refreshPolicies();
   toast('Portal & Cloud ML AMQP GRANTED');
 }
 
 async function demoRevokePortalAmqp() {
-  if (!policyMap['portal-cloud-ml|telemetry|consume|']) { toast('Portal already has no AMQP access'); return; }
+  if (!policyMap['portal-cloud-ml|telemetry|subscribe|']) { toast('Portal already has no AMQP access'); return; }
   toast('Revoking Portal AMQP access…');
-  await deletePolicy('portal-cloud-ml', 'telemetry', 'consume');
+  await deletePolicy('portal-cloud-ml', 'telemetry', 'subscribe');
   await refreshPolicies();
   toast('Portal & Cloud ML AMQP REVOKED — feed stops within ~15s');
+}
+
+async function demoGrantPortalKafka() {
+  if (policyMap['portal-cloud-ml|telemetry|consume|']) { toast('Portal already has Kafka SSE access'); return; }
+  toast('Granting Portal Kafka SSE access…');
+  await createPolicy('portal-cloud-ml', 'telemetry', 'consume', null);
+  await refreshPolicies();
+  toast('Portal & Cloud ML Kafka SSE GRANTED');
+}
+
+async function demoRevokePortalKafka() {
+  if (!policyMap['portal-cloud-ml|telemetry|consume|']) { toast('Portal already has no Kafka SSE access'); return; }
+  toast('Revoking Portal Kafka SSE access…');
+  await deletePolicy('portal-cloud-ml', 'telemetry', 'consume');
+  await refreshPolicies();
+  toast('Portal & Cloud ML Kafka SSE REVOKED — stream closes within 100 messages');
 }
 
 async function demoRevokeCert(cn, label) {
@@ -1421,7 +1461,8 @@ async function demoRevokeCert(cn, label) {
   await apiFetch(`/api/profile-ca/ca/certificates/${cn}`, { method: 'DELETE' });
   await new Promise(r => setTimeout(r, 1200));
   const pipData = await apiFetch(`/api/pip/pip/attributes/${cn}`);
-  if (cn.includes('2')) state.sp2CertRevoked = true;
+  if (cn === 'portal-cloud-ml') state.portalCertRevoked = true;
+  else if (cn.includes('2')) state.sp2CertRevoked = true;
   else state.sp1CertRevoked = true;
   toast(pipData
     ? `${label} cert revoked. PIP: certValid=${pipData.certValid}`
@@ -1434,7 +1475,8 @@ async function demoReissueCert(cn, label) {
   await apiFetch(`/api/profile-ca/ca/certificates/${cn}/reissue`, { method: 'POST' });
   await new Promise(r => setTimeout(r, 800)); // let PIP process the ISSUED event
   const pipData = await apiFetch(`/api/pip/pip/attributes/${cn}`);
-  if (cn.includes('2')) state.sp2CertRevoked = false;
+  if (cn === 'portal-cloud-ml') state.portalCertRevoked = false;
+  else if (cn.includes('2')) state.sp2CertRevoked = false;
   else state.sp1CertRevoked = false;
   toast(pipData
     ? `${label} cert re-issued. PIP: certValid=${pipData.certValid}`
