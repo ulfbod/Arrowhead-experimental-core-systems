@@ -414,7 +414,7 @@ services:
       RABBITMQ_ADMIN_USER: admin
       RABBITMQ_ADMIN_PASS: admin
       CONSUMER_PASSWORD: "consumer-secret"
-      PUBLISHER_USER: "robot-fleet"
+      PUBLISHER_USER: "RobotFleet"
       PUBLISHER_PASSWORD: "fleet-secret"
       CACHE_TTL: "0s"
       PORT: "9090"
