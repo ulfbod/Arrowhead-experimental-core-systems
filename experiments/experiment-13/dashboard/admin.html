@@ -175,14 +175,14 @@
       </div>
     </div>
 
-    <!-- ── Column 3: Profile-CA cert revocation + DynamicOrch test ───────── -->
+    <!-- ── Column 3: Profile-CA cert admin + DynamicOrch test ─────────────── -->
     <div>
       <div class="card highlight">
-        <h2>Profile-CA — Certificate Revocation</h2>
+        <h2>Profile-CA — Certificate Admin</h2>
         <div class="info-box">
-          Revoking a certificate immediately blocks all access for that system. Enter the
-          system name and click Revoke — the policy engine is notified automatically and
-          the next authorization request for that system will be denied.
+          Revoking a certificate immediately blocks all access for that system. Re-issuing
+          restores access — the PIP is notified automatically via the gRPC stream and the
+          next authorization request reflects the updated certificate status.
         </div>
 
         <div class="section-title">Revoke Certificate</div>
@@ -193,6 +193,16 @@
           </div>
           <button type="submit" class="btn btn-danger">Revoke Certificate</button>
           <div id="revoke-msg" style="display:none" class="msg"></div>
+        </form>
+
+        <div class="section-title" style="margin-top:16px">Re-issue Certificate</div>
+        <form onsubmit="reissueCert(event)" style="gap:8px;display:flex;flex-direction:column">
+          <div class="field">
+            <label>System name (cert CN)</label>
+            <input id="reissue-cn" placeholder="e.g. service-partner-2" required />
+          </div>
+          <button type="submit" class="btn btn-primary">Re-issue Certificate</button>
+          <div id="reissue-msg" style="display:none" class="msg"></div>
         </form>
       </div>
 
@@ -406,7 +416,7 @@
       } catch(e) { el.textContent = 'Error: ' + e.message; }
     }
 
-    // ── Profile-CA revocation ────────────────────────────────────────────────────
+    // ── Profile-CA certificate admin ─────────────────────────────────────────────
 
     async function revokeCert(e) {
       e.preventDefault();
@@ -423,6 +433,23 @@
           showMsg('revoke-msg', `HTTP ${r.status}: ${d.error ?? 'revocation failed'}`, false);
         }
       } catch(e) { showMsg('revoke-msg', e.message, false); }
+    }
+
+    async function reissueCert(e) {
+      e.preventDefault();
+      const cn = document.getElementById('reissue-cn').value.trim();
+      try {
+        const r = await fetch('/api/profile-ca/ca/certificates/' + encodeURIComponent(cn) + '/reissue', {
+          method: 'POST',
+        });
+        if (r.ok || r.status === 204) {
+          showMsg('reissue-msg', `Re-issued ${cn} — PIP will update via gRPC stream`, true);
+          setTimeout(loadSubjects, 1500);
+        } else {
+          const d = await r.json().catch(() => ({}));
+          showMsg('reissue-msg', `HTTP ${r.status}: ${d.error ?? 're-issuance failed'}`, false);
+        }
+      } catch(e) { showMsg('reissue-msg', e.message, false); }
     }
 
     // ── DynamicOrch-XACML ────────────────────────────────────────────────────────
