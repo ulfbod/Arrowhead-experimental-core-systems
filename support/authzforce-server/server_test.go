@@ -45,6 +45,36 @@ func TestParseGrants_multiple(t *testing.T) {
 	}
 }
 
+// TestParseGrants_withActionSuffix verifies that EXP-043 action suffixes in PolicyIds
+// are stripped — only (consumer, service) is extracted (EXP-046).
+func TestParseGrants_withActionSuffix(t *testing.T) {
+	xml := `<Policy PolicyId="urn:arrowhead:grant:service-partner-1:telemetry-rest:invoke"/>` +
+		`<Policy PolicyId="urn:arrowhead:grant:portal-cloud-ml:telemetry:consume"/>`
+	got := parseGrants(xml)
+	if !got[[2]string{"service-partner-1", "telemetry-rest"}] {
+		t.Errorf("expected grant (service-partner-1, telemetry-rest), got %v", got)
+	}
+	if !got[[2]string{"portal-cloud-ml", "telemetry"}] {
+		t.Errorf("expected grant (portal-cloud-ml, telemetry), got %v", got)
+	}
+	// Must not contain the action-suffixed service name.
+	if got[[2]string{"service-partner-1", "telemetry-rest:invoke"}] {
+		t.Error("action suffix must not be included in service name")
+	}
+}
+
+// TestParseGrants_withProviderAndActionSuffix verifies per-provider orchestrate
+// PolicyIds (EXP-043 format) are reduced to (consumer, service) grants.
+func TestParseGrants_withProviderAndActionSuffix(t *testing.T) {
+	xml := `<Policy PolicyId="urn:arrowhead:grant:portal-cloud-ml:telemetry:RobotFleetSite1:orchestrate"/>` +
+		`<Policy PolicyId="urn:arrowhead:grant:portal-cloud-ml:telemetry:RobotFleetSite2:orchestrate"/>`
+	got := parseGrants(xml)
+	// Both per-provider policies collapse to the same (consumer, service) grant.
+	if !got[[2]string{"portal-cloud-ml", "telemetry"}] {
+		t.Errorf("expected grant (portal-cloud-ml, telemetry), got %v", got)
+	}
+}
+
 // ── parseXACMLRequest ─────────────────────────────────────────────────────────
 
 func TestParseXACMLRequest_both(t *testing.T) {

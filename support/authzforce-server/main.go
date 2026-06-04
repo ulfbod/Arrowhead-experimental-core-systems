@@ -64,9 +64,10 @@ func newUUID() string {
 
 // ── Policy parsing ─────────────────────────────────────────────────────────────
 
-// grantRe matches PolicyId="urn:arrowhead:grant:{consumer}:{service}" in a PolicySet.
-// We generate this format in arrowhead/authzforce.BuildPolicy.
-var grantRe = regexp.MustCompile(`PolicyId="urn:arrowhead:grant:([^:]+):([^"]+)"`)
+// grantRe matches PolicyId="urn:arrowhead:grant:{consumer}:{service}[:{provider}][:{action}]"
+// in a PolicySet. Only consumer and service are extracted; optional provider and action
+// suffixes (added by EXP-043) are ignored — grants are keyed on (consumer, service) pairs.
+var grantRe = regexp.MustCompile(`PolicyId="urn:arrowhead:grant:([^:]+):([^:"]+)`)
 
 // parseGrants extracts (consumer, service) pairs from our PolicySet XML format.
 func parseGrants(policyXML string) map[[2]string]bool {

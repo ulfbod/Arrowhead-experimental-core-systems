@@ -3700,6 +3700,81 @@ PDP had no matching policy — indistinguishable from a policy-not-seeded proble
 
 ---
 
+## EXP-046 — authzforce-server parseGrants regex breaks on EXP-043 PolicyId suffix format (experiments 13–14, 2026-06-04)
+
+### Symptom
+
+After rebuilding with EXP-043 (action-specific PolicyIds) applied, **all** authorization
+decisions returned Deny — both Check Authorization (pki-rest-authz) and DynamicOrch
+(authz-pdp via authzforce-server):
+
+```
+service-partner-1 + telemetry-rest → {"permit": false, "decision": "Deny"}
+portal-cloud-ml   + telemetry      → {"response": []}  (0 providers)
+```
+
+PAP `/status` showed correct policy counts, PAP logs showed no push errors after EXP-045
+logging was added. The XACML was being stored but decisions were still Deny.
+
+### Root Cause
+
+`support/authzforce-server/main.go` parses grants from PolicySet XML using a regex:
+
+```go
+var grantRe = regexp.MustCompile(`PolicyId="urn:arrowhead:grant:([^:]+):([^"]+)"`)
+```
+
+Group 2 (`[^"]+`) captures **everything up to the closing `"`**. Before EXP-043, PolicyIds
+had the format `urn:arrowhead:grant:{consumer}:{service}` so group 2 correctly captured the
+service name.
+
+After EXP-043, PolicyIds gained optional suffixes for action and provider:
+
+```
+urn:arrowhead:grant:service-partner-1:telemetry-rest:invoke
+urn:arrowhead:grant:portal-cloud-ml:telemetry:RobotFleetSite1:orchestrate
+```
+
+Group 2 now captured `telemetry-rest:invoke` and `telemetry:RobotFleetSite1:orchestrate`
+respectively. These were stored as the "service" key in the grant map. When the PDP looked
+up `{service-partner-1, telemetry-rest}`, no matching grant existed → Deny for every request.
+
+### Fix
+
+Change group 2 from `[^"]+` to `[^:"]+` so it stops at `:` (before any suffix):
+
+```go
+// Before (captures suffix as part of service name):
+var grantRe = regexp.MustCompile(`PolicyId="urn:arrowhead:grant:([^:]+):([^"]+)"`)
+
+// After (stops at first : — optional provider/action suffixes are discarded):
+var grantRe = regexp.MustCompile(`PolicyId="urn:arrowhead:grant:([^:]+):([^:"]+)`)
+```
+
+The authzforce-server grants are keyed on `(consumer, service)` pairs only; provider and
+action are not used in its PDP decisions. Per-provider and per-action revocation at the
+policy level is a feature of real AuthzForce CE, not this lightweight server.
+
+### Lesson
+
+Whenever `authzforce.BuildPolicy` or `buildGrantPolicy` changes the PolicyId format,
+**also update `authzforce-server/main.go` `parseGrants` regex** and add regression tests
+for the new format. The regex must capture exactly `(consumer, service)` regardless of
+how many optional suffix fields the PolicyId carries.
+
+### Checklist entries
+
+```
+- [ ] After any change to authzforce.BuildPolicy's PolicyId format, update and run
+      authzforce-server/server_test.go TestParseGrants_* tests to verify the new format
+      is parsed correctly (EXP-046)
+- [ ] If a PolicyId gains a new optional field (provider, action, version…), check whether
+      the authzforce-server parseGrants regex still extracts (consumer, service) correctly —
+      the regex group 2 must not consume the colon separator (EXP-046)
+```
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:

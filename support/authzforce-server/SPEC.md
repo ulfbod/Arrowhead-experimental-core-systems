@@ -154,7 +154,10 @@ domain's entire grant set with the grants encoded in the PolicySet.
 ```
 
 **Grant extraction:** The server parses `PolicyId` attributes using the pattern
-`urn:arrowhead:grant:{consumer}:{service}` to build the domain's grant set.
+`urn:arrowhead:grant:{consumer}:{service}[:{provider}][:{action}]` to build the
+domain's grant set. Optional provider and action suffixes (added by EXP-043 to enable
+per-action and per-provider revocation) are stripped — grants are keyed on
+`(consumer, service)` pairs only. Action and provider are not used in decisions.
 
 **Response `200 OK`**
 ```xml
