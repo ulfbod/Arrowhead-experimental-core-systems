@@ -3555,6 +3555,81 @@ Add to "Before Adding a New Experiment":
 
 ---
 
+## EXP-044 — Check Authorization returns Deny; DynamicOrch throws JSON parse error (experiments 13–14, 2026-06-04)
+
+### Symptom A — Check Authorization always returns `permit: false`
+
+The Live Monitor's "Check Authorization" drop-down returns `Deny` for every consumer
+(e.g. `portal-cloud-ml`, `service-partner-1`) against `telemetry-rest`, even though the
+Exhibition Demo shows those systems as active consumers.
+
+```json
+{ "consumer": "service-partner-1", "decision": "Deny", "permit": false, "service": "telemetry-rest" }
+```
+
+### Root Cause A
+
+`pki-rest-authz` calls AuthzForce with `action="invoke"` for every authorization check
+(both the dashboard debug endpoint and the real mTLS proxy enforcement). After the EXP-043
+fix made `authzforce.BuildPolicy` action-aware, XACML policies are action-specific. But
+the setup scripts in experiments 13 and 14 only seeded `action="consume"` and
+`action="subscribe"` policies — no `action="invoke"` policies for `service-partner-1`,
+`service-partner-2`, or `test-probe`. AuthzForce finds no matching policy → Deny.
+
+**Fix:** Add `action="invoke"` PAP policies in `setup` for every system that uses
+`pki-rest-authz` (the HTTPS REST proxy):
+
+```bash
+curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
+  -d '{"subject":"service-partner-1","resource":"telemetry-rest","action":"invoke","effect":"Permit"}' | grep -q '"id"'
+```
+
+Applied to both `experiments/experiment-13/docker-compose.yml` and
+`experiments/experiment-14/docker-compose.yml`.
+
+### Symptom B — DynamicOrch "Unexpected non-whitespace character after JSON at position 4"
+
+Clicking "Request Orchestration" in the Policy Admin dashboard throws:
+
+```
+Error: Unexpected non-whitespace character after JSON at position 4
+```
+
+### Root Cause B — stale fetch URL (EXP-030 variant)
+
+`admin.html` called `fetch('/api/dynamicorch/orchestration/dynamic', ...)`. Nginx strips
+`/api/dynamicorch/` and forwards `/orchestration/dynamic` to `dynamicorch-xacml`. That
+service registers its route at `/serviceorchestration/orchestration/pull` — the old path
+does not exist, so Go's `http.ServeMux` returns `404 page not found`. The browser calls
+`r.json()` on that response; `JSON.parse` sees `"404 p..."` — the number `4` is valid JSON
+but the space after `404` is not → "Unexpected non-whitespace character after JSON at
+position 4" (EXP-030 pattern).
+
+**Fix:** Change the fetch URL in `testOrch()`:
+
+```js
+// before
+const r = await fetch('/api/dynamicorch/orchestration/dynamic', { ... });
+// after
+const r = await fetch('/api/dynamicorch/serviceorchestration/orchestration/pull', { ... });
+```
+
+Applied to `experiments/experiment-13/dashboard/admin.html` and
+`experiments/experiment-14/dashboard/admin.html`.
+
+### Checklist entries
+
+```
+- [ ] After adding a new transport (pki-rest-authz, kafka-authz, topic-auth-xacml), seed a
+      PAP policy with the action string that transport passes to AuthzForce (invoke / consume /
+      subscribe) — missing the action policy causes Deny after EXP-043's action-aware BuildPolicy (EXP-044)
+- [ ] Dashboard fetch URLs for proxied services must match the actual registered route after
+      nginx strips the service prefix — verify with grep on the service's route registration
+      (`http.HandleFunc`) and confirm the nginx rewrite rule strips the right prefix (EXP-044 / EXP-030)
+```
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -3619,3 +3694,5 @@ Use this before marking an experiment implementation complete:
 - [ ] For every `replace X => <relpath>` in a service's `go.mod`, the service Dockerfile must COPY the replaced module's source at the correct path relative to `WORKDIR /src` — `go.work` makes workspace modules transparent locally but Docker has no `go.work`; the relative path must resolve inside the image or `go mod download` fails immediately. Use `WORKDIR /src`, copy each replaced module first, then copy the service source to its full workspace-relative path (EXP-042)
 - [ ] When deriving a new experiment from an existing one, apply ALL per-experiment PascalCase and PUBLISHER_USER fixes from the source experiment — `setup` failures caused by Authentication validation changes (EXP-041) do not propagate automatically to derived experiments. Check `SYSTEM_NAME`, `AMQP_URL`, identity registration bodies, and PAP provider fields (EXP-043)
 - [ ] When adding PAP policies that differ only by `action` (e.g. `consume` and `subscribe` for the same consumer+service), ensure `authzforce.BuildPolicy` generates unique PolicyIds by passing a non-empty `Action` field in `authzforce.Grant` — without `Action`, two grants with the same consumer+service produce identical PolicyIds, causing AuthzForce to reject the push silently. The PAP returns 201 regardless (`_ = err`), so the failure is invisible until XACML decisions return wrong results (EXP-043)
+- [ ] After adding a new transport PEP (pki-rest-authz, kafka-authz, topic-auth-xacml), seed a PAP policy with the exact `action` string that PEP passes to AuthzForce (`invoke` / `consume` / `subscribe`) — after EXP-043's action-aware BuildPolicy, a missing action-specific policy causes AuthzForce to return Deny even though a same-consumer+service policy for a different action exists (EXP-044)
+- [ ] Dashboard `fetch` URLs for proxied services must match the actual route registered by the service after nginx strips the service prefix — after EXP-043's action-aware fix, stale URLs hitting a missing route return `"404 page not found"` which causes `JSON.parse` to throw "Unexpected non-whitespace character after JSON at position 4" (EXP-044 / EXP-030)

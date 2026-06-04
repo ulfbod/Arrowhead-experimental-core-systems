@@ -462,7 +462,7 @@
       el.style.display = 'block';
       el.textContent = 'Requesting orchestration…';
       try {
-        const r = await fetch('/api/dynamicorch/orchestration/dynamic', {
+        const r = await fetch('/api/dynamicorch/serviceorchestration/orchestration/pull', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

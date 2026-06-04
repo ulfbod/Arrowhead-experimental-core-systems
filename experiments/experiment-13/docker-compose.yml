@@ -384,9 +384,12 @@ services:
           -d '{"subject":"test-probe","resource":"telemetry-rest","provider":"portal-cloud-ml","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
           -d '{"subject":"test-probe","resource":"telemetry","provider":"RobotFleetSite1","action":"orchestrate","effect":"Permit"}' | grep -q '"id"' &&
-        # Service-level enforcement policies (action=consume for Kafka SSE, action=subscribe for AMQP)
-        # Note: PAP policies use XACML TargetMatch on resource+action.
-        # cert-level conditions are evaluated by AuthzForce from PIP-enriched XACML attributes.
+        # Service-level enforcement policies.
+        # action=consume  → Kafka SSE (kafka-authz)
+        # action=subscribe → AMQP (topic-auth-xacml)
+        # action=invoke   → HTTPS REST proxy (pki-rest-authz)
+        # Note: authzforce.BuildPolicy now generates action-specific XACML PolicyIds;
+        # each transport action requires its own PAP policy (EXP-043).
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
           -d '{"subject":"portal-cloud-ml","resource":"telemetry","action":"consume","effect":"Permit"}' | grep -q '"id"' &&
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
@@ -394,9 +397,15 @@ services:
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
           -d '{"subject":"service-partner-1","resource":"telemetry-rest","action":"consume","effect":"Permit"}' | grep -q '"id"' &&
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
+          -d '{"subject":"service-partner-1","resource":"telemetry-rest","action":"invoke","effect":"Permit"}' | grep -q '"id"' &&
+        curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
           -d '{"subject":"service-partner-2","resource":"telemetry-rest","action":"consume","effect":"Permit"}' | grep -q '"id"' &&
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
+          -d '{"subject":"service-partner-2","resource":"telemetry-rest","action":"invoke","effect":"Permit"}' | grep -q '"id"' &&
+        curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
           -d '{"subject":"test-probe","resource":"telemetry-rest","action":"consume","effect":"Permit"}' | grep -q '"id"' &&
+        curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
+          -d '{"subject":"test-probe","resource":"telemetry-rest","action":"invoke","effect":"Permit"}' | grep -q '"id"' &&
         curl -s -X POST http://pap:9505/policies -H 'Content-Type: application/json' \
           -d '{"subject":"test-probe","resource":"telemetry","action":"consume","effect":"Permit"}' | grep -q '"id"'
         # NOTE: No manual PIP subject registration — PIP is auto-populated via
