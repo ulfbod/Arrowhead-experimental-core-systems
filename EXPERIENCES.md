@@ -3486,6 +3486,75 @@ Use the same directory layout in Docker as in the local workspace:
 
 ---
 
+## EXP-043 — `setup` container exits 1: two root causes in experiment-14 (experiment-14, 2026-06-04)
+
+### Symptom
+
+```
+✘ Container experiment-14-setup-1 service "setup" didn't complete successfully: exit 1
+```
+
+Cascades to all services that declare `setup: condition: service_completed_successfully`.
+
+### Root Cause A — PascalCase system names not applied to experiment-14 (primary)
+
+Phase 4 / G52 added `ValidatePascalCase` to `POST /authentication/mgmt/identities` in
+`core/internal/authentication/api/handler.go`. Experiment-13 was fixed in commit 79880d0
+but experiment-14 was not updated at the same time.
+
+Experiment-14's setup script still registered `robot-fleet-site-1/2/3` (lowercase, hyphens).
+Authentication returns 400; `grep -q '"identities"'` fails; setup exits 1 immediately.
+
+**Fix:** Rename throughout `experiment-14/docker-compose.yml` (same pattern as EXP-041):
+- Identity registration body: `robot-fleet-site-{1,2,3}` → `RobotFleetSite{1,2,3}`
+- PAP provider fields for orchestrate policies: same rename
+- `SYSTEM_NAME` env vars on all three `robot-fleet-site-*` services
+- `AMQP_URL` env vars: `amqps://robot-fleet-site-N:` → `amqps://RobotFleetSiteN:`
+- `PUBLISHER_USER` on `topic-auth-xacml`: `"robot-fleet"` → `"RobotFleet"` (prefix used by `strings.HasPrefix`)
+
+### Root Cause B — Duplicate XACML PolicyIds from action-blind `authzforce.BuildPolicy`
+
+`support/authzforce/client.go` `buildGrantPolicy` generated PolicyIds as
+`urn:arrowhead:grant:{consumer}:{service}` — ignoring the `Action` field. Two PAP
+policies for the same `(consumer, service)` but different actions (e.g. `consume` for
+Kafka SSE and `subscribe` for AMQP) produce identical PolicyIds in the XACML PolicySet.
+AuthzForce rejects the push; the PAP silently discards the error (`_ = err`) and returns
+201, so the setup script itself does not fail from this — but the pushed PolicySet is
+incomplete and both transports are functionally uncontrolled.
+
+**Fix in `support/authzforce/client.go`:**
+- Add `Action string` to `Grant` (zero-value = empty = no action match; backward-compatible)
+- When `Action` is non-empty, append it to the PolicyId and add an `action-id` XACML
+  `Match` element to the Policy Target
+
+**Fix in `experiments/experiment-10/services/pap/main.go`:**
+- Pass `Action: pol.Action` when building `authzforce.Grant` — this propagates the PAP
+  policy's action into the XACML Policy Target, enabling independent revocation per
+  protocol operation (orchestrate / consume / subscribe)
+
+After this fix, `portal-cloud-ml → telemetry → consume` and
+`portal-cloud-ml → telemetry → subscribe` generate distinct PolicyIds and can be
+independently revoked from the Exhibition Demo dashboard.
+
+### Diagnosis tip
+
+Run `docker compose logs setup` to see the raw curl response. Add `|| echo "FAILED"` after each
+`grep -q` line temporarily to identify which step fails. For authentication failures the response
+body contains the validation error (e.g. `"systemName must start with an uppercase letter"`).
+
+### Checklist entry
+
+Add to "Before Adding a New Experiment":
+
+```
+- [ ] When experiment-N is derived from experiment-M, apply ALL fixes from
+      EXP-041 (PascalCase systemNames) and EXP-043 (PUBLISHER_USER prefix) to
+      the new docker-compose — do not assume fixes in experiment-M propagated
+      automatically (EXP-043)
+```
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -3548,3 +3617,5 @@ Use this before marking an experiment implementation complete:
 - [ ] After any Go toolchain version bump, re-run `go mod tidy` in **every** module — `core/`, `core-evol/`, all experiment services, all support packages — and then `go work sync`. Missing any module leaves its `go.sum` without the `/go.mod h1:` entries the new toolchain requires, causing Docker build failures. Commit all updated `go.sum` files together with the `go.mod` and Dockerfile changes (EXP-039, EXP-040)
 - [ ] After any conformance step that tightens identity validation in Authentication (PascalCase, length, character set), run `grep -rn "authentication/mgmt/identities" experiments/` and `grep -rn "SYSTEM_NAME:" experiments/` — every `systemName` registered by a `setup` container and every `SYSTEM_NAME` env var must satisfy the new rule. Diagnose `setup` exit-1 failures by temporarily removing `curl -s` to see the 400 error body; `-s` suppresses the response that reveals the validation message (EXP-041)
 - [ ] For every `replace X => <relpath>` in a service's `go.mod`, the service Dockerfile must COPY the replaced module's source at the correct path relative to `WORKDIR /src` — `go.work` makes workspace modules transparent locally but Docker has no `go.work`; the relative path must resolve inside the image or `go mod download` fails immediately. Use `WORKDIR /src`, copy each replaced module first, then copy the service source to its full workspace-relative path (EXP-042)
+- [ ] When deriving a new experiment from an existing one, apply ALL per-experiment PascalCase and PUBLISHER_USER fixes from the source experiment — `setup` failures caused by Authentication validation changes (EXP-041) do not propagate automatically to derived experiments. Check `SYSTEM_NAME`, `AMQP_URL`, identity registration bodies, and PAP provider fields (EXP-043)
+- [ ] When adding PAP policies that differ only by `action` (e.g. `consume` and `subscribe` for the same consumer+service), ensure `authzforce.BuildPolicy` generates unique PolicyIds by passing a non-empty `Action` field in `authzforce.Grant` — without `Action`, two grants with the same consumer+service produce identical PolicyIds, causing AuthzForce to reject the push silently. The PAP returns 201 regardless (`_ = err`), so the failure is invisible until XACML decisions return wrong results (EXP-043)

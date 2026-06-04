@@ -39,6 +39,44 @@ func TestBuildPolicy_withGrants(t *testing.T) {
 	}
 }
 
+func TestBuildPolicy_actionAwareGrants(t *testing.T) {
+	grants := []Grant{
+		{Consumer: "portal-cloud-ml", Service: "telemetry", Action: "consume"},
+		{Consumer: "portal-cloud-ml", Service: "telemetry", Action: "subscribe"},
+	}
+	xml := BuildPolicy("urn:arrowhead:test", "3", grants)
+
+	// Each action should generate a distinct PolicyId — no duplicates.
+	if !strings.Contains(xml, `"urn:arrowhead:grant:portal-cloud-ml:telemetry:consume"`) {
+		t.Fatal("PolicyId for consume missing")
+	}
+	if !strings.Contains(xml, `"urn:arrowhead:grant:portal-cloud-ml:telemetry:subscribe"`) {
+		t.Fatal("PolicyId for subscribe missing")
+	}
+	// Each policy should include an action match element.
+	if !strings.Contains(xml, ">consume<") {
+		t.Fatal("consume action value missing from XACML")
+	}
+	if !strings.Contains(xml, ">subscribe<") {
+		t.Fatal("subscribe action value missing from XACML")
+	}
+}
+
+func TestBuildPolicy_actionEmptyNoMatch(t *testing.T) {
+	grants := []Grant{
+		{Consumer: "consumer-1", Service: "telemetry"}, // no action
+	}
+	xml := BuildPolicy("urn:arrowhead:test", "4", grants)
+	// Without action the PolicyId must not contain a trailing colon-segment.
+	if !strings.Contains(xml, `"urn:arrowhead:grant:consumer-1:telemetry"`) {
+		t.Fatal("action-free PolicyId has wrong form")
+	}
+	// action-id AttributeDesignator must not appear for action-free grants.
+	if strings.Contains(xml, `"urn:oasis:names:tc:xacml:1.0:action:action-id"`) {
+		t.Fatal("action match unexpectedly present for action-free grant")
+	}
+}
+
 // ── parseDecision ─────────────────────────────────────────────────────────────
 
 func TestParseDecision_permit(t *testing.T) {

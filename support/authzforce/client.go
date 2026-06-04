@@ -312,12 +312,15 @@ func parseDecision(body []byte) (string, error) {
 
 // BuildPolicy generates a XACML 3.0 PolicySet XML from a list of grants.
 // Each Grant may be service-level (Provider empty) or per-provider (Provider set).
+// When Grant.Action is non-empty the generated XACML Policy also matches on
+// action-id, enabling independent control for different protocol operations
+// (e.g. action="consume" for Kafka SSE vs action="subscribe" for AMQP).
 // The PolicySet uses deny-unless-permit combining: any consumer with a
 // matching grant is Permitted; all others are Denied.
 func BuildPolicy(policySetID, version string, grants []Grant) string {
 	var policies strings.Builder
 	for _, g := range grants {
-		policies.WriteString(buildGrantPolicy(g.Consumer, g.Service, g.Provider))
+		policies.WriteString(buildGrantPolicy(g.Consumer, g.Service, g.Provider, g.Action))
 	}
 
 	return fmt.Sprintf(
@@ -340,13 +343,21 @@ func BuildPolicy(policySetID, version string, grants []Grant) string {
 //
 // When provider is non-empty the policy target additionally matches
 // urn:arrowhead:attribute:provider-id, scoping the grant to that specific
-// provider. When provider is empty the policy is service-level only.
-func buildGrantPolicy(consumer, service, provider string) string {
-	var policyID string
+// provider.
+//
+// When action is non-empty the policy target additionally matches action-id,
+// enabling independent control of different protocol operations (e.g.
+// action="consume" for Kafka SSE and action="subscribe" for AMQP generate
+// unique Policy IDs that can be revoked independently). When action is empty
+// the policy matches any action (backward-compatible behaviour).
+func buildGrantPolicy(consumer, service, provider, action string) string {
+	// Build PolicyId: include non-empty optional fields to guarantee uniqueness.
+	policyID := "urn:arrowhead:grant:" + consumer + ":" + service
 	if provider != "" {
-		policyID = fmt.Sprintf("urn:arrowhead:grant:%s:%s:%s", consumer, service, provider)
-	} else {
-		policyID = fmt.Sprintf("urn:arrowhead:grant:%s:%s", consumer, service)
+		policyID += ":" + provider
+	}
+	if action != "" {
+		policyID += ":" + action
 	}
 
 	// Provider match element — present only when provider is set.
@@ -358,6 +369,18 @@ func buildGrantPolicy(consumer, service, provider string) string {
 				`<AttributeDesignator MustBePresent="true" Category=%q AttributeId=%q DataType=%q/>`+
 				`</Match>`,
 			xsString, provider, resourceCat, providerID, xsString,
+		)
+	}
+
+	// Action match element — present only when action is set.
+	var actionMatch string
+	if action != "" {
+		actionMatch = fmt.Sprintf(
+			`<Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">`+
+				`<AttributeValue DataType=%q>%s</AttributeValue>`+
+				`<AttributeDesignator MustBePresent="true" Category=%q AttributeId=%q DataType=%q/>`+
+				`</Match>`,
+			xsString, action, actionCat, actionID, xsString,
 		)
 	}
 
@@ -374,6 +397,7 @@ func buildGrantPolicy(consumer, service, provider string) string {
 			`<AttributeDesignator MustBePresent="true" Category=%q AttributeId=%q DataType=%q/>`+
 			`</Match>`+
 			`%s`+
+			`%s`+
 			`</AllOf></AnyOf></Target>`+
 			`<Rule RuleId="permit" Effect="Permit"/>`+
 			`</Policy>`,
@@ -381,15 +405,20 @@ func buildGrantPolicy(consumer, service, provider string) string {
 		xsString, consumer, subjectCat, subjectID, xsString,
 		xsString, service, resourceCat, resourceID, xsString,
 		providerMatch,
+		actionMatch,
 	)
 }
 
 // Grant is an access-control rule used to build a XACML PolicySet.
 // Provider is optional; when set, the generated XACML policy matches both
 // resource-id (Service) and provider-id (Provider) as separate attributes.
-// When Provider is empty the policy matches on Service alone (service-level).
+// Action is optional; when set, the generated XACML policy additionally
+// matches action-id, enabling independent revocation per protocol operation
+// (e.g. "consume" for Kafka SSE, "subscribe" for AMQP, "orchestrate" for
+// DynamicOrchestration). When Action is empty the policy matches any action.
 type Grant struct {
 	Consumer string
 	Service  string
 	Provider string // optional; set for per-provider orchestration policies
+	Action   string // optional; when set, policy target also matches action-id
 }
