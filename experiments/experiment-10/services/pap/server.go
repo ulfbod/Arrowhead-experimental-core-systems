@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -104,8 +105,8 @@ func (s *server) createPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.pusher.Push(s.store.GetAll(), s.store.Version()); err != nil {
-		// Log but don't fail the request — policy is stored even if push fails.
-		_ = err
+		// Log but don't fail the request — policy is stored even if AuthzForce push fails.
+		log.Printf("[pap] AuthzForce push error (policy stored, not yet synced): %v", err)
 	}
 	writeJSON(w, http.StatusCreated, p)
 }

@@ -3630,6 +3630,76 @@ Applied to `experiments/experiment-13/dashboard/admin.html` and
 
 ---
 
+## EXP-045 — Check Authorization Deny for all consumers; DynamicOrch returns 0 providers (experiments 13–14, 2026-06-04)
+
+### Symptom A — Check Authorization returns Deny for all consumers including portal-cloud-ml
+
+The Live Monitor "Check Authorization" drop-down returned Deny for every consumer
+in the list, including `portal-cloud-ml`, `service-partner-1`, and `service-partner-2`.
+
+### Root Cause A — Wrong consumer in Check Authorization drop-down
+
+`portal-cloud-ml` was in the REST consumer drop-down. `portal-cloud-ml` is a **Kafka/AMQP
+consumer** of the `telemetry` service — it does **not** go through `pki-rest-authz` (the
+HTTPS REST proxy). The `pki-rest-authz` `/auth/check` endpoint always uses `action="invoke"`;
+there is no `invoke` policy for `portal-cloud-ml` because it is not a REST consumer.
+
+Testing `portal-cloud-ml` through the REST proxy check will always return Deny, making the
+demo look broken even when the policy engine is working correctly.
+
+**Fix:** Replace `portal-cloud-ml` with `test-probe` in the consumer drop-down of the Live
+Monitor Check Authorization section in `experiments/experiment-13/dashboard/index.html` and
+`experiments/experiment-14/dashboard/index.html`. All three remaining consumers
+(`service-partner-1`, `service-partner-2`, `test-probe`) have `action=invoke` policies and
+go through `pki-rest-authz`.
+
+### Symptom B — DynamicOrch "Request Orchestration" returns 0 providers for telemetry-rest
+
+The DynamicOrch-XACML box in the Policy Admin dashboard returned an empty provider list
+(`{"response": []}`) for every consumer + `telemetry-rest` query.
+
+### Root Cause B — telemetry-rest not registered in Service Registry
+
+`portal-cloud-ml` provides a `telemetry-rest` HTTPS REST API, but it does **not register
+itself** with the Service Registry at startup. DynamicOrch queries the Service Registry to
+find candidate providers; with no entry for `telemetry-rest`, the response is always
+`{"response": []}` regardless of which consumer or orchestrate policy is used.
+
+Only `robot-fleet-tls` services register with the SR (they register `telemetry` as both
+AMQP-SECURE-JSON and KAFKA-SECURE-JSON). The SR has no knowledge of `telemetry-rest`.
+
+**Fix:** Change the DynamicOrch test form defaults in both `admin.html` files from
+`service-partner-1` + `telemetry-rest` to `portal-cloud-ml` + `telemetry`. The `telemetry`
+service IS registered (by all three robot-fleet-tls instances), and `portal-cloud-ml` has
+`action=orchestrate` policies for all three providers. The test will now return 6 providers
+(3 sites × AMQP + Kafka) and demonstrate orchestration actually working.
+
+### Symptom C — PAP push errors silently ignored
+
+When `pki-rest-authz`'s AuthzForce push failed (due to a malformed policy, version conflict,
+or transient network error), the PAP returned HTTP 201 to the setup container (policy stored),
+but AuthzForce was not updated. All subsequent authorization queries returned Deny because the
+PDP had no matching policy — indistinguishable from a policy-not-seeded problem.
+
+**Fix:** Change `_ = err` in `experiments/experiment-10/services/pap/server.go`
+`createPolicy` to `log.Printf(...)`. Push errors are now visible in `docker compose logs pap`.
+
+### Checklist entries
+
+```
+- [ ] When designing a "Check Authorization" demo, only include consumers that ACTUALLY use
+      the transport under test (e.g. pki-rest-authz/action=invoke → only REST consumers, not
+      Kafka consumers) — mixing transport types in the drop-down produces permanent Deny for
+      non-matching consumers and makes the demo appear broken (EXP-045)
+- [ ] Before adding a DynamicOrch test, verify the service being queried IS registered in the
+      Service Registry (check robot-fleet-tls registerServices or the setup SR curl) — a service
+      not in the SR returns 0 providers regardless of XACML policy (EXP-045)
+- [ ] Change `_ = err` in PAP server.go push to `log.Printf(...)` so AuthzForce push failures
+      are visible in `docker compose logs pap` rather than silently swallowed (EXP-045)
+```
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -3696,3 +3766,6 @@ Use this before marking an experiment implementation complete:
 - [ ] When adding PAP policies that differ only by `action` (e.g. `consume` and `subscribe` for the same consumer+service), ensure `authzforce.BuildPolicy` generates unique PolicyIds by passing a non-empty `Action` field in `authzforce.Grant` — without `Action`, two grants with the same consumer+service produce identical PolicyIds, causing AuthzForce to reject the push silently. The PAP returns 201 regardless (`_ = err`), so the failure is invisible until XACML decisions return wrong results (EXP-043)
 - [ ] After adding a new transport PEP (pki-rest-authz, kafka-authz, topic-auth-xacml), seed a PAP policy with the exact `action` string that PEP passes to AuthzForce (`invoke` / `consume` / `subscribe`) — after EXP-043's action-aware BuildPolicy, a missing action-specific policy causes AuthzForce to return Deny even though a same-consumer+service policy for a different action exists (EXP-044)
 - [ ] Dashboard `fetch` URLs for proxied services must match the actual route registered by the service after nginx strips the service prefix — after EXP-043's action-aware fix, stale URLs hitting a missing route return `"404 page not found"` which causes `JSON.parse` to throw "Unexpected non-whitespace character after JSON at position 4" (EXP-044 / EXP-030)
+- [ ] "Check Authorization" demo drop-downs must only include consumers that actually use the PEP under test (e.g. pki-rest-authz uses action=invoke → only REST consumers; Kafka-only consumers always return Deny and make the demo look broken) (EXP-045)
+- [ ] Before adding a DynamicOrch test form, verify the queried service is registered in the Service Registry — if no provider registered the service, DynamicOrch returns 0 providers regardless of XACML policy. Use `portal-cloud-ml` + `telemetry` (registered by robot-fleet-tls) not `service-partner-1` + `telemetry-rest` (unregistered) (EXP-045)
+- [ ] Change `_ = err` in PAP `createPolicy` to `log.Printf(...)` — silent push failures make all authorization decisions appear as Deny with no diagnostic path (EXP-045)
