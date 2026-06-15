@@ -4061,6 +4061,82 @@ For CA-as-PIP specifically: any proxy at `/api/pip/` must rewrite to the CA's `/
 
 ---
 
+## EXP-051 — PIP (CA-as-PIP) shows DOWN in Live Monitor — missing `/pip/health` route and `subjectCount` vs `subjects` field mismatch (experiment-15, 2026-06-15)
+
+### Symptom
+
+- Live Monitor showed **PIP (CA-as-PIP, D4): DOWN** after EXP-050 fixed the nginx proxy
+- Policy Admin "PIP — Policy Information Point" counter always showed `—` (never a number)
+
+### Root Cause
+
+Two bugs in `experiments/experiment-15/services/profile-ca/`:
+
+**Bug 1 — `/pip/health` route never registered:**
+
+`main.go` registered profile-ca's own health endpoint at `/health`, and PIP data routes at
+`/pip/attributes/`, `/pip/subjects`, `/pip/subjects/`, and `/pip/status` — but not `/pip/health`.
+
+EXP-050 correctly fixed nginx to rewrite `/api/pip/*` → `/pip/$1` on `profile-ca:8787`, which
+means `/api/pip/health` → `/pip/health`. But no handler was registered for `/pip/health`, so
+Go's `http.ServeMux` returned `404 page not found`. The Live Monitor's `fetchJSON` returns
+`null` for non-2xx responses, so `health && (health.status === 'ok' ...)` evaluated to false
+and displayed DOWN.
+
+Note: the EXP-050 description listed `/pip/health` among the endpoints served by profile-ca,
+but this route was never actually registered in `main.go` — the description was aspirational.
+
+**Bug 2 — `/pip/status` field name mismatch:**
+
+`handlePIPStatus` returned `{"subjectCount": N}` but `admin.html` line 379 reads:
+```js
+document.getElementById('pip-count').textContent = status.subjects ?? '—';
+```
+The field `subjects` was never in the response; `status.subjects` was always `undefined`,
+so the counter always showed `—`.
+
+### Fix
+
+`experiments/experiment-15/services/profile-ca/pip_handlers.go`:
+
+1. Add `handlePIPHealth` that returns `{"status":"ok","system":"pip (CA-as-PIP)","subjects":N}`.
+2. Rename `"subjectCount"` → `"subjects"` in `handlePIPStatus` to match the admin dashboard.
+
+`experiments/experiment-15/services/profile-ca/main.go`:
+
+Register `/pip/health` before the other PIP routes:
+
+```go
+httpMux.HandleFunc("/pip/health", handlePIPHealth(ca))
+```
+
+### Lesson
+
+When a service is merged into another under a **URL prefix** (CA-as-PIP: pip → profile-ca under
+`/pip/`), ALL endpoints the dashboard expects under that prefix must be explicitly registered
+by the host service — including `/pip/health`. The host service's own `/health` endpoint is
+unreachable under the prefix because nginx strips `/api/pip/` and prepends `/pip/`, not `/`.
+
+A checklist entry in the documentation that says "endpoint X is served" is not evidence that
+the route is registered — verify with `grep HandleFunc main.go` before closing the task.
+
+Field names in JSON responses must be cross-checked against every consumer: the dashboard
+admin page, the Live Monitor stats display, and any PEP clients. `subjectCount` vs `subjects`
+is a silent failure — no error, just a `??`-defaulted `—`.
+
+### Checklist entries
+
+```
+- [ ] When a service is merged under a URL prefix (e.g. pip → profile-ca under /pip/), register
+      ALL dashboard-expected endpoints under that prefix — including /pip/health. The host
+      service's own /health is unreachable via the prefix. Verify with grep HandleFunc main.go (EXP-051)
+- [ ] Cross-check every JSON field name in status/health responses against every consumer
+      (dashboard admin page JS, Live Monitor stats display, PEP clients) — mismatches silently
+      fall through the `?? '—'` default with no error (EXP-051)
+```
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -4135,4 +4211,6 @@ Use this before marking an experiment implementation complete:
 - [ ] When a service reads a URL from an env var with a hardcoded default pointing to the previous experiment's port (e.g. `CA_URL` defaulting to `http://profile-ca:8087`), explicitly set that env var in docker-compose.yml even if other env vars are already correct — the default silently wins when the var is absent (EXP-047-related; see also pki-rest-authz CA_URL in experiment-15)
 - [ ] Dashboard host port must be `3000 + N` (experiment-15 → 3015), NOT previous dashboard port + 100 — the `+100` rule applies to service ports, not the dashboard which tracks the experiment number (EXP-049)
 - [ ] After any port change or service removal, audit every `set $upstream` line in `dashboard/nginx.conf` — stale ports and removed services return nginx HTML error pages that the frontend JS parses as "Unexpected token '<'" (EXP-050)
+- [ ] When a service is merged under a URL prefix (e.g. pip → profile-ca under /pip/), register ALL dashboard-expected endpoints under that prefix — including /pip/health. The host service's own /health is unreachable via the prefix. Verify with grep HandleFunc main.go (EXP-051)
+- [ ] Cross-check every JSON field name in status/health responses against every consumer (dashboard admin page JS, Live Monitor stats display, PEP clients) — mismatches silently fall through the `?? '—'` default with no error (EXP-051)
 - [ ] When a service is merged into another (e.g. pip → profile-ca), redirect its nginx proxy block to the new host AND preserve the URL prefix if the new host serves routes under a sub-path (e.g. `/api/pip/` → rewrite to `/pip/$1` not `/$1`) (EXP-050)

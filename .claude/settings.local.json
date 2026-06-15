@@ -262,7 +262,23 @@
       "Bash(GOWORK=off go test ./... -v)",
       "Bash(docker pull:*)",
       "Bash(sort -t/ -k5)",
-      "Bash(sort -t/ -k1)"
+      "Bash(sort -t/ -k1)",
+      "Bash(GOWORK=off go build ./...)",
+      "Bash(GOWORK=off go vet ./...)",
+      "Bash(gofmt -e /home/uffe/projects/ArrowheadCore/experiments/experiment-13/services/robot-fleet-tls/main.go)",
+      "Bash(GOWORK=off go build ./core/...)",
+      "Bash(GOWORK=off go build ./core-evol/...)",
+      "Bash(sed -i 's/srapi\\\\.NewAH5Handler\\(\\\\\\(.*\\\\\\), \"\"\\)/srapi.NewAH5Handler\\(\\\\1, \"\", \"\"\\)/g' internal/integration/e2e_test.go)",
+      "Bash(sed -i 's/authapi\\\\.NewHandler\\(\\\\\\(.*\\\\\\)\\)/authapi.NewHandler\\(\\\\1, \"\"\\)/g' internal/integration/e2e_test.go)",
+      "Bash(sed -i 's/dynapi\\\\.NewHandler\\(\\\\\\(.*\\\\\\)\\)/dynapi.NewHandler\\(\\\\1, \"\"\\)/g' internal/integration/e2e_test.go)",
+      "Bash(sed -i 's/ssapi\\\\.NewHandler\\(\\\\\\(.*\\\\\\)\\)/ssapi.NewHandler\\(\\\\1, \"\"\\)/g' internal/integration/e2e_test.go)",
+      "Bash(sed -i 's/fsapi\\\\.NewHandler\\(\\\\\\(.*\\\\\\)\\)/fsapi.NewHandler\\(\\\\1, \"\"\\)/g' internal/integration/e2e_test.go)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(cp -r /home/uffe/projects/ArrowheadCore/experiments/experiment-14/kafdrop /home/uffe/projects/ArrowheadCore/experiments/experiment-15/)",
+      "Bash(cp -r /home/uffe/projects/ArrowheadCore/experiments/experiment-14/rabbitmq /home/uffe/projects/ArrowheadCore/experiments/experiment-15/)",
+      "Bash(GOWORK=off go mod tidy)",
+      "Bash(go env:*)"
     ]
   }
 }

@@ -148,6 +148,7 @@ func handlePIPSubject(ca *ProfileCA) http.HandlerFunc {
 
 // handlePIPStatus handles GET /pip/status.
 // Returns total subject count (all records including revoked).
+// Field name "subjects" matches what the admin dashboard reads (status.subjects).
 func handlePIPStatus(ca *ProfileCA) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -157,7 +158,26 @@ func handlePIPStatus(ca *ProfileCA) http.HandlerFunc {
 
 		all := ca.GetAllRecords()
 		writeJSON(w, http.StatusOK, map[string]any{
-			"subjectCount": len(all),
+			"subjects": len(all),
+		})
+	}
+}
+
+// handlePIPHealth handles GET /pip/health.
+// Returns {"status":"ok"} so the Live Monitor can detect the PIP as healthy.
+// The nginx proxy rewrites /api/pip/health → /pip/health on profile-ca, so
+// profile-ca's own /health endpoint is not reachable via the /api/pip/ prefix.
+func handlePIPHealth(ca *ProfileCA) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "GET required")
+			return
+		}
+		all := ca.GetAllRecords()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":   "ok",
+			"system":   "pip (CA-as-PIP)",
+			"subjects": len(all),
 		})
 	}
 }

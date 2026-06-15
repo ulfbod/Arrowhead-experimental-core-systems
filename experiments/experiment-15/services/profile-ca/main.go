@@ -70,6 +70,10 @@ func main() {
 
 	// CA-as-PIP endpoints (experiment-15): served from the cert store directly.
 	// PEP clients call {PIP_URL}/pip/attributes/{cn}, /pip/subjects, /pip/status.
+	// /pip/health is required by the Live Monitor — the nginx /api/pip/ prefix
+	// rewrites to /pip/ on this server, so profile-ca's own /health is unreachable
+	// via that prefix and a dedicated /pip/health must be registered here.
+	httpMux.HandleFunc("/pip/health", handlePIPHealth(ca))
 	httpMux.HandleFunc("/pip/attributes/", handlePIPAttributes(ca))
 	httpMux.HandleFunc("/pip/subjects", handlePIPSubjects(ca))
 	httpMux.HandleFunc("/pip/subjects/", handlePIPSubject(ca))

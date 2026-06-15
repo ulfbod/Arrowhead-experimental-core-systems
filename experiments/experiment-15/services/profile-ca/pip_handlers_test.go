@@ -232,17 +232,17 @@ func TestPIPStatus(t *testing.T) {
 		t.Fatalf("invalid JSON: %v", err)
 	}
 
-	countVal, ok := resp["subjectCount"]
+	countVal, ok := resp["subjects"]
 	if !ok {
-		t.Fatalf("response missing 'subjectCount' field: %s", w.Body.String())
+		t.Fatalf("response missing 'subjects' field: %s", w.Body.String())
 	}
 	// JSON numbers decode as float64
 	count, ok := countVal.(float64)
 	if !ok {
-		t.Fatalf("subjectCount is not a number: %T %v", countVal, countVal)
+		t.Fatalf("subjects is not a number: %T %v", countVal, countVal)
 	}
 	if int(count) != 3 {
-		t.Errorf("subjectCount: expected 3, got %d", int(count))
+		t.Errorf("subjects: expected 3, got %d", int(count))
 	}
 }
 
@@ -260,9 +260,9 @@ func TestPIPStatus_IncludesRevoked(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	count := int(resp["subjectCount"].(float64))
+	count := int(resp["subjects"].(float64))
 	if count != 2 {
-		t.Errorf("subjectCount: expected 2 (including revoked), got %d", count)
+		t.Errorf("subjects: expected 2 (including revoked), got %d", count)
 	}
 }
 
