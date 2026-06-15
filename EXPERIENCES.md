@@ -3775,6 +3775,292 @@ how many optional suffix fields the PolicyId carries.
 
 ---
 
+## EXP-047 — profile-ca Docker build fails: `go.sum` missing for new experiment module with gRPC replace directive (experiment-15, 2026-06-15)
+
+### Symptom
+
+`docker compose up --build` for experiment-15 failed during the profile-ca build stage:
+
+```
+ > [profile-ca builder 7/7] RUN CGO_ENABLED=0 go build -o /app .:
+0.563 /build/core-evol/proto/certlifecycle/certlifecycle_grpc.pb.go:37:2: missing go.sum entry
+      for module providing package google.golang.org/grpc (imported by arrowhead/experiment15/profile-ca); to add:
+        go get arrowhead/experiment15/profile-ca
+0.563 /build/core-evol/proto/certlifecycle/certlifecycle.pb.go:36:2: missing go.sum entry
+      for module providing package google.golang.org/protobuf/reflect/protoreflect
+      (imported by arrowhead/core-evol/proto/certlifecycle); to add:
+        go get arrowhead/core-evol/proto/certlifecycle@v0.0.0
+```
+
+`go test ./experiments/experiment-15/services/profile-ca/...` passed locally (29/29).
+
+### Root Cause
+
+This is the same class of failure as EXP-014, with an additional twist specific to
+modules that have a `replace` directive pointing to a workspace peer (e.g.
+`replace arrowhead/core-evol => ../../../../core-evol`).
+
+When `go.sum` was never generated for the new module and `go mod tidy` is run **inside
+the workspace** (i.e. with `go.work` active), Go resolves the replaced module through
+workspace mechanisms and may skip writing checksum entries for the *transitive external
+dependencies* of the replaced module (`google.golang.org/grpc`,
+`google.golang.org/protobuf`, etc.) into the local `go.sum`. Local `go test` succeeds
+because the workspace provides those entries; the Docker build copies the module in
+isolation (no `go.work`) and fails immediately.
+
+### Fix
+
+Run `go mod tidy` with the workspace **disabled** to force Go to resolve all
+transitive dependencies through the module graph alone and write complete `go.sum`
+entries:
+
+```bash
+cd experiments/experiment-15/services/profile-ca
+GOWORK=off go mod tidy
+```
+
+Commit the generated `go.sum` before building Docker images.
+
+### Lesson
+
+For any Go module that has a `replace` directive pointing to a workspace sibling *and*
+imports that sibling's gRPC-generated code: **always use `GOWORK=off go mod tidy`** to
+generate `go.sum`. Plain `go mod tidy` (workspace-aware) may produce an incomplete
+`go.sum` that passes local `go test` but fails isolated Docker builds.
+
+### Checklist entries
+
+```
+- [ ] For new Go modules that have a `replace` directive pointing to a workspace module
+      (e.g. `arrowhead/core-evol`), generate `go.sum` with `GOWORK=off go mod tidy` —
+      plain `go mod tidy` inside the workspace may omit transitive gRPC/protobuf entries
+      that are only discovered during isolated Docker builds (EXP-047)
+```
+
+---
+
+## EXP-048 — Docker build fails: `golang:1.25-alpine` not cached; `go.mod requires go >= 1.25.0` when using `golang:1.22-alpine` (experiments 14–15, 2026-06-15)
+
+### Symptom — Stage 1
+
+`docker compose up --build` failed for all Go services in experiment-15 with:
+
+```
+ > [pki-rest-authz internal] load metadata for docker.io/library/golang:1.25-alpine:
+failed to solve: failed to fetch anonymous token:
+  Get "https://auth.docker.io/token?scope=repository%3Alibrary%2Fgolang%3Apull&service=registry.docker.io":
+  dial tcp: lookup auth.docker.io on 8.8.8.8:53: read udp ...: i/o timeout
+```
+
+`alpine:3.19` resolved in 0.1 s (cached), but `golang:1.25-alpine` timed out after 10 s because
+the image had never been pulled to this machine and Docker Hub was unreachable (WSL2 DNS
+timeout on 8.8.8.8).
+
+### Symptom — Stage 2
+
+After switching all Dockerfiles to `FROM golang:1.22-alpine`, the build failed again:
+
+```
+ > [profile-ca builder 7/7] RUN CGO_ENABLED=0 go build -o /app .:
+0.418 go: go.mod requires go >= 1.25.0 (running go 1.22.12; GOTOOLCHAIN=local)
+```
+
+The workspace and all service `go.mod` files say `go 1.25.0` because the local Go toolchain
+(which has `GOTOOLCHAIN=auto`) auto-downloaded Go 1.25 and `go mod tidy` recorded it. The
+Docker build container defaults to `GOTOOLCHAIN=local` and refuses to switch.
+
+Attempting to lower all `go.mod` files to `go 1.22` broke local builds because `go.sum` had
+locked in `golang.org/x/crypto@v0.52.0` (resolved by Go 1.25's dependency graph), which itself
+requires `go >= 1.25.0` — a circular dependency on the toolchain version.
+
+### Root Cause
+
+Two separate but related problems:
+
+1. **Wrong image tag**: Dockerfiles used `golang:1.25-alpine` which was never pulled locally.
+   The only cached image is `golang:1.22-alpine`.
+
+2. **Toolchain version mismatch**: The workspace uses `GOTOOLCHAIN=auto`, so local `go mod tidy`
+   auto-downloads Go 1.25 and records `go 1.25.0` in all `go.mod` files. Docker containers
+   default to `GOTOOLCHAIN=local` and reject modules that require a newer Go than what is
+   installed in the image.
+
+### Fix
+
+Two-step fix:
+
+**Step 1** — Switch Dockerfiles to the cached image:
+
+```bash
+sed -i 's|FROM golang:1.25-alpine|FROM golang:1.22-alpine|g' \
+  experiments/experiment-15/dockerfiles/*.Dockerfile
+```
+
+**Step 2** — Add `ENV GOTOOLCHAIN=auto` immediately after the `FROM golang:1.22-alpine` line
+in every Go builder Dockerfile, so the container's Go toolchain auto-downloads Go 1.25 during
+the build (requires outbound HTTPS to `dl.google.com` from inside Docker, which uses the
+container's DNS at `127.0.0.11`, not the Docker daemon's DNS):
+
+```bash
+sed -i '/^FROM golang:1\.22-alpine/a ENV GOTOOLCHAIN=auto' \
+  experiments/experiment-15/dockerfiles/*.Dockerfile
+```
+
+With `GOTOOLCHAIN=auto`, `golang:1.22-alpine` sees `go 1.25.0` in `go.mod`, downloads the Go
+1.25 toolchain, and completes the build exactly as the local environment does.
+
+### Lesson
+
+The local Go environment sets `GOTOOLCHAIN=auto`, which silently downloads newer Go versions and
+records them in `go.mod`. Docker containers default to `GOTOOLCHAIN=local`. This gap means
+modules maintained with `GOTOOLCHAIN=auto` **cannot be built** in a Docker container that only
+has an older Go image, unless the container also sets `GOTOOLCHAIN=auto`.
+
+Do not try to solve this by lowering the `go` directive in `go.mod`: the dependency versions
+locked in `go.sum` may require the newer Go version, making lowering circular.
+
+**Standard practice for this repo:**
+- Use `FROM golang:1.22-alpine` (the cached image) followed immediately by `ENV GOTOOLCHAIN=auto`
+- The container will download the required toolchain on first build; subsequent builds use the
+  layer cache and do not re-download
+
+### Checklist entries
+
+```
+- [ ] Every Go builder stage in every Dockerfile must have `ENV GOTOOLCHAIN=auto` immediately
+      after the `FROM golang:X.Y-alpine` line — the local workspace uses GOTOOLCHAIN=auto
+      (auto-downloads newer Go), but Docker containers default to GOTOOLCHAIN=local and reject
+      go.mod files that require a newer version (EXP-048)
+- [ ] Use `FROM golang:1.22-alpine` (the locally cached image) not a newer tag — pair it with
+      `ENV GOTOOLCHAIN=auto` so the container fetches the required Go version at build time
+      rather than requiring a specific image to be pre-pulled (EXP-048)
+```
+
+---
+
+## EXP-049 — Dashboard unreachable: port 3114 used instead of 3015 — `+100` rule does not apply to dashboard (experiment-15, 2026-06-15)
+
+### Symptom
+
+`http://localhost:3015` returned nothing. The dashboard container was healthy and running, but
+on port 3114 instead.
+
+### Root Cause
+
+The port convention for this repo is **experiment-number-based for the dashboard**: dashboard
+port = `3000 + N` (experiment-13 → 3013, experiment-14 → 3014, experiment-15 → 3015).
+
+The agent that generated experiment-15 applied the `+100 from experiment-14` rule to *all* ports
+uniformly, including the dashboard: `3014 + 100 = 3114`. This is wrong — the dashboard port
+increments by 1 per experiment, not by 100.
+
+### Fix
+
+```yaml
+# docker-compose.yml
+- "3015:80"   # was 3114:80
+```
+
+Also update the comment header and README.md port table.
+
+### Lesson
+
+Not all ports follow the same increment rule. The dashboard uses `3000 + experiment_N`
+(increment of 1). Other service ports use `+100` from the previous experiment. When generating
+a new experiment, **verify the dashboard port separately** against the experiment-number
+convention rather than blindly applying `+100`.
+
+### Checklist entries
+
+```
+- [ ] Dashboard host port must be `3000 + N` where N is the experiment number (e.g. experiment-15
+      → 3015) — NOT the previous experiment's dashboard port + 100. Verify with
+      `grep "3[0-9][0-9][0-9]:80" docker-compose.yml` after generation (EXP-049)
+```
+
+---
+
+## EXP-050 — Dashboard: Profile CA DOWN and "Unexpected token '<'" in Registered Subjects — two nginx.conf port errors after CA-as-PIP refactor (experiment-15, 2026-06-15)
+
+### Symptom
+
+- Live Monitor showed **Profile CA: DOWN** and **PIP: DOWN**
+- Policy Admin "Registered Subjects" panel showed: `Error: Unexpected token '<', ...` — the
+  classic sign that a JSON parse hit an HTML error page instead of a JSON response
+
+### Root Cause
+
+Two errors in `dashboard/nginx.conf`, both carried over from experiment-14 without updating for
+experiment-15's changed port and removed service:
+
+**Error 1 — wrong profile-ca port:**
+
+```nginx
+# copied from exp-14, port not updated for exp-15
+set $upstream http://profile-ca:8087;   # wrong: exp-14 port
+```
+
+Experiment-15 profile-ca listens on **8787** (8087 + 700? no — it was assigned 8787 as the new
+base port). Every request to `/api/profile-ca/` hit a refused connection; nginx returned its own
+502 HTML error page. The JS `r.json()` call then threw "Unexpected token '<'".
+
+**Error 2 — pip service no longer exists:**
+
+```nginx
+# pip service removed in exp-15 (CA-as-PIP)
+set $upstream http://pip:9506;          # wrong: service does not exist
+```
+
+In experiment-15, PIP endpoints (`/pip/health`, `/pip/subjects`, `/pip/status`,
+`/pip/attributes/{cn}`) are served by `profile-ca:8787`, not a separate `pip` container.
+The nginx proxy pointed at a non-existent host, so `/api/pip/*` requests always failed.
+
+### Fix
+
+`dashboard/nginx.conf`:
+
+```nginx
+# profile-ca: fix port
+set $upstream http://profile-ca:8787;
+
+# pip: redirect to profile-ca, preserve /pip/ prefix
+location /api/pip/ {
+    set $upstream http://profile-ca:8787;
+    rewrite ^/api/pip/(.*) /pip/$1 break;   # profile-ca serves /pip/... routes
+    proxy_pass $upstream;
+    ...
+}
+```
+
+`dashboard/index.html`: update PIP monitor label from `'PIP (gRPC-populated)'` to
+`'PIP (CA-as-PIP, D4)'` to reflect the architectural change.
+
+Rebuild dashboard: `docker compose up -d --build dashboard`.
+
+### Lesson
+
+When a new experiment changes a service's port or removes a service (CA-as-PIP removes `pip`),
+**every nginx.conf proxy block** must be audited. The two most common misses:
+
+1. Port numbers copied from the previous experiment's nginx.conf
+2. Proxy blocks pointing at services that were removed or merged
+
+For CA-as-PIP specifically: any proxy at `/api/pip/` must rewrite to the CA's `/pip/` prefix
+(not strip it), because profile-ca registers routes under `/pip/`, not at the root.
+
+### Checklist entries
+
+```
+- [ ] After any port change or service removal, audit every `set $upstream` line in
+      `dashboard/nginx.conf` — stale ports and removed services silently return nginx HTML
+      error pages, which the frontend JS parses as "Unexpected token '<'" (EXP-050)
+- [ ] When a service is merged into another (e.g. pip → profile-ca), redirect its nginx proxy
+      block to the new host AND preserve the URL prefix if the new service registers routes
+      under a prefix (e.g. `/api/pip/` → `/pip/$1` on profile-ca, not `/$1`) (EXP-050)
+```
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -3805,7 +4091,7 @@ Use this before marking an experiment implementation complete:
 - [ ] `KAFKA_INTER_BROKER_LISTENER_NAME` is set in docker-compose.yml when the SSL listener is the only advertised listener (EXP-016)
 - [ ] `KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""` is set when the CA does not issue SANs — Kafka 2.0+ defaults to HTTPS hostname verification which rejects CN-only certs at startup (EXP-016)
 - [ ] Every Go module under `experiments/` has a `go.sum` file committed alongside its `go.mod` — run `go mod tidy` in each module directory and commit both files before building Docker images (EXP-014)
-- [ ] For modules that use a `replace` directive pointing to a workspace module (e.g. `arrowhead/core-evol`), verify that `go.sum` includes the *transitive* external deps of the replaced module (e.g. `google.golang.org/grpc`) — run `go mod tidy` even when `go.sum` already exists, since workspace-mode tests may succeed with an incomplete `go.sum` that fails isolated Docker builds (EXP-014 variant, experiment-13)
+- [ ] For modules that use a `replace` directive pointing to a workspace module (e.g. `arrowhead/core-evol`), use `GOWORK=off go mod tidy` (not plain `go mod tidy`) to generate `go.sum` — workspace-mode tidy may omit transitive gRPC/protobuf entries that are only discovered during isolated Docker builds (EXP-047; see also EXP-014 variant, experiment-13)
 - [ ] Every service whose endpoints are called by `test-system.sh` has a `ports:` mapping in docker-compose.yml — `test-system.sh` runs on the host and reaches services via `localhost:<port>` (EXP-017)
 - [ ] Environment variable names in docker-compose.yml match what the service binary reads (check `grep 'envOr\|os.Getenv' <service>/main.go`) — wrong names are silently ignored when Go defaults match, or cause immediate fatal exit when the var is required with no default (EXP-017)
 - [ ] Any service that proxies HTTPS requests to another service uses a custom `*http.Client` with `RootCAs` set to the ephemeral CA pool — never `http.DefaultClient` for mTLS upstreams (EXP-018)
@@ -3844,3 +4130,9 @@ Use this before marking an experiment implementation complete:
 - [ ] "Check Authorization" demo drop-downs must only include consumers that actually use the PEP under test (e.g. pki-rest-authz uses action=invoke → only REST consumers; Kafka-only consumers always return Deny and make the demo look broken) (EXP-045)
 - [ ] Before adding a DynamicOrch test form, verify the queried service is registered in the Service Registry — if no provider registered the service, DynamicOrch returns 0 providers regardless of XACML policy. Use `portal-cloud-ml` + `telemetry` (registered by robot-fleet-tls) not `service-partner-1` + `telemetry-rest` (unregistered) (EXP-045)
 - [ ] Change `_ = err` in PAP `createPolicy` to `log.Printf(...)` — silent push failures make all authorization decisions appear as Deny with no diagnostic path (EXP-045)
+- [ ] Every Go builder stage in every Dockerfile must have `ENV GOTOOLCHAIN=auto` immediately after `FROM golang:X.Y-alpine` — the workspace uses GOTOOLCHAIN=auto (auto-downloads newer Go on the host), but Docker containers default to GOTOOLCHAIN=local and reject go.mod files requiring a newer version (EXP-048)
+- [ ] Use `FROM golang:1.22-alpine` (the locally cached image) paired with `ENV GOTOOLCHAIN=auto`, not a specific newer tag — this avoids Docker Hub pull failures when the tag is missing, while still building with the correct Go version (EXP-048)
+- [ ] When a service reads a URL from an env var with a hardcoded default pointing to the previous experiment's port (e.g. `CA_URL` defaulting to `http://profile-ca:8087`), explicitly set that env var in docker-compose.yml even if other env vars are already correct — the default silently wins when the var is absent (EXP-047-related; see also pki-rest-authz CA_URL in experiment-15)
+- [ ] Dashboard host port must be `3000 + N` (experiment-15 → 3015), NOT previous dashboard port + 100 — the `+100` rule applies to service ports, not the dashboard which tracks the experiment number (EXP-049)
+- [ ] After any port change or service removal, audit every `set $upstream` line in `dashboard/nginx.conf` — stale ports and removed services return nginx HTML error pages that the frontend JS parses as "Unexpected token '<'" (EXP-050)
+- [ ] When a service is merged into another (e.g. pip → profile-ca), redirect its nginx proxy block to the new host AND preserve the URL prefix if the new host serves routes under a sub-path (e.g. `/api/pip/` → rewrite to `/pip/$1` not `/$1`) (EXP-050)

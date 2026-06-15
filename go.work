@@ -30,6 +30,9 @@ use (
 	// Experiment 14
 	./experiments/experiment-14/services/topic-auth-xacml
 
+	// Experiment 15
+	./experiments/experiment-15/services/profile-ca
+
 	// Experiment 2
 	./experiments/experiment-2/services/consumer
 	./experiments/experiment-2/services/edge-adapter

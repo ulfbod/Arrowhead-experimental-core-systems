@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Experiment 13 — PKI Identity Unification</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #1a1d27;
+      --border: #2d3148;
+      --ok: #22c55e;
+      --err: #ef4444;
+      --warn: #f59e0b;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --accent: #6366f1;
+      --teal: #0d9488;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+    header { height: 52px; background: #0d1220; border-bottom: 1px solid #1e2d4a; display: flex; align-items: center; padding: 0 20px; gap: 0; }
+    .hd-logo { font-size: 15px; font-weight: 700; color: #6366f1; white-space: nowrap; letter-spacing: 0.3px; }
+    .hd-sub { flex: 1; text-align: center; font-size: 12px; color: #5a7090; letter-spacing: 0.5px; }
+    .hd-nav { display: flex; gap: 4px; }
+    .hd-nav a { padding: 5px 12px; font-size: 12px; color: #5a7090; text-decoration: none; border-radius: 4px; border: 1px solid transparent; transition: all 0.2s; }
+    .hd-nav a:hover { color: #a0b8d0; border-color: #2a3a5a; }
+    .hd-nav a.active { color: #a0c8ff; background: #111a2e; border-color: #2a3d6a; }
+    main { display: grid; grid-template-columns: 1fr 340px; gap: 16px; padding: 16px; height: calc(100vh - 57px); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; align-content: start; overflow-y: auto; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .card-title { font-weight: 600; font-size: 13px; }
+    .badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .ok { background: #14532d; color: var(--ok); }
+    .err { background: #450a0a; color: var(--err); }
+    .loading { background: #1c1917; color: var(--muted); }
+    .new-badge { background: #134e4a; color: #5eead4; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; margin-left: 6px; }
+    .kv { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .kv:last-child { border-bottom: none; }
+    .kv .k { color: var(--muted); }
+    .kv .v { font-weight: 500; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sidebar { overflow-y: auto; }
+    .sidebar .card { margin-bottom: 12px; }
+    .auth-form { display: flex; flex-direction: column; gap: 8px; }
+    .auth-form input, .auth-form select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 6px 10px; font-size: 13px; }
+    .auth-form button { background: var(--accent); color: white; border: none; border-radius: 4px; padding: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .auth-form button.danger { background: #dc2626; }
+    .auth-form button:hover { opacity: 0.9; }
+    .result { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px; font-size: 12px; font-family: monospace; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; margin-top: 4px; }
+    .permit { color: var(--ok); }
+    .deny { color: var(--err); }
+    .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 8px; }
+    .narrative { font-size: 12px; line-height: 1.6; color: var(--muted); }
+    .narrative strong { color: var(--text); }
+    .highlight { border: 1px solid var(--teal) !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="hd-logo">&#x1F3F9; Arrowhead 5 Evolution &middot; ADAPI Exhibition</div>
+    <div class="hd-sub">UC3 &mdash; Autonomous Lawn Mowing as a Service</div>
+    <nav class="hd-nav">
+      <a href="/" class="active">Live Monitor</a>
+      <a href="/demo.html">Exhibition Demo</a>
+      <a href="/admin.html">Policy Admin</a>
+    </nav>
+  </header>
+  <main>
+    <div class="grid" id="grid"></div>
+    <div class="sidebar">
+      <!-- View description -->
+      <div class="card">
+        <div class="section-title">Live Monitor</div>
+        <div class="narrative">
+          Shows real-time health and status for all running system components.
+          Each card updates every 5 seconds — <strong style="color:var(--ok)">OK</strong>
+          means the service is reachable and healthy;
+          <strong style="color:var(--err)">DOWN</strong> means it failed the last health check.<br><br>
+          Use the tools below to inspect identity attributes, test authorization decisions,
+          or trigger certificate revocation and observe the immediate effect on access.
+        </div>
+      </div>
+
+      <!-- Cert attributes lookup -->
+      <div class="card">
+        <div class="section-title">Certificate Attributes</div>
+        <div class="auth-form">
+          <select id="pip-cn">
+            <option value="service-partner-1">service-partner-1</option>
+            <option value="service-partner-2">service-partner-2</option>
+            <option value="portal-cloud-ml">portal-cloud-ml</option>
+          </select>
+          <button onclick="lookupPIP()">GET /pip/attributes/{cn}</button>
+          <div id="pip-result" class="result" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Auth check tool -->
+      <div class="card">
+        <div class="section-title">Authorization Check</div>
+        <div class="auth-form">
+          <select id="consumer">
+            <option value="service-partner-1">service-partner-1</option>
+            <option value="service-partner-2">service-partner-2</option>
+            <option value="test-probe">test-probe</option>
+            <option value="unauthorized">unauthorized</option>
+          </select>
+          <select id="service">
+            <option value="telemetry-rest">telemetry-rest</option>
+            <option value="telemetry">telemetry</option>
+          </select>
+          <button onclick="checkAuth()">Check Authorization</button>
+          <div id="auth-result" class="result" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Cert revocation demo -->
+      <div class="card">
+        <div class="section-title">Certificate Revocation</div>
+        <div class="auth-form">
+          <select id="revoke-cn">
+            <option value="service-partner-2">service-partner-2</option>
+            <option value="portal-cloud-ml">portal-cloud-ml</option>
+          </select>
+          <button class="danger" onclick="revokeDemo()">Revoke cert → check auth</button>
+          <div id="revoke-result" class="result" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const components = [
+      { id: 'profile-ca',          label: 'Profile CA',           group: 'Core PKI',       url: '/api/profile-ca/health',          stats: null,                          isAH5: true },
+      { id: 'serviceregistry',     label: 'Service Registry',     group: 'Core Systems',   url: '/api/serviceregistry/health',     stats: null,                          isAH5: true },
+      { id: 'authentication',      label: 'Authentication',       group: 'Core Systems',   url: '/api/authentication/health',      stats: null,                          isAH5: true },
+      { id: 'consumerauth',        label: 'Consumer Auth (AH5)',  group: 'Core Systems',   url: '/api/consumerauth/health',        stats: null,                          isAH5: true },
+      { id: 'dynamicorch',         label: 'DynamicOrch-XACML',   group: 'Core Systems',   url: '/api/dynamicorch/status',         stats: '/api/dynamicorch/status',     isAH5: true },
+      { id: 'authzforce',          label: 'AuthzForce PDP',       group: 'Policy Engine',  url: '/api/authzforce/health',          stats: null },
+      { id: 'pap',                 label: 'PAP',                  group: 'Policy Engine',  url: '/api/pap/health',                 stats: '/api/pap/status' },
+      { id: 'pip',                 label: 'PIP (CA-as-PIP, D4)', group: 'Policy Engine',  url: '/api/pip/health',                 stats: '/api/pip/status' },
+      { id: 'topic-auth-xacml',    label: 'AMQP PEP (mTLS CN)',  group: 'Enforcement',    url: '/api/topic-auth-xacml/health',    stats: null },
+      { id: 'kafka-authz',         label: 'Kafka PEP (mTLS CN)', group: 'Enforcement',    url: '/api/kafka-authz/health',         stats: '/api/kafka-authz/status' },
+      { id: 'pki-rest-authz',      label: 'REST mTLS PEP',        group: 'Enforcement',    url: '/api/pki-rest-authz/health',      stats: '/api/pki-rest-authz/status' },
+      { id: 'portal-cloud-ml',     label: 'Portal & Cloud ML',    group: 'UC3 Services',   url: '/api/portal-cloud-ml/health',     stats: '/api/portal-cloud-ml/stats' },
+      { id: 'service-partner-1',   label: 'Service Partner SP1',  group: 'UC3 Services',   url: '/api/service-partner-1/health',   stats: '/api/service-partner-1/stats' },
+      { id: 'service-partner-2',   label: 'Service Partner SP2',  group: 'UC3 Services',   url: '/api/service-partner-2/health',   stats: '/api/service-partner-2/stats' },
+      { id: 'robot-fleet-site-1',  label: 'Robot Fleet Site 1',   group: 'Robot Sites',    url: '/api/robot-fleet-site-1/health',  stats: '/api/robot-fleet-site-1/stats' },
+      { id: 'robot-fleet-site-2',  label: 'Robot Fleet Site 2',   group: 'Robot Sites',    url: '/api/robot-fleet-site-2/health',  stats: '/api/robot-fleet-site-2/stats' },
+      { id: 'robot-fleet-site-3',  label: 'Robot Fleet Site 3',   group: 'Robot Sites',    url: '/api/robot-fleet-site-3/health',  stats: '/api/robot-fleet-site-3/stats' },
+    ];
+
+    const grid = document.getElementById('grid');
+    for (const c of components) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.id = 'card-' + c.id;
+      card.innerHTML = `
+        <div class="card-header">
+          ${c.isAH5 ? '<img src="ah-logo.png" width="30" height="30" style="flex-shrink:0;object-fit:contain;opacity:0.9;"/>' : ''}
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${c.group}</div>
+            <div class="card-title">${c.label}</div>
+          </div>
+          <span class="badge loading" id="badge-${c.id}">…</span>
+        </div>
+        <div id="stats-${c.id}"></div>
+      `;
+      grid.appendChild(card);
+    }
+
+    async function fetchJSON(url) {
+      const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+      return r.ok ? r.json() : null;
+    }
+
+    async function refresh() {
+      for (const c of components) {
+        const badge = document.getElementById('badge-' + c.id);
+        const statsEl = document.getElementById('stats-' + c.id);
+        try {
+          const health = await fetchJSON(c.url);
+          const ok = health && (health.status === 'ok' || health.status === 'up' || health.status === 'UP');
+          badge.textContent = ok ? 'OK' : 'DOWN';
+          badge.className = 'badge ' + (ok ? 'ok' : 'err');
+          if (c.stats && c.stats !== c.url) {
+            const data = await fetchJSON(c.stats);
+            if (data) {
+              statsEl.innerHTML = Object.entries(data)
+                .slice(0, 6)
+                .map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span class="v" title="${v}">${v}</span></div>`)
+                .join('');
+            }
+          }
+        } catch {
+          badge.textContent = 'ERR';
+          badge.className = 'badge err';
+        }
+      }
+    }
+
+    async function lookupPIP() {
+      const cn = document.getElementById('pip-cn').value;
+      const el = document.getElementById('pip-result');
+      el.style.display = 'block';
+      el.textContent = 'Looking up ' + cn + '…';
+      try {
+        const r = await fetch('/api/pip/attributes/' + encodeURIComponent(cn));
+        const d = await r.json();
+        el.textContent = JSON.stringify(d, null, 2);
+        el.className = 'result ' + (d.valid === true || d.valid === 'true' ? 'permit' : 'deny');
+      } catch(e) { el.textContent = 'Error: ' + e.message; }
+    }
+
+    async function checkAuth() {
+      const consumer = document.getElementById('consumer').value;
+      const service = document.getElementById('service').value;
+      const el = document.getElementById('auth-result');
+      el.style.display = 'block';
+      el.textContent = 'Checking…';
+      try {
+        const r = await fetch('/api/pki-rest-authz/auth/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ consumer, service }),
+        });
+        const d = await r.json();
+        el.textContent = JSON.stringify(d, null, 2);
+        el.className = 'result ' + (d.permit ? 'permit' : 'deny');
+      } catch(e) { el.textContent = 'Error: ' + e.message; }
+    }
+
+    // Demonstrates cert revocation: DELETE /ca/certificates/{cn} → gRPC event →
+    // PIP sets certValid=false → next PEP request → AuthzForce DENY.
+    async function revokeDemo() {
+      const cn = document.getElementById('revoke-cn').value;
+      const el = document.getElementById('revoke-result');
+      el.style.display = 'block';
+      el.className = 'result';
+      el.textContent = `Revoking cert for ${cn}…\n`;
+      try {
+        // Check before revocation
+        const beforeR = await fetch('/api/pki-rest-authz/auth/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ consumer: cn, service: 'telemetry-rest' }),
+        });
+        const before = await beforeR.json();
+        el.textContent += `Before revocation: permit=${before.permit}\n`;
+
+        // Revoke cert via profile-ca DELETE
+        const delR = await fetch('/api/profile-ca/ca/certificates/' + encodeURIComponent(cn), {
+          method: 'DELETE',
+        });
+        el.textContent += `DELETE /ca/certificates/${cn} → HTTP ${delR.status}\n`;
+
+        // Wait one stream event propagation delay
+        await new Promise(r => setTimeout(r, 1200));
+
+        // Check PIP cert-valid
+        const pipR = await fetch('/api/pip/attributes/' + encodeURIComponent(cn));
+        const pip = await pipR.json();
+        el.textContent += `PIP valid: ${pip.valid}\n\n`;
+
+        // Check after revocation
+        const afterR = await fetch('/api/pki-rest-authz/auth/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ consumer: cn, service: 'telemetry-rest' }),
+        });
+        const after = await afterR.json();
+        el.textContent += `After revocation: permit=${after.permit}\n`;
+        el.className = 'result ' + (!after.permit ? 'permit' : 'deny');
+        el.textContent += after.permit
+          ? '\nWARN: cert still permitted — check stream propagation'
+          : '\nPASS: cert-valid=false → AuthzForce DENY (instant revocation)';
+      } catch(e) {
+        el.textContent += 'Error: ' + e.message;
+      }
+    }
+
+    setInterval(() => {
+      document.getElementById('clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ') + ' UTC';
+    }, 1000);
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

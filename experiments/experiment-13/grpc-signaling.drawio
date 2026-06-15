@@ -1,0 +1,540 @@
+<mxfile host="Claude" modified="2026-06-15" type="device" version="21.0.0">
+<!-- Experiment 13 gRPC Signaling Diagrams — Authorization Stack
+     Page 1: AuthorizationPDP.Decide   — canonical PDP-PEP, control-plane PEP
+     Page 2: CertificateLifecycle.Subscribe — CA-to-PIP attribute provisioning (NOT a PDP-PEP interface)
+     The attribute pipeline in Page 2 feeds the XACML subject attributes evaluated in Page 1. -->
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Page 1 — AuthorizationPDP.Decide  (arrowhead.authz.v1)
+       DynamicOrchestration (PEP) → authz-pdp (PDP) → AuthzForce CE
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <diagram id="authz-pdp-decide" name="AuthorizationPDP.Decide">
+    <mxGraphModel dx="1400" dy="800" grid="0" gridSize="10" guides="1"
+                  tooltips="1" connect="0" arrows="1" fold="1" page="0"
+                  pageScale="1" pageWidth="1200" pageHeight="900"
+                  math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- ── Title ──────────────────────────────────────────────────────── -->
+        <mxCell id="t0" value="AuthorizationPDP.Decide — Unary gRPC · arrowhead.authz.v1"
+                style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;fontSize=16;fontStyle=1;fontColor=#174ea6;"
+                vertex="1" parent="1">
+          <mxGeometry x="20" y="16" width="700" height="32" as="geometry"/>
+        </mxCell>
+        <mxCell id="t0b" value="DynamicOrchestration (PEP) calls authz-pdp (PDP) once per provider candidate. Only PERMIT providers are included in the orchestration result."
+                style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;fontSize=11;fontColor=#5f6368;"
+                vertex="1" parent="1">
+          <mxGeometry x="20" y="48" width="800" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="t0c" value="&lt;b&gt;Canonical PDP–PEP with deviations:&lt;/b&gt; (1) control-plane PEP — discloses endpoints, does not block connections · (2) action=&quot;orchestrate&quot; is a namespace tag, not an operation verb · (3) provider is a first-class XACML attribute for per-provider IoT policies"
+                style="text;html=1;strokeColor=#c6dafc;fillColor=#e8f0fe;align=left;verticalAlign=middle;spacingLeft=8;fontSize=10;fontColor=#174ea6;rounded=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="20" y="70" width="860" height="32" as="geometry"/>
+        </mxCell>
+
+        <!-- ── Participant headers ─────────────────────────────────────────── -->
+        <!-- Consumer  center=115 -->
+        <mxCell id="p1" value="&lt;b&gt;Consumer&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;font-size:10px;color:#5f6368;&apos;&gt;e.g. portal-cloud-ml&lt;/font&gt;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#1a73e8;fontColor=#174ea6;fontSize=12;arcSize=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="30" y="80" width="170" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- DynamicOrchestration  center=325 -->
+        <mxCell id="p2" value="&lt;b&gt;DynamicOrchestration&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;font-size:10px;color:#5f6368;&apos;&gt;PEP · core-evol :8083&lt;/font&gt;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#1a73e8;fontColor=#174ea6;fontSize=12;arcSize=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="240" y="80" width="170" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- ServiceRegistry  center=540 -->
+        <mxCell id="p3" value="&lt;b&gt;ServiceRegistry&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;font-size:10px;color:#5f6368;&apos;&gt;AH5 core :8443&lt;/font&gt;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8def8;strokeColor=#6750a4;fontColor=#21005d;fontSize=12;arcSize=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="455" y="80" width="170" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- authz-pdp  center=755 -->
+        <mxCell id="p4" value="&lt;b&gt;authz-pdp&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;font-size:10px;color:#5f6368;&apos;&gt;PDP · gRPC :9550&lt;/font&gt;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#c5221f;fontColor=#c5221f;fontSize=12;arcSize=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="670" y="80" width="170" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- AuthzForce CE  center=970 -->
+        <mxCell id="p5" value="&lt;b&gt;AuthzForce CE&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;font-size:10px;color:#5f6368;&apos;&gt;XACML PDP · HTTP :8080&lt;/font&gt;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#c5221f;fontColor=#c5221f;fontSize=12;arcSize=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="875" y="80" width="190" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- ── Lifelines ───────────────────────────────────────────────────── -->
+        <mxCell id="l1" value="" style="endArrow=none;dashed=1;strokeColor=#b0b8c1;strokeWidth=1.5;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="115" y="130" as="sourcePoint"/>
+            <mxPoint x="115" y="840" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="l2" value="" style="endArrow=none;dashed=1;strokeColor=#b0b8c1;strokeWidth=1.5;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="325" y="130" as="sourcePoint"/>
+            <mxPoint x="325" y="840" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="l3" value="" style="endArrow=none;dashed=1;strokeColor=#b0b8c1;strokeWidth=1.5;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="540" y="130" as="sourcePoint"/>
+            <mxPoint x="540" y="840" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="l4" value="" style="endArrow=none;dashed=1;strokeColor=#b0b8c1;strokeWidth=1.5;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="755" y="130" as="sourcePoint"/>
+            <mxPoint x="755" y="840" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="l5" value="" style="endArrow=none;dashed=1;strokeColor=#b0b8c1;strokeWidth=1.5;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="970" y="130" as="sourcePoint"/>
+            <mxPoint x="970" y="840" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 1: Consumer → DynamicOrch ─────────────────────────── -->
+        <mxCell id="m1" value="&lt;b&gt;1&lt;/b&gt;  POST /serviceorchestration/orchestration&lt;br/&gt;&lt;font style=&apos;color:#5f6368;font-size:10px;&apos;&gt;{requesterSystem, requestedService}&lt;/font&gt;"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="220" y="166" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="m1e" value="" style="endArrow=block;endFill=1;strokeColor=#202124;strokeWidth=1.5;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="115" y="182" as="sourcePoint"/>
+            <mxPoint x="325" y="182" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 2: DynamicOrch → ServiceRegistry ───────────────────── -->
+        <mxCell id="m2" value="&lt;b&gt;2&lt;/b&gt;  POST /serviceregistry/query"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="432" y="226" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="m2e" value="" style="endArrow=block;endFill=1;strokeColor=#202124;strokeWidth=1.5;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="325" y="240" as="sourcePoint"/>
+            <mxPoint x="540" y="240" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 3: ServiceRegistry → DynamicOrch (return) ──────────── -->
+        <mxCell id="m3" value="&lt;b&gt;3&lt;/b&gt;  serviceQueryData [ providers… ]"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#5f6368;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="432" y="276" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="m3e" value="" style="endArrow=open;endFill=0;strokeColor=#5f6368;strokeWidth=1.5;dashed=1;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="540" y="290" as="sourcePoint"/>
+            <mxPoint x="325" y="290" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Loop frame ─────────────────────────────────────────────────── -->
+        <mxCell id="loop" value="loop  [for each provider]"
+                style="swimlane;startSize=24;fillColor=#dae8fc;strokeColor=#1a73e8;strokeWidth=1.5;dashed=1;dashPattern=8 4;fontColor=#174ea6;fontSize=11;fontStyle=1;arcSize=3;"
+                vertex="1" parent="1">
+          <mxGeometry x="240" y="318" width="820" height="300" as="geometry"/>
+        </mxCell>
+
+        <!-- ── Message 4: DynamicOrch → authz-pdp (gRPC) ─────────────────── -->
+        <mxCell id="m4" value="&lt;b&gt;&lt;font color=&apos;#1a73e8&apos;&gt;4 [gRPC]  AuthorizationPDP.Decide(DecisionRequest)&lt;/font&gt;&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;color:#1a73e8;font-size:10px;&apos;&gt;{domain_id, subject, service, provider, action=&quot;orchestrate&quot;}&lt;/font&gt;"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="537" y="356" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="m4e" value="" style="endArrow=block;endFill=1;strokeColor=#1a73e8;strokeWidth=2.5;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="325" y="376" as="sourcePoint"/>
+            <mxPoint x="755" y="376" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 5: authz-pdp → AuthzForce (HTTP) ──────────────────── -->
+        <mxCell id="m5" value="&lt;b&gt;5 [HTTP]&lt;/b&gt;  POST /domains/{id}/pdp/request&lt;br/&gt;&lt;font style=&apos;color:#e37400;font-size:10px;&apos;&gt;XACML 3.0 JSON request&lt;/font&gt;"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#e37400;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="862" y="420" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="m5e" value="" style="endArrow=block;endFill=1;strokeColor=#e37400;strokeWidth=1.5;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="755" y="436" as="sourcePoint"/>
+            <mxPoint x="970" y="436" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 6: AuthzForce → authz-pdp (HTTP return) ───────────── -->
+        <mxCell id="m6" value="&lt;b&gt;6&lt;/b&gt;  XACML Response {Permit | Deny | Indeterminate}"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#e37400;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="862" y="468" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="m6e" value="" style="endArrow=open;endFill=0;strokeColor=#e37400;strokeWidth=1.5;dashed=1;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="970" y="482" as="sourcePoint"/>
+            <mxPoint x="755" y="482" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 7: authz-pdp → DynamicOrch (gRPC return) ──────────── -->
+        <mxCell id="m7" value="&lt;b&gt;&lt;font color=&apos;#1a73e8&apos;&gt;7 [gRPC return]  DecisionResponse&lt;/font&gt;&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;color:#1a73e8;font-size:10px;&apos;&gt;{decision: PERMIT} → include provider | {decision: DENY} → exclude&lt;/font&gt;"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="537" y="528" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="m7e" value="" style="endArrow=open;endFill=0;strokeColor=#1a73e8;strokeWidth=2.5;dashed=1;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="755" y="546" as="sourcePoint"/>
+            <mxPoint x="325" y="546" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 8: DynamicOrch → Consumer (return) ────────────────── -->
+        <mxCell id="m8" value="&lt;b&gt;8&lt;/b&gt;  OrchestrationResponse [ PERMIT providers only ]"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#5f6368;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="220" y="680" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="m8e" value="" style="endArrow=open;endFill=0;strokeColor=#5f6368;strokeWidth=1.5;dashed=1;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="325" y="694" as="sourcePoint"/>
+            <mxPoint x="115" y="694" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Fail-closed note ───────────────────────────────────────────── -->
+        <mxCell id="note1"
+                value="&lt;b&gt;Fail-closed:&lt;/b&gt; error / DENY / INDETERMINATE / NOT_APPLICABLE → exclude provider from result"
+                style="shape=callout;whiteSpace=wrap;html=1;fillColor=#fce8e6;strokeColor=#c5221f;fontColor=#c5221f;fontSize=11;perimeter=calloutPerimeter;arcSize=5;size=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="650" y="720" width="460" height="44" as="geometry"/>
+        </mxCell>
+
+        <!-- ── XACML attribute mapping note ──────────────────────────────── -->
+        <mxCell id="note2"
+                value="&lt;b&gt;XACML attribute mapping:&lt;/b&gt;&lt;br/&gt;subject → subject-id&lt;br/&gt;service → resource-id&lt;br/&gt;provider → urn:arrowhead:attribute:provider-id&lt;br/&gt;action → action-id (&quot;orchestrate&quot; | &quot;consume&quot;)"
+                style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;verticalAlign=top;spacingLeft=6;size=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="30" y="650" width="220" height="110" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Page 2 — CertificateLifecycle.Subscribe  (arrowhead.ca.v1)
+       profile-ca (server) → PIP (subscriber) → SubjectStore
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <diagram id="cert-lifecycle-subscribe" name="CertificateLifecycle.Subscribe">
+    <mxGraphModel dx="1400" dy="800" grid="0" gridSize="10" guides="1"
+                  tooltips="1" connect="0" arrows="1" fold="1" page="0"
+                  pageScale="1" pageWidth="1100" pageHeight="900"
+                  math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- ── Title ──────────────────────────────────────────────────────── -->
+        <mxCell id="t1" value="CertificateLifecycle.Subscribe — Server-streaming gRPC · arrowhead.ca.v1"
+                style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;fontSize=16;fontStyle=1;fontColor=#137333;"
+                vertex="1" parent="1">
+          <mxGeometry x="20" y="16" width="700" height="32" as="geometry"/>
+        </mxCell>
+        <mxCell id="t1b" value="profile-ca streams certificate lifecycle events to PIP. PIP registers cert-level attributes into SubjectStore for downstream XACML enrichment."
+                style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;fontSize=11;fontColor=#5f6368;"
+                vertex="1" parent="1">
+          <mxGeometry x="20" y="48" width="800" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="t1c" value="&lt;b&gt;NOT a PDP–PEP interface.&lt;/b&gt; This is a CA-to-PIP attribute provisioning channel. Classic XACML has the PDP pull attributes from PIP synchronously; here the model is inverted — PIP subscribes (push). Authentication events (cert issued/revoked) are causally coupled to XACML authorization outcomes via cert-valid and cert-level subject attributes."
+                style="text;html=1;strokeColor=#f5c6c4;fillColor=#fce8e6;align=left;verticalAlign=middle;spacingLeft=8;fontSize=10;fontColor=#a50000;rounded=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="20" y="70" width="840" height="32" as="geometry"/>
+        </mxCell>
+
+        <!-- ── Participant headers ─────────────────────────────────────────── -->
+        <!-- Administrator  center=110 -->
+        <mxCell id="q1" value="&lt;b&gt;Administrator&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;font-size:10px;color:#5f6368;&apos;&gt;or cert-provisioner&lt;/font&gt;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9334e6;fontColor=#4a0072;fontSize=12;arcSize=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="30" y="80" width="160" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- profile-ca  center=310 -->
+        <mxCell id="q2" value="&lt;b&gt;profile-ca&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;font-size:10px;color:#5f6368;&apos;&gt;CA + gRPC server :8089&lt;/font&gt;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#188038;fontColor=#1a5c20;fontSize=12;arcSize=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="230" y="80" width="160" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- PIP  center=510 -->
+        <mxCell id="q3" value="&lt;b&gt;PIP&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;font-size:10px;color:#5f6368;&apos;&gt;gRPC subscriber :9606&lt;/font&gt;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#1a73e8;fontColor=#174ea6;fontSize=12;arcSize=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="430" y="80" width="160" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- SubjectStore  center=720 -->
+        <mxCell id="q4" value="&lt;b&gt;SubjectStore&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;font-size:10px;color:#5f6368;&apos;&gt;in-memory cert cache&lt;/font&gt;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontColor=#663a00;fontSize=12;arcSize=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="640" y="80" width="160" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- ── Lifelines ───────────────────────────────────────────────────── -->
+        <mxCell id="k1" value="" style="endArrow=none;dashed=1;strokeColor=#b0b8c1;strokeWidth=1.5;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="110" y="130" as="sourcePoint"/>
+            <mxPoint x="110" y="900" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="k2" value="" style="endArrow=none;dashed=1;strokeColor=#b0b8c1;strokeWidth=1.5;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="310" y="130" as="sourcePoint"/>
+            <mxPoint x="310" y="900" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="k3" value="" style="endArrow=none;dashed=1;strokeColor=#b0b8c1;strokeWidth=1.5;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="510" y="130" as="sourcePoint"/>
+            <mxPoint x="510" y="900" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="k4" value="" style="endArrow=none;dashed=1;strokeColor=#b0b8c1;strokeWidth=1.5;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="720" y="130" as="sourcePoint"/>
+            <mxPoint x="720" y="900" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Phase banner: Startup ───────────────────────────────────────── -->
+        <mxCell id="ph1" value="STARTUP / FIRST CONNECT"
+                style="text;html=1;strokeColor=#dadce0;fillColor=#f1f3f4;align=center;verticalAlign=middle;spacingLeft=4;fontSize=11;fontStyle=1;fontColor=#5f6368;"
+                vertex="1" parent="1">
+          <mxGeometry x="30" y="148" width="820" height="22" as="geometry"/>
+        </mxCell>
+
+        <!-- ── Message 1: PIP → profile-ca: Subscribe ─────────────────────── -->
+        <mxCell id="n1" value="&lt;b&gt;&lt;font color=&apos;#1a73e8&apos;&gt;1 [gRPC stream open]  CertificateLifecycle.Subscribe&lt;/font&gt;&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;color:#1a73e8;font-size:10px;&apos;&gt;{include_snapshot: true}&lt;/font&gt;"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="410" y="190" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n1e" value="" style="endArrow=block;endFill=1;strokeColor=#1a73e8;strokeWidth=2.5;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="510" y="206" as="sourcePoint"/>
+            <mxPoint x="310" y="206" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Phase banner: Snapshot ──────────────────────────────────────── -->
+        <mxCell id="ph2" value="SNAPSHOT PHASE — existing certificates streamed before live events"
+                style="text;html=1;strokeColor=#188038;fillColor=#d5e8d4;align=center;verticalAlign=middle;spacingLeft=4;fontSize=11;fontStyle=1;fontColor=#137333;"
+                vertex="1" parent="1">
+          <mxGeometry x="30" y="230" width="820" height="22" as="geometry"/>
+        </mxCell>
+
+        <!-- ── Message 2a: profile-ca → PIP: SNAPSHOT 1 ──────────────────── -->
+        <mxCell id="n2a" value="&lt;b&gt;&lt;font color=&apos;#188038&apos;&gt;2a [stream]&lt;/font&gt;&lt;/b&gt;  CertEvent{type:SNAPSHOT, cn:&quot;robot-fleet-site-1&quot;, ou:&quot;sy&quot;, issued_at:…}"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#188038;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="410" y="270" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n2ae" value="" style="endArrow=open;endFill=1;strokeColor=#188038;strokeWidth=2;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="310" y="286" as="sourcePoint"/>
+            <mxPoint x="510" y="286" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 2b: profile-ca → PIP: SNAPSHOT 2 ──────────────────── -->
+        <mxCell id="n2b" value="&lt;b&gt;&lt;font color=&apos;#188038&apos;&gt;2b [stream]&lt;/font&gt;&lt;/b&gt;  CertEvent{type:SNAPSHOT, cn:&quot;portal-cloud-ml&quot;, ou:&quot;sy&quot;, issued_at:…}"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#188038;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="410" y="310" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n2be" value="" style="endArrow=open;endFill=1;strokeColor=#188038;strokeWidth=2;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="310" y="326" as="sourcePoint"/>
+            <mxPoint x="510" y="326" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 3: PIP → SubjectStore: Register (snapshot) ─────────── -->
+        <mxCell id="n3" value="&lt;b&gt;3&lt;/b&gt;  Register(cn, ou, valid=true) × n"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#d79b00;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="615" y="362" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n3e" value="" style="endArrow=block;endFill=1;strokeColor=#d79b00;strokeWidth=1.5;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="510" y="376" as="sourcePoint"/>
+            <mxPoint x="720" y="376" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Phase banner: Live events ──────────────────────────────────── -->
+        <mxCell id="ph3" value="LIVE EVENTS — stream remains open indefinitely"
+                style="text;html=1;strokeColor=#dadce0;fillColor=#f1f3f4;align=center;verticalAlign=middle;spacingLeft=4;fontSize=11;fontStyle=1;fontColor=#5f6368;"
+                vertex="1" parent="1">
+          <mxGeometry x="30" y="408" width="820" height="22" as="geometry"/>
+        </mxCell>
+
+        <!-- ── Message 4: Admin → profile-ca: issue cert ─────────────────── -->
+        <mxCell id="n4" value="&lt;b&gt;4&lt;/b&gt;  POST /ca/certificates  (issue new certificate)"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#4a0072;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="210" y="450" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n4e" value="" style="endArrow=block;endFill=1;strokeColor=#9334e6;strokeWidth=1.5;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="110" y="464" as="sourcePoint"/>
+            <mxPoint x="310" y="464" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 5: profile-ca → PIP: ISSUED ──────────────────────── -->
+        <mxCell id="n5" value="&lt;b&gt;&lt;font color=&apos;#188038&apos;&gt;5 [stream]&lt;/font&gt;&lt;/b&gt;  CertEvent{type:ISSUED, cn:&quot;new-sensor-1&quot;, ou:&quot;sy&quot;, issued_at:…, expires_at:…}"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#188038;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="410" y="500" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n5e" value="" style="endArrow=open;endFill=1;strokeColor=#188038;strokeWidth=2;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="310" y="516" as="sourcePoint"/>
+            <mxPoint x="510" y="516" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 6: PIP → SubjectStore: Register (issued) ─────────── -->
+        <mxCell id="n6" value="&lt;b&gt;6&lt;/b&gt;  Register(&quot;new-sensor-1&quot;, &quot;sy&quot;, valid=true)"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#d79b00;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="615" y="548" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n6e" value="" style="endArrow=block;endFill=1;strokeColor=#d79b00;strokeWidth=1.5;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="510" y="562" as="sourcePoint"/>
+            <mxPoint x="720" y="562" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 7: Admin → profile-ca: revoke ─────────────────────── -->
+        <mxCell id="n7" value="&lt;b&gt;7&lt;/b&gt;  DELETE /ca/certificates/{cn}  (revoke)"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#4a0072;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="210" y="596" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n7e" value="" style="endArrow=block;endFill=1;strokeColor=#9334e6;strokeWidth=1.5;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="110" y="610" as="sourcePoint"/>
+            <mxPoint x="310" y="610" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 8: profile-ca → PIP: REVOKED ─────────────────────── -->
+        <mxCell id="n8" value="&lt;b&gt;&lt;font color=&apos;#c5221f&apos;&gt;8 [stream]&lt;/font&gt;&lt;/b&gt;  CertEvent{type:REVOKED, cn:&quot;old-sensor&quot;, ou:&quot;sy&quot;}"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#c5221f;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="410" y="645" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n8e" value="" style="endArrow=open;endFill=1;strokeColor=#c5221f;strokeWidth=2;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="310" y="660" as="sourcePoint"/>
+            <mxPoint x="510" y="660" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Message 9: PIP → SubjectStore: Register (revoked) ─────────── -->
+        <mxCell id="n9" value="&lt;b&gt;9&lt;/b&gt;  Register(&quot;old-sensor&quot;, &quot;sy&quot;, valid=false)"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;fontColor=#d79b00;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="615" y="693" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n9e" value="" style="endArrow=block;endFill=1;strokeColor=#d79b00;strokeWidth=1.5;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="510" y="706" as="sourcePoint"/>
+            <mxPoint x="720" y="706" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Phase banner: Reconnect ─────────────────────────────────────── -->
+        <mxCell id="ph4" value="RECONNECT — on stream failure (exponential backoff 1 s → 30 s max; last known state retained)"
+                style="text;html=1;strokeColor=#c5221f;fillColor=#fce8e6;align=center;verticalAlign=middle;spacingLeft=4;fontSize=11;fontStyle=1;fontColor=#c5221f;"
+                vertex="1" parent="1">
+          <mxGeometry x="30" y="736" width="820" height="22" as="geometry"/>
+        </mxCell>
+
+        <!-- ── Message 10: PIP → profile-ca: reconnect ──────────────────── -->
+        <mxCell id="n10" value="&lt;b&gt;&lt;font color=&apos;#1a73e8&apos;&gt;10 [reconnect]  Subscribe({include_snapshot: true})&lt;/font&gt;&lt;/b&gt;&lt;br/&gt;&lt;font style=&apos;color:#1a73e8;font-size:10px;&apos;&gt;retains last known state during outage (fail-safe, not fail-purge)&lt;/font&gt;"
+                style="edgeLabel;html=1;align=center;verticalAlign=bottom;resizable=0;fontSize=11;"
+                vertex="1" connectable="0" parent="1">
+          <mxGeometry x="410" y="772" relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="n10e" value="" style="endArrow=block;endFill=1;strokeColor=#1a73e8;strokeWidth=2.5;dashed=1;dashPattern=8 4;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="510" y="790" as="sourcePoint"/>
+            <mxPoint x="310" y="790" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── cert-level ou legend note ─────────────────────────────────── -->
+        <mxCell id="note3"
+                value="&lt;b&gt;Cert level (ou) values:&lt;/b&gt;&lt;br/&gt;&quot;lo&quot; — Local Cloud CA (root)&lt;br/&gt;&quot;on&quot; — Onboarding&lt;br/&gt;&quot;de&quot; — Device&lt;br/&gt;&quot;sy&quot; — System ★ (service mTLS)"
+                style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;verticalAlign=top;spacingLeft=6;size=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="870" y="210" width="180" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- ── EventType legend note ──────────────────────────────────────── -->
+        <mxCell id="note4"
+                value="&lt;b&gt;EventType subscriber actions:&lt;/b&gt;&lt;br/&gt;SNAPSHOT → Register(cn, ou, valid=true)&lt;br/&gt;ISSUED   → Register(cn, ou, valid=true)&lt;br/&gt;REVOKED  → Register(cn, ou, valid=false)&lt;br/&gt;EXPIRED  → Register(cn, ou, valid=false)"
+                style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#c5221f;fontSize=10;align=left;verticalAlign=top;spacingLeft=6;size=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="870" y="340" width="180" height="110" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+</mxfile>

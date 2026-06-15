@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Experiment 13 gRPC Interfaces — Authorization Stack</title>
+<style>
+  :root {
+    --blue:    #1a73e8;
+    --green:   #188038;
+    --red:     #c5221f;
+    --orange:  #e37400;
+    --grey:    #5f6368;
+    --bg:      #f8f9fa;
+    --card-bg: #ffffff;
+    --border:  #dadce0;
+    --code-bg: #f1f3f4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Google Sans", Roboto, Arial, sans-serif; font-size: 14px; color: #202124; background: var(--bg); line-height: 1.6; }
+  header { background: #1a73e8; color: #fff; padding: 32px 40px; }
+  header h1 { font-size: 24px; font-weight: 500; }
+  header p  { margin-top: 6px; opacity: 0.85; font-size: 13px; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+  .summary-table { width: 100%; border-collapse: collapse; margin-bottom: 32px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .summary-table th { background: #e8f0fe; color: #174ea6; padding: 10px 14px; text-align: left; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  .summary-table td { padding: 10px 14px; border-top: 1px solid var(--border); vertical-align: top; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge-unary    { background: #e8f0fe; color: #174ea6; }
+  .badge-stream   { background: #e6f4ea; color: #137333; }
+  section.iface { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 40px; overflow: hidden; }
+  .iface-header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 14px; }
+  .iface-header h2 { font-size: 18px; font-weight: 600; }
+  .iface-meta { font-size: 12px; color: var(--grey); }
+  .iface-body { padding: 0 24px 24px; }
+  h3 { font-size: 14px; font-weight: 600; color: #174ea6; margin: 20px 0 8px; text-transform: uppercase; letter-spacing: .4px; }
+  h4 { font-size: 13px; font-weight: 600; margin: 16px 0 6px; color: #202124; }
+  p  { margin-bottom: 10px; font-size: 13px; color: #3c4043; }
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 16px; }
+  .meta-row { display: flex; gap: 8px; font-size: 12px; }
+  .meta-label { color: var(--grey); min-width: 80px; }
+  .meta-value { font-family: "Roboto Mono", monospace; }
+  code  { font-family: "Roboto Mono", monospace; font-size: 12px; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre   { background: #202124; color: #e8eaed; padding: 16px; border-radius: 6px; font-size: 12px; line-height: 1.7; overflow-x: auto; margin: 10px 0; }
+  pre .kw  { color: #8ab4f8; }
+  pre .str { color: #a8d8a8; }
+  pre .cmt { color: #9aa0a6; font-style: italic; }
+  pre .num { color: #f28b82; }
+  pre .type { color: #fdd663; }
+  table.schema { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0 16px; }
+  table.schema th { background: var(--code-bg); padding: 7px 10px; text-align: left; font-weight: 600; border-bottom: 2px solid var(--border); }
+  table.schema td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.schema td:first-child { font-family: "Roboto Mono", monospace; color: #174ea6; }
+  table.schema tr:last-child td { border-bottom: none; }
+  .tag-req  { color: var(--red); font-size: 10px; font-weight: 700; }
+  .tag-opt  { color: var(--grey); font-size: 10px; }
+  .error-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0; }
+  .error-table th { background: #fce8e6; color: #c5221f; padding: 7px 10px; text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+  .error-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .error-table .status-ok   { color: var(--green); font-weight: 600; }
+  .error-table .status-err  { color: var(--red); font-weight: 600; }
+  .permit  { color: var(--green); font-weight: 600; }
+  .deny    { color: var(--red); font-weight: 600; }
+  .indeterminate { color: var(--orange); font-weight: 600; }
+  .divider { height: 1px; background: var(--border); margin: 20px 0; }
+  .grpcurl { background: #202124; color: #81c995; padding: 12px 16px; border-radius: 6px; font-family: "Roboto Mono", monospace; font-size: 12px; margin: 10px 0; white-space: pre-wrap; word-break: break-all; }
+  .reconnect-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0; }
+  .reconnect-table th { background: #e6f4ea; color: #137333; padding: 7px 10px; text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+  .reconnect-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .cert-levels { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0; }
+  .cert-level-card { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+  .cert-level-card .lvl { font-family: "Roboto Mono", monospace; font-size: 13px; font-weight: 700; color: var(--blue); }
+  .cert-level-card .tier { font-size: 11px; font-weight: 600; color: var(--grey); margin-top: 2px; }
+  .cert-level-card .desc { font-size: 11px; color: #5f6368; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Experiment 13 gRPC Interfaces — Authorization Stack</h1>
+  <p>Arrowhead 5 Evolved · Two gRPC interfaces in the experiment-13 authorization stack. Interface 1 (AuthorizationPDP) is a PDP–PEP decision channel. Interface 2 (CertificateLifecycle) is a CA-to-PIP attribute provisioning channel — not a PDP–PEP interface.</p>
+</header>
+
+<div class="container">
+
+  <!-- Summary table -->
+  <table class="summary-table">
+    <thead>
+      <tr>
+        <th>Interface</th><th>Package</th><th>Server</th><th>Client</th><th>Pattern</th><th>Proto file</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>AuthorizationPDP</strong></td>
+        <td><code>arrowhead.authz.v1</code></td>
+        <td><code>authz-pdp</code> :9550 / host :9650</td>
+        <td>DynamicOrchestration <code>GRPCDecider</code></td>
+        <td><span class="badge badge-unary">Unary RPC</span></td>
+        <td><code>core-evol/proto/authorize/authorize.proto</code></td>
+      </tr>
+      <tr>
+        <td><strong>CertificateLifecycle</strong></td>
+        <td><code>arrowhead.ca.v1</code></td>
+        <td><code>profile-ca</code> :8089 / host :8589</td>
+        <td>PIP subscriber</td>
+        <td><span class="badge badge-stream">Server-streaming</span></td>
+        <td><code>core-evol/proto/certlifecycle/certlifecycle.proto</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ─────────────────────────────────────────────────────────────────────── -->
+  <!-- Interface 1: AuthorizationPDP                                          -->
+  <!-- ─────────────────────────────────────────────────────────────────────── -->
+  <section class="iface">
+    <div class="iface-header">
+      <h2>1. AuthorizationPDP</h2>
+      <span class="badge badge-unary">Unary RPC</span>
+      <span class="iface-meta">arrowhead.authz.v1 · authz-pdp :9550</span>
+    </div>
+    <div class="iface-body">
+
+      <h3>Service metadata</h3>
+      <div class="meta-grid">
+        <div class="meta-row"><span class="meta-label">Package</span><span class="meta-value">arrowhead.authz.v1</span></div>
+        <div class="meta-row"><span class="meta-label">Server</span><span class="meta-value">authz-pdp</span></div>
+        <div class="meta-row"><span class="meta-label">Proto</span><span class="meta-value">core-evol/proto/authorize/authorize.proto</span></div>
+        <div class="meta-row"><span class="meta-label">Client</span><span class="meta-value">DynamicOrchestration / GRPCDecider</span></div>
+        <div class="meta-row"><span class="meta-label">Port</span><span class="meta-value">:9550 (internal) / :9650 (host)</span></div>
+        <div class="meta-row"><span class="meta-label">Transport</span><span class="meta-value">gRPC plaintext</span></div>
+      </div>
+
+      <h3>Architecture position</h3>
+      <div style="background:#e8f0fe;border:1px solid #c6dafc;border-radius:6px;padding:12px 16px;font-size:12px;color:#174ea6;margin-bottom:4px;">
+        <strong>Canonical PDP–PEP with three non-standard aspects.</strong><br>
+        (1) The PEP is a <strong>control-plane</strong> actor — it decides which provider addresses to <em>disclose</em> during service discovery, not whether to allow a connection that already exists. (2) <code>action</code> acts as a <strong>namespace separator</strong> (<code>"orchestrate"</code> vs <code>"consume"</code>), not an operation verb, routing requests to the correct policy set. (3) <code>provider</code> as a first-class XACML attribute enables per-provider IoT policies with no direct equivalent in web-service XACML.
+        See <a href="grpc-summary.html" style="color:#174ea6;">grpc-summary.html</a> for full analysis.
+      </div>
+
+      <h3>grpcurl inspection</h3>
+      <div class="grpcurl">grpcurl -plaintext localhost:9650 list
+grpcurl -plaintext localhost:9650 describe arrowhead.authz.v1.AuthorizationPDP
+grpcurl -plaintext -d '{"subject":"portal-cloud-ml","service":"telemetry","provider":"robot-fleet-site-1","action":"orchestrate"}' \
+  localhost:9650 arrowhead.authz.v1.AuthorizationPDP/Decide</div>
+
+      <!-- RPC tree -->
+      <h3>RPC: Decide</h3>
+
+      <h4>Purpose</h4>
+      <p>Evaluates a single access-control request and returns <span class="permit">PERMIT</span> or <span class="deny">DENY</span>. The DynamicOrchestrator calls <code>Decide</code> once per provider candidate found in the ServiceRegistry. Only providers that receive <span class="permit">PERMIT</span> are included in the final orchestration response.</p>
+      <p>Implements XACML 3.0 Request/Response semantics over gRPC. Fail-closed: any error or non-PERMIT decision causes the provider to be excluded from results.</p>
+      <p>Two distinct <code>action</code> values prevent policy collision:</p>
+      <ul style="font-size:13px;color:#3c4043;padding-left:20px;margin-bottom:10px;">
+        <li><code>"orchestrate"</code> — orchestration PEP; <code>provider</code> is set (per-provider policy evaluation)</li>
+        <li><code>"consume"</code> — enforcement PEPs (kafka-authz, pki-rest-authz); <code>provider</code> is empty</li>
+      </ul>
+
+      <h4>Request schema — <code>DecisionRequest</code></h4>
+      <table class="schema">
+        <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>XACML mapping</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>domain_id</td><td>string</td><td><span class="tag-opt">optional</span></td>
+            <td>AuthzForce domain UUID</td><td>Policy domain identifier. May be empty for single-domain deployments.</td>
+          </tr>
+          <tr>
+            <td>subject</td><td>string</td><td><span class="tag-req">required</span></td>
+            <td><code>subject-id</code></td><td>Consumer system name as registered in ServiceRegistry.</td>
+          </tr>
+          <tr>
+            <td>service</td><td>string</td><td><span class="tag-req">required</span></td>
+            <td><code>resource-id</code></td><td>Service definition name, e.g. <code>"telemetry"</code>.</td>
+          </tr>
+          <tr>
+            <td>provider</td><td>string</td><td><span class="tag-opt">orch only</span></td>
+            <td><code>urn:arrowhead:attribute:provider-id</code></td><td>Provider system name. Set by orchestration PEPs; empty for enforcement PEPs.</td>
+          </tr>
+          <tr>
+            <td>action</td><td>string</td><td><span class="tag-req">required</span></td>
+            <td><code>action-id</code></td><td><code>"orchestrate"</code> for this service · <code>"consume"</code> for enforcement.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h4>Response schema — <code>DecisionResponse</code></h4>
+      <table class="schema">
+        <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td>decision</td><td>Decision enum</td><td><span class="permit">PERMIT</span>, <span class="deny">DENY</span>, <span class="indeterminate">INDETERMINATE</span>, or NOT_APPLICABLE.</td></tr>
+          <tr><td>status_code</td><td>string</td><td>XACML status URN (informational — act on <code>decision</code>, not this field).</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Example request — orchestration with provider</h4>
+      <pre>{
+  <span class="str">"domain_id"</span>: <span class="str">"ah5-domain"</span>,
+  <span class="str">"subject"</span>:   <span class="str">"portal-cloud-ml"</span>,
+  <span class="str">"service"</span>:   <span class="str">"telemetry"</span>,
+  <span class="str">"provider"</span>:  <span class="str">"robot-fleet-site-1"</span>,
+  <span class="str">"action"</span>:    <span class="str">"orchestrate"</span>
+}</pre>
+
+      <h4>Example response — permit</h4>
+      <pre>{
+  <span class="str">"decision"</span>:    <span class="str">"PERMIT"</span>,
+  <span class="str">"status_code"</span>: <span class="str">"urn:oasis:names:tc:xacml:1.0:status:ok"</span>
+}</pre>
+
+      <h4>Example response — deny</h4>
+      <pre>{
+  <span class="str">"decision"</span>:    <span class="str">"DENY"</span>,
+  <span class="str">"status_code"</span>: <span class="str">"urn:oasis:names:tc:xacml:1.0:status:ok"</span>
+}</pre>
+
+      <h4>Error codes</h4>
+      <table class="error-table">
+        <thead><tr><th>gRPC status</th><th>Decision</th><th>Meaning</th><th>PEP action</th></tr></thead>
+        <tbody>
+          <tr><td class="status-ok">OK</td><td class="permit">PERMIT</td><td>Policy grants access</td><td>Include provider in orchestration result</td></tr>
+          <tr><td class="status-ok">OK</td><td class="deny">DENY</td><td>Policy denies access</td><td>Exclude provider (fail-closed)</td></tr>
+          <tr><td class="status-ok">OK</td><td class="indeterminate">INDETERMINATE</td><td>Evaluation error or missing attribute</td><td>Exclude provider (fail-closed)</td></tr>
+          <tr><td class="status-ok">OK</td><td>NOT_APPLICABLE</td><td>No policy matched</td><td>Exclude provider (fail-closed)</td></tr>
+          <tr><td class="status-err">UNAVAILABLE</td><td>—</td><td>authz-pdp unreachable</td><td>Exclude provider (fail-closed)</td></tr>
+          <tr><td class="status-err">DEADLINE_EXCEEDED</td><td>—</td><td>RPC timeout</td><td>Exclude provider (fail-closed)</td></tr>
+          <tr><td class="status-err">INTERNAL</td><td>—</td><td>authz-pdp internal error</td><td>Exclude provider (fail-closed)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Message definitions</h3>
+      <pre><span class="cmt">// authorize.proto — arrowhead.authz.v1</span>
+
+<span class="kw">service</span> <span class="type">AuthorizationPDP</span> {
+  <span class="kw">rpc</span> Decide(<span class="type">DecisionRequest</span>) <span class="kw">returns</span> (<span class="type">DecisionResponse</span>);
+}
+
+<span class="kw">message</span> <span class="type">DecisionRequest</span> {
+  <span class="kw">string</span> domain_id = <span class="num">1</span>;  <span class="cmt">// AuthzForce domain UUID (may be empty)</span>
+  <span class="kw">string</span> subject   = <span class="num">2</span>;  <span class="cmt">// consumer system name  → XACML subject-id</span>
+  <span class="kw">string</span> service   = <span class="num">3</span>;  <span class="cmt">// service definition    → XACML resource-id</span>
+  <span class="kw">string</span> provider  = <span class="num">4</span>;  <span class="cmt">// provider system name  → XACML provider-id (orch only)</span>
+  <span class="kw">string</span> action    = <span class="num">5</span>;  <span class="cmt">// "orchestrate" | "consume"</span>
+}
+
+<span class="kw">message</span> <span class="type">DecisionResponse</span> {
+  <span class="type">Decision</span> decision    = <span class="num">1</span>;  <span class="cmt">// PERMIT | DENY | INDETERMINATE | NOT_APPLICABLE</span>
+  <span class="kw">string</span>   status_code = <span class="num">2</span>;  <span class="cmt">// XACML status URN (informational)</span>
+}
+
+<span class="kw">enum</span> <span class="type">Decision</span> {
+  DECISION_UNSPECIFIED = <span class="num">0</span>;  <span class="cmt">// zero value; treat as DENY</span>
+  PERMIT               = <span class="num">1</span>;  <span class="cmt">// access granted</span>
+  DENY                 = <span class="num">2</span>;  <span class="cmt">// access denied</span>
+  INDETERMINATE        = <span class="num">3</span>;  <span class="cmt">// evaluation error; treat as DENY</span>
+  NOT_APPLICABLE       = <span class="num">4</span>;  <span class="cmt">// no policy matched; treat as DENY</span>
+}</pre>
+
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────────────────────────────────── -->
+  <!-- Interface 2: CertificateLifecycle                                      -->
+  <!-- ─────────────────────────────────────────────────────────────────────── -->
+  <section class="iface">
+    <div class="iface-header">
+      <h2>2. CertificateLifecycle</h2>
+      <span class="badge badge-stream">Server-streaming</span>
+      <span class="iface-meta">arrowhead.ca.v1 · profile-ca :8089</span>
+    </div>
+    <div class="iface-body">
+
+      <h3>Service metadata</h3>
+      <div class="meta-grid">
+        <div class="meta-row"><span class="meta-label">Package</span><span class="meta-value">arrowhead.ca.v1</span></div>
+        <div class="meta-row"><span class="meta-label">Server</span><span class="meta-value">profile-ca (gRPC reflection enabled)</span></div>
+        <div class="meta-row"><span class="meta-label">Proto</span><span class="meta-value">core-evol/proto/certlifecycle/certlifecycle.proto</span></div>
+        <div class="meta-row"><span class="meta-label">Client</span><span class="meta-value">PIP (Policy Information Point)</span></div>
+        <div class="meta-row"><span class="meta-label">Port</span><span class="meta-value">:8089 (internal) / :8589 (host)</span></div>
+        <div class="meta-row"><span class="meta-label">Transport</span><span class="meta-value">gRPC plaintext, server-side streaming</span></div>
+      </div>
+
+      <h3>Architecture position</h3>
+      <div style="background:#fce8e6;border:1px solid #f5c6c4;border-radius:6px;padding:12px 16px;font-size:12px;color:#a50000;margin-bottom:4px;">
+        <strong>Not a PDP–PEP interface.</strong> No authorization decision is made here.<br>
+        This is a <strong>CA-to-PIP attribute provisioning channel</strong>. Classic XACML has the PDP pull attributes from the PIP synchronously per request; here the model is <strong>inverted</strong> — the PIP subscribes and pre-populates its store, and enforcement PEPs query the PIP before calling the PDP. Certificate issuance and revocation events are causally coupled to authorization outcomes: a revoked certificate causes XACML DENY even if the mTLS handshake somehow passed, because <code>cert-valid=false</code> becomes a XACML subject attribute.
+        See <a href="grpc-summary.html" style="color:#a50000;">grpc-summary.html</a> for full analysis.
+      </div>
+
+      <h3>grpcurl inspection</h3>
+      <div class="grpcurl">grpcurl -plaintext localhost:8589 list
+grpcurl -plaintext localhost:8589 describe arrowhead.ca.v1.CertificateLifecycle
+grpcurl -plaintext -d '{"include_snapshot":true}' \
+  localhost:8589 arrowhead.ca.v1.CertificateLifecycle/Subscribe</div>
+
+      <h3>RPC: Subscribe</h3>
+
+      <h4>Purpose</h4>
+      <p>Opens a persistent server-side streaming RPC from <code>profile-ca</code> to a subscriber (PIP, audit log, or monitoring). The stream carries <code>CertEvent</code> messages as certificate lifecycle transitions occur — issued, revoked, expired.</p>
+      <p>When <code>include_snapshot = true</code>, the server first sends one <code>SNAPSHOT</code> event per currently-valid certificate before switching to live events. This bootstraps the subscriber from scratch without a separate REST call — critical for PIP on startup.</p>
+      <p>The stream remains open indefinitely. Subscribers run the call in a reconnect loop with exponential backoff (initial 1 s, max 30 s). Fail-closed: on disconnect the subscriber retains its last known state and does <strong>not</strong> purge its store.</p>
+
+      <h4>Request schema — <code>SubscribeRequest</code></h4>
+      <table class="schema">
+        <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>include_snapshot</td><td>bool</td><td><span class="tag-opt">optional</span></td>
+            <td>If <code>true</code>, server pre-streams one <code>SNAPSHOT</code> event per currently-valid certificate before live events. Use on first connect and after reconnects to re-baseline state.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h4>Response schema — stream <code>CertEvent</code></h4>
+      <table class="schema">
+        <thead><tr><th>Field</th><th>Type</th><th>Present when</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td>cn</td><td>string</td><td>Always</td><td>Certificate Common Name — the system identity. Maps to XACML <code>subject-id</code>.</td></tr>
+          <tr><td>ou</td><td>string</td><td>Always</td><td>Arrowhead cert level encoded in Subject OU: <code>lo</code>, <code>on</code>, <code>de</code>, <code>sy</code>. Maps to XACML <code>urn:arrowhead:attribute:cert-level</code>.</td></tr>
+          <tr><td>type</td><td>EventType enum</td><td>Always</td><td><code>ISSUED</code>, <code>REVOKED</code>, <code>EXPIRED</code>, or <code>SNAPSHOT</code>.</td></tr>
+          <tr><td>issued_at</td><td>string (RFC3339)</td><td>ISSUED, SNAPSHOT</td><td>Certificate issuance timestamp.</td></tr>
+          <tr><td>expires_at</td><td>string (RFC3339)</td><td>ISSUED, SNAPSHOT</td><td>Certificate expiry timestamp.</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Cert level (<code>ou</code>) values</h4>
+      <div class="cert-levels">
+        <div class="cert-level-card">
+          <div class="lvl">"lo"</div>
+          <div class="tier">Local Cloud CA</div>
+          <div class="desc">Root tier. Not used for service identity.</div>
+        </div>
+        <div class="cert-level-card">
+          <div class="lvl">"on"</div>
+          <div class="tier">Onboarding</div>
+          <div class="desc">May request Device-tier certificates.</div>
+        </div>
+        <div class="cert-level-card">
+          <div class="lvl">"de"</div>
+          <div class="tier">Device</div>
+          <div class="desc">May request System-tier certificates.</div>
+        </div>
+        <div class="cert-level-card" style="border-color:#1a73e8">
+          <div class="lvl" style="color:#1a73e8">"sy"</div>
+          <div class="tier">System ★</div>
+          <div class="desc">Service-to-service mTLS. Most common in exp-13.</div>
+        </div>
+      </div>
+
+      <h4>Example request — first connect with snapshot</h4>
+      <pre>{ <span class="str">"include_snapshot"</span>: <span class="kw">true</span> }</pre>
+
+      <h4>Example stream response sequence</h4>
+      <pre><span class="cmt">// ── Phase 1: snapshot of existing certificates ─────────────────────────────</span>
+{ <span class="str">"cn"</span>: <span class="str">"robot-fleet-site-1"</span>, <span class="str">"ou"</span>: <span class="str">"sy"</span>, <span class="str">"type"</span>: <span class="str">"SNAPSHOT"</span>,
+  <span class="str">"issued_at"</span>: <span class="str">"2026-06-10T08:00:00Z"</span>, <span class="str">"expires_at"</span>: <span class="str">"2027-06-10T08:00:00Z"</span> }
+
+{ <span class="str">"cn"</span>: <span class="str">"portal-cloud-ml"</span>,    <span class="str">"ou"</span>: <span class="str">"sy"</span>, <span class="str">"type"</span>: <span class="str">"SNAPSHOT"</span>,
+  <span class="str">"issued_at"</span>: <span class="str">"2026-06-10T08:01:00Z"</span>, <span class="str">"expires_at"</span>: <span class="str">"2027-06-10T08:01:00Z"</span> }
+
+<span class="cmt">// ── Phase 2: live events ────────────────────────────────────────────────────</span>
+{ <span class="str">"cn"</span>: <span class="str">"new-sensor-1"</span>,    <span class="str">"ou"</span>: <span class="str">"sy"</span>, <span class="str">"type"</span>: <span class="str">"ISSUED"</span>,
+  <span class="str">"issued_at"</span>: <span class="str">"2026-06-15T10:00:00Z"</span>, <span class="str">"expires_at"</span>: <span class="str">"2027-06-15T10:00:00Z"</span> }
+
+{ <span class="str">"cn"</span>: <span class="str">"old-sensor"</span>,       <span class="str">"ou"</span>: <span class="str">"sy"</span>, <span class="str">"type"</span>: <span class="str">"REVOKED"</span>,
+  <span class="str">"issued_at"</span>: <span class="str">""</span>, <span class="str">"expires_at"</span>: <span class="str">""</span> }
+
+{ <span class="str">"cn"</span>: <span class="str">"expired-device"</span>,   <span class="str">"ou"</span>: <span class="str">"de"</span>, <span class="str">"type"</span>: <span class="str">"EXPIRED"</span>,
+  <span class="str">"issued_at"</span>: <span class="str">""</span>, <span class="str">"expires_at"</span>: <span class="str">""</span> }</pre>
+
+      <h4>Reconnect and error semantics</h4>
+      <table class="reconnect-table">
+        <thead><tr><th>Condition / EventType</th><th>Subscriber action</th></tr></thead>
+        <tbody>
+          <tr><td><code>SNAPSHOT</code> event received</td><td><code>Register(cn, ou, valid=true)</code></td></tr>
+          <tr><td><code>ISSUED</code> event received</td><td><code>Register(cn, ou, valid=true)</code></td></tr>
+          <tr><td><code>REVOKED</code> event received</td><td><code>Register(cn, ou, valid=false)</code></td></tr>
+          <tr><td><code>EXPIRED</code> event received</td><td><code>Register(cn, ou, valid=false)</code></td></tr>
+          <tr><td><code>EVENT_UNSPECIFIED</code></td><td>Ignore</td></tr>
+          <tr><td>Stream EOF or network error</td><td>Reconnect with exponential backoff (1 s → 30 s max); <strong>retain</strong> last known state (do not purge)</td></tr>
+          <tr><td>profile-ca unreachable at startup</td><td>Retry loop; serve empty store; authorization decisions fail-closed until first successful sync</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Message definitions</h3>
+      <pre><span class="cmt">// certlifecycle.proto — arrowhead.ca.v1</span>
+
+<span class="kw">service</span> <span class="type">CertificateLifecycle</span> {
+  <span class="cmt">// Subscribe opens a persistent server-side stream of CertEvents.</span>
+  <span class="kw">rpc</span> Subscribe(<span class="type">SubscribeRequest</span>) <span class="kw">returns</span> (<span class="kw">stream</span> <span class="type">CertEvent</span>);
+}
+
+<span class="kw">message</span> <span class="type">SubscribeRequest</span> {
+  <span class="cmt">// true = send SNAPSHOT events for all valid certs before live events</span>
+  <span class="kw">bool</span> include_snapshot = <span class="num">1</span>;
+}
+
+<span class="kw">message</span> <span class="type">CertEvent</span> {
+  <span class="kw">string</span>    cn         = <span class="num">1</span>;  <span class="cmt">// cert Common Name   → XACML subject-id</span>
+  <span class="kw">string</span>    ou         = <span class="num">2</span>;  <span class="cmt">// cert level: "lo" | "on" | "de" | "sy"</span>
+  <span class="type">EventType</span> type       = <span class="num">3</span>;  <span class="cmt">// lifecycle event type</span>
+  <span class="kw">string</span>    issued_at  = <span class="num">4</span>;  <span class="cmt">// RFC3339; present for ISSUED/SNAPSHOT only</span>
+  <span class="kw">string</span>    expires_at = <span class="num">5</span>;  <span class="cmt">// RFC3339; present for ISSUED/SNAPSHOT only</span>
+}
+
+<span class="kw">enum</span> <span class="type">EventType</span> {
+  EVENT_UNSPECIFIED = <span class="num">0</span>;  <span class="cmt">// zero value; ignore</span>
+  ISSUED            = <span class="num">1</span>;  <span class="cmt">// new cert issued     → Register(cn, ou, valid=true)</span>
+  REVOKED           = <span class="num">2</span>;  <span class="cmt">// cert revoked        → Register(cn, ou, valid=false)</span>
+  EXPIRED           = <span class="num">3</span>;  <span class="cmt">// cert expired        → Register(cn, ou, valid=false)</span>
+  SNAPSHOT          = <span class="num">4</span>;  <span class="cmt">// initial state event → Register(cn, ou, valid=true)</span>
+}</pre>
+
+    </div>
+  </section>
+
+</div>
+</body>
+</html>
