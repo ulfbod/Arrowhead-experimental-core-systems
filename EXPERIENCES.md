@@ -4137,6 +4137,62 @@ is a silent failure — no error, just a `??`-defaulted `—`.
 
 ---
 
+## EXP-052 — Policy Admin: RabbitMQ and Kafdrop links unreachable — hardcoded ports copied from previous experiment (experiment-15, 2026-06-15)
+
+### Symptom
+
+Clicking "Open RabbitMQ Management UI" or "Open Kafdrop" in the Policy Admin page opened a
+browser tab that immediately failed to connect (connection refused / ERR_CONNECTION_REFUSED).
+
+### Root Cause
+
+`dashboard/admin.html` hardcodes the host-side port numbers for RabbitMQ and Kafdrop:
+
+```js
+document.getElementById('rabbit-link').href  = `http://${h}:16179`;
+document.getElementById('kafdrop-link').href = `http://${h}:9014`;
+```
+
+These port numbers were copied from the previous experiment's admin page without updating them.
+Experiment-15 `docker-compose.yml` maps:
+
+| Service | docker-compose host port | admin.html (wrong) |
+|---|---|---|
+| RabbitMQ management | `16279:15672` | `16179` |
+| Kafdrop | `9114:9000` | `9014` |
+
+Both were off by 100. The links silently constructed bad URLs — there was no error in the
+dashboard UI itself, only a connection failure when the browser tried to open the tab.
+
+### Fix
+
+`dashboard/admin.html`:
+
+```js
+document.getElementById('rabbit-link').href  = `http://${h}:16279`;
+document.getElementById('kafdrop-link').href = `http://${h}:9114`;
+```
+
+### Lesson
+
+Dashboard tool-link ports are hardcoded in JS, not derived from nginx — they must be manually
+kept in sync with `docker-compose.yml` whenever an experiment is derived from a previous one.
+The ports are invisible unless you click the links; no health check or monitor catches them.
+
+Cross-check: `grep -E "rabbit-link|kafdrop-link" dashboard/admin.html` vs
+`grep -E "rabbitmq|kafdrop" docker-compose.yml` — the JS port must match the host-side port
+in the `ports:` mapping.
+
+### Checklist entry
+
+```
+- [ ] After deriving admin.html from a previous experiment, verify the hardcoded JS port
+      numbers for RabbitMQ and Kafdrop match the host-side ports in docker-compose.yml —
+      grep "rabbit-link\|kafdrop-link" dashboard/admin.html vs grep "rabbitmq\|kafdrop" docker-compose.yml (EXP-052)
+```
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
@@ -4213,4 +4269,5 @@ Use this before marking an experiment implementation complete:
 - [ ] After any port change or service removal, audit every `set $upstream` line in `dashboard/nginx.conf` — stale ports and removed services return nginx HTML error pages that the frontend JS parses as "Unexpected token '<'" (EXP-050)
 - [ ] When a service is merged under a URL prefix (e.g. pip → profile-ca under /pip/), register ALL dashboard-expected endpoints under that prefix — including /pip/health. The host service's own /health is unreachable via the prefix. Verify with grep HandleFunc main.go (EXP-051)
 - [ ] Cross-check every JSON field name in status/health responses against every consumer (dashboard admin page JS, Live Monitor stats display, PEP clients) — mismatches silently fall through the `?? '—'` default with no error (EXP-051)
+- [ ] After deriving admin.html from a previous experiment, verify the hardcoded JS port numbers for RabbitMQ and Kafdrop match the host-side ports in docker-compose.yml — grep "rabbit-link\|kafdrop-link" dashboard/admin.html vs grep "rabbitmq\|kafdrop" docker-compose.yml (EXP-052)
 - [ ] When a service is merged into another (e.g. pip → profile-ca), redirect its nginx proxy block to the new host AND preserve the URL prefix if the new host serves routes under a sub-path (e.g. `/api/pip/` → rewrite to `/pip/$1` not `/$1`) (EXP-050)
