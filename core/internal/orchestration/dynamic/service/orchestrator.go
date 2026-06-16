@@ -391,31 +391,31 @@ func (o *DynamicOrchestrator) Orchestrate(req orchmodel.OrchestrationRequest, to
 
 	// Step 4.7: Token relay (G54, D11). When relayTokens=true and a TokenRelayClient is
 	// configured, call ConsumerAuth per result to obtain an authorization token and embed
-	// it in AuthorizationTokens. Fail-open: token generation error → result included without token.
+	// it in AuthorizationToken. Fail-open: token generation error or empty serviceDefinition
+	// → result included without token.
+	//
+	// Key structure per AH5 AuthorizationTokenMap (confirmed by official docs, June 2026):
+	//   outer key = SecurityPolicy identifier (tokenVariant + "_AUTH")
+	//   inner key = service definition name (the Target of the generate request)
 	if o.relayTokens && o.tokenRelayClient != nil {
+		const tokenVariant = "TIME_LIMITED_TOKEN"
+		const policyKey = tokenVariant + "_AUTH" // "TIME_LIMITED_TOKEN_AUTH"
 		for i := range results {
 			r := &results[i]
-			ifaces := r.Interfaces
-			if len(ifaces) == 0 {
-				ifaces = []string{"HTTP-INSECURE-JSON"} // default when provider has no explicit interfaces
+			if r.ServiceDefinition == "" {
+				continue // cannot form a valid inner key; skip (fail-open)
 			}
-			tokens := make(map[string]map[string]*orchmodel.AuthorizationTokenDescriptor)
-			for _, iface := range ifaces {
-				desc, err := o.tokenRelayClient.GenerateToken(
-					ctx,
-					req.RequesterSystem.SystemName,
-					r.ProviderName,
-					r.ServiceDefinition,
-					"TIME_LIMITED_TOKEN",
-				)
-				if err == nil && desc != nil {
-					tokens[iface] = map[string]*orchmodel.AuthorizationTokenDescriptor{
-						"": desc, // default/unscoped grant per D11
-					}
+			desc, err := o.tokenRelayClient.GenerateToken(
+				ctx,
+				req.RequesterSystem.SystemName,
+				r.ProviderName,
+				r.ServiceDefinition,
+				tokenVariant,
+			)
+			if err == nil && desc != nil {
+				r.AuthorizationToken = map[string]map[string]*orchmodel.AuthorizationTokenDescriptor{
+					policyKey: {r.ServiceDefinition: desc},
 				}
-			}
-			if len(tokens) > 0 {
-				r.AuthorizationToken = tokens
 			}
 		}
 	}

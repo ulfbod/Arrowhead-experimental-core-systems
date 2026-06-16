@@ -141,11 +141,11 @@ type OrchestrationResult struct {
 	Priority int `json:"priority,omitempty"`
 	// ExclusiveUntil is set when the provider has an active lock; RFC3339 timestamp.
 	ExclusiveUntil string `json:"exclusiveUntil,omitempty"`
-	// AuthorizationToken carries ConsumerAuth tokens per interface and scope (G54, D11).
-	// Outer key: interface name (e.g. "HTTP-INSECURE-JSON").
-	// Inner key: authorization scope ("" for the default/unscoped grant).
+	// AuthorizationToken carries ConsumerAuth tokens per security policy and service (G54, D11).
+	// Outer key: SecurityPolicy identifier (e.g. "TIME_LIMITED_TOKEN_AUTH").
+	// Inner key: service definition name or service operation name.
 	// Only populated when RELAY_TOKENS=true on the DynamicOrchestration binary.
-	// Singular form per official AH5 docs (June 2026).
+	// Singular form and key semantics per official AH5 docs (June 2026).
 	AuthorizationToken map[string]map[string]*AuthorizationTokenDescriptor `json:"authorizationToken,omitempty"`
 }
 

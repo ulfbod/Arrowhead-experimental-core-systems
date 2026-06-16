@@ -187,9 +187,10 @@ func TestOrchestrationResultUsesCorrectCloudIdentifierKey(t *testing.T) {
 
 func TestOrchestrationResultUsesAuthorizationTokenSingular(t *testing.T) {
 	desc := &model.AuthorizationTokenDescriptor{TokenType: "TIME_LIMITED_TOKEN", Token: "t1"}
+	// Outer key = SecurityPolicy identifier; inner key = service/operation name (per AH5 docs D11).
 	r := model.OrchestrationResult{
 		AuthorizationToken: map[string]map[string]*model.AuthorizationTokenDescriptor{
-			"HTTP-INSECURE-JSON": {"": desc},
+			"TIME_LIMITED_TOKEN_AUTH": {"temperature-service": desc},
 		},
 	}
 	data, _ := json.Marshal(r)

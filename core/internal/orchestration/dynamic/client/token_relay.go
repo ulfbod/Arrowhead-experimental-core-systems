@@ -11,8 +11,8 @@ import (
 //
 // GenerateToken requests a time-limited authorization token from ConsumerAuthorization for
 // the given consumer/provider/serviceDefinition tuple. The returned descriptor is embedded
-// in the result's AuthorizationTokens map under the supplied interfaceName key and the
-// default scope key ("").
+// in the result's AuthorizationToken map under the SecurityPolicy key (outer) and the
+// service definition name (inner), per the AH5 AuthorizationTokenMap structure.
 type TokenRelayClient interface {
 	GenerateToken(
 		ctx context.Context,

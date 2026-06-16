@@ -561,7 +561,7 @@ RELAY_TOKENS=true ENABLE_AUTH=true go run ./cmd/dynamicorch
 }
 ```
 
-Response `200 OK` — each result carries `authorizationTokens`:
+Response `200 OK` — each result carries `authorizationToken`:
 
 ```json
 {
@@ -571,9 +571,9 @@ Response `200 OK` — each result carries `authorizationTokens`:
       "serviceDefinitition": "temperature-service",
       "cloudIdentitifer":    "LOCAL",
       "interfaces":          ["HTTP-INSECURE-JSON"],
-      "authorizationTokens": {
-        "HTTP-INSECURE-JSON": {
-          "": {
+      "authorizationToken": {
+        "TIME_LIMITED_TOKEN_AUTH": {
+          "temperature-service": {
             "tokenType":  "TIME_LIMITED_TOKEN",
             "targetType": "SERVICE_DEF",
             "token":      "f9e3b1a2d0c4...",
@@ -586,4 +586,7 @@ Response `200 OK` — each result carries `authorizationTokens`:
 }
 ```
 
-The consumer presents this token to the provider. The outer key is the interface name; the inner key `""` represents the default (unscoped) grant. `RELAY_TOKENS=false` (the default) omits `authorizationTokens` entirely.
+The consumer presents this token to the provider via `Authorization: Bearer <token>`.
+Outer key = `SecurityPolicy` identifier (`"TIME_LIMITED_TOKEN_AUTH"` for the time-limited variant).
+Inner key = service definition name (the `Target` of the token generate request).
+`RELAY_TOKENS=false` (the default) omits `authorizationToken` entirely.

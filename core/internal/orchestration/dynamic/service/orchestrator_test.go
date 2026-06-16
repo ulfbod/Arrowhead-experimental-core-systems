@@ -1049,19 +1049,20 @@ func TestOrchestrateRelayTokensPopulatesAuthorizationTokens(t *testing.T) {
 	if stub.called == 0 {
 		t.Error("token relay client was not called")
 	}
-	// Verify the token is embedded under a non-empty interface key and default scope "".
-	for iface, scopes := range r.AuthorizationToken {
-		if iface == "" {
-			t.Error("interface key should not be empty")
-		}
-		desc, ok := scopes[""]
-		if !ok {
-			t.Errorf("default scope '' missing under interface %q", iface)
-			continue
-		}
-		if desc.Token == "" {
-			t.Errorf("token missing in descriptor under interface %q", iface)
-		}
+	// Outer key must be the SecurityPolicy identifier (e.g. "TIME_LIMITED_TOKEN_AUTH"), not an interface name.
+	// Inner key must be the service definition name, not an empty scope string (per AH5 docs D11).
+	const wantPolicy = "TIME_LIMITED_TOKEN_AUTH"
+	scopes, ok := r.AuthorizationToken[wantPolicy]
+	if !ok {
+		t.Fatalf("expected outer key %q, got keys: %v", wantPolicy, r.AuthorizationToken)
+	}
+	const wantSvcDef = "temperature-service"
+	desc, ok := scopes[wantSvcDef]
+	if !ok {
+		t.Fatalf("expected inner key %q under policy %q, got keys: %v", wantSvcDef, wantPolicy, scopes)
+	}
+	if desc.Token == "" {
+		t.Error("token missing in descriptor")
 	}
 }
 

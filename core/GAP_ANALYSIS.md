@@ -795,7 +795,7 @@ Without this field, AH5-compliant consumers cannot complete the provider-level a
 
 Note: Ambiguity A4 documents open questions about which token the provider validates and how. This gap addresses the ConsumerAuth token relay path, which is the more clearly specified part of the mechanism.
 
-**Status: Resolved in Step 60** — `authorizationTokens` map added to `OrchestrationResult` (outer key = interface name, inner key = scope string, `""` for default/unscoped). `TokenRelayClient` interface and `CATokenRelayHTTPClient` call `POST /consumerauthorization/authorization-token/generate` per result. Opt-in via `RELAY_TOKENS=true` env var. `AuthorizationTokenDescriptor` defined in the orchestration model package to avoid cross-package imports (D1). See D11 for key semantics.
+**Status: Resolved in Step 60** — `authorizationToken` map added to `OrchestrationResult` (outer key = `SecurityPolicy` identifier, e.g. `"TIME_LIMITED_TOKEN_AUTH"`; inner key = service definition name / operation name). `TokenRelayClient` interface and `CATokenRelayHTTPClient` call `POST /consumerauthorization/authorization-token/generate` per result. Opt-in via `RELAY_TOKENS=true` env var. `AuthorizationTokenDescriptor` defined in the orchestration model package to avoid cross-package imports (D1). Key semantics confirmed by official AH5 docs (June 2026 — Tamás Bordi). See D11.
 
 ---
 
@@ -1047,18 +1047,43 @@ Serial numbers are allocated with an `atomic.Int64`, starting at 2 (1 is reserve
 
 ---
 
-### D11 — `authorizationToken` key semantics: interface name → scope → descriptor
+### D11 — `authorizationToken` key semantics: SecurityPolicy → service/operation name → descriptor
 
-The AH5 spec does not define the exact key structure for `authorizationToken` in `OrchestrationResult`. This implementation uses a two-level nested map:
+The AH5 `AuthorizationTokenMap` structure is defined in the official docs
+(https://aitia-iiot.github.io/ah5-docs-java-spring/api/data-models/authorization-token-map/)
+and confirmed by a concrete example in the DynamicOrchestration pull response
+(https://aitia-iiot.github.io/ah5-docs-java-spring/api/serviceorchestration/service-orchestration-generic-http_dynamic/#pull).
 
-- **Outer key:** interface name from the result's `Interfaces` list (e.g., `"HTTP-INSECURE-JSON"`). Defaults to `"HTTP-INSECURE-JSON"` when the result has no interfaces.
-- **Inner key:** scope string. `""` (empty string) represents the default/unscoped grant — the most common case.
+The two-level nested map uses:
 
-This structure allows per-interface, per-scope tokens in future when multiple interfaces or scoped grants are needed, without requiring a schema change.
+- **Outer key:** `SecurityPolicy` identifier — one of `NONE`, `CERT_AUTH`, `TIME_LIMITED_TOKEN_AUTH`,
+  `USAGE_LIMITED_TOKEN_AUTH`, `BASE64_SELF_CONTAINED_TOKEN_AUTH`, `RSA_SHA256_JSON_WEB_TOKEN_AUTH`,
+  `RSA_SHA512_JSON_WEB_TOKEN_AUTH`, `TRANSLATION_BRIDGE_TOKEN_AUTH`.
+  For the hardcoded `TIME_LIMITED_TOKEN` variant the key is `"TIME_LIMITED_TOKEN_AUTH"`.
+- **Inner key:** `ServiceOperationName` (kebab-case, for a specific operation) or `ServiceName`
+  (camelCase, when the token covers all operations of the service). In the common `TargetType=SERVICE_DEF`
+  case this is the service definition name from the orchestration result.
 
-The `AuthorizationTokenDescriptor` type is defined in the orchestration model package (not imported from `consumerauth`) to satisfy the D1 rule that systems communicate only via HTTP, not Go package imports.
+Example from official docs:
+```json
+"authorizationTokens": {
+  "TIME_LIMITED_TOKEN_AUTH": {
+    "query-temperature": {
+      "tokenType":  "TIME_LIMITED_TOKEN",
+      "targetType": "SERVICE_DEF",
+      "token":      "dsalefb521vdjkdsae633",
+      "expiresAt":  "2025-10-05T11:35:14Z"
+    }
+  }
+}
+```
 
-**Note on field name:** The official AH5 documentation (June 2026) names the field `authorizationToken` (singular). The Java 5.2.0 source has `authorizationTokens` (plural). The Go implementation currently uses the plural form following the Java source; G59 tracks the correction to match the published docs. The key structure described above is independent of the field name.
+The `AuthorizationTokenDescriptor` type is defined in the orchestration model package (not imported
+from `consumerauth`) to satisfy the D1 rule that systems communicate only via HTTP, not Go package imports.
+
+**Previous design (pre-June 2026):** The outer key was the interface name (e.g. `"HTTP-INSECURE-JSON"`)
+and the inner key was `""` (empty/unscoped). This was a local interpretation before the docs confirmed
+the correct structure. Corrected when Tamás Bordi (AITIA) provided the documentation links.
 
 ---
 
@@ -1127,7 +1152,7 @@ The AH5 service security page specifies validation per token type:
 
 The token presentation mechanism is also confirmed: `Authorization: Bearer <token>` (Generic HTTP profile).
 
-**Remaining open:** The inner structure of `AuthorizationTokenMap` (outer and inner key semantics) is still not specified by either the Java source or the official docs.
+**Resolved (June 2026):** The inner structure of `AuthorizationTokenMap` is now confirmed by official AH5 docs: outer key = `SecurityPolicy` identifier (e.g. `"TIME_LIMITED_TOKEN_AUTH"`), inner key = service operation name or service name. See D11.
 
 ---
 

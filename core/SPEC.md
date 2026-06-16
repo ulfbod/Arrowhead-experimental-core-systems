@@ -1111,9 +1111,9 @@ The `serviceRequirement` field is the AH5 spec name; `requestedService` is accep
       "interfaces":          ["string"],
       "exclusiveUntil":      "RFC3339 (omitted when provider is not locked)",
       "aliveUntil":          "string",
-      "authorizationTokens": {
-        "<interfaceName>": {
-          "<scope>": {
+      "authorizationToken": {
+        "<securityPolicy>": {
+          "<serviceOrOperationName>": {
             "tokenType":  "string",
             "targetType": "string",
             "token":      "string",
@@ -1140,7 +1140,7 @@ Note: `serviceDefinitition` (double 't') and `cloudIdentitifer` (missing 'n') ar
 4. If `ENABLE_AUTH=true`, calls `POST /consumerauthorization/authorization/verify` for each result and removes unauthorized providers.
 5. If `orchestrationFlags.ONLY_PREFERRED=true` and `preferredProviders` is non-empty, filters results to only those matching a preferred provider's `systemName`.
 6. If `orchestrationFlags.MATCHMAKING=true` and more than one result remains, truncates to the first result.
-7. If `RELAY_TOKENS=true`, calls `POST /consumerauthorization/authorization-token/generate` for each remaining result and populates `authorizationTokens` on that result (outer key = interface name, inner key = `""`). Token relay errors are silently skipped (fail-open).
+7. If `RELAY_TOKENS=true`, calls `POST /consumerauthorization/authorization-token/generate` for each remaining result and populates `authorizationToken` on that result (outer key = `SecurityPolicy` identifier, e.g. `"TIME_LIMITED_TOKEN_AUTH"`; inner key = service definition name). Token relay errors are silently skipped (fail-open).
 8. Returns the remaining results with `cloudIdentitifer="LOCAL"` and `interfaces` forwarded from the SR response.
 
 **Configuration (env vars):**
@@ -1153,7 +1153,7 @@ Note: `serviceDefinitition` (double 't') and `cloudIdentitifer` (missing 'n') ar
 - `BLACKLIST_URL` — when set, the Blacklist system is consulted to reject blacklisted requesters (step 2.5) and filter blacklisted providers (step 4). When empty, no blacklist check is performed.
 - `PUSH_DELIVERY_TIMEOUT_SECONDS` — HTTP timeout per push notification delivery attempt. Default: `5`.
 - `QOS_EVALUATOR_URL` — when set, DynamicOrchestration calls `POST <QOS_EVALUATOR_URL>/deviceqosevaluator/quality-evaluation/measure` for each candidate when `qualityRequirements[]` is present in the request. Fail-open: if the evaluator is unreachable, the candidate is included. When empty, a NopQoSClient (fail-open) is used. Added in Step 36 (G40).
-- `RELAY_TOKENS` — when `true`, DynamicOrchestration calls `POST <CONSUMER_AUTH_URL>/consumerauthorization/authorization-token/generate` per orchestration result and embeds the returned token in `authorizationTokens` on each `OrchestrationResult`. Key structure: outer = interface name (defaults to `"HTTP-INSECURE-JSON"` when empty), inner = scope (`""` for unscoped/default). Added in Step 60 (G54).
+- `RELAY_TOKENS` — when `true`, DynamicOrchestration calls `POST <CONSUMER_AUTH_URL>/consumerauthorization/authorization-token/generate` per orchestration result and embeds the returned token in `authorizationToken` on each `OrchestrationResult`. Key structure: outer = `SecurityPolicy` identifier (`"TIME_LIMITED_TOKEN_AUTH"` for the hardcoded `TIME_LIMITED_TOKEN` variant), inner = service definition name. Results with an empty service definition are skipped (fail-open). Added in Step 60 (G54); key semantics corrected per official AH5 docs.
 
 **Push trigger delivery semantics (`mgmt/push/trigger`):**
 1. Records a `PUSH/PENDING` history entry.

@@ -4193,6 +4193,68 @@ in the `ports:` mapping.
 
 ---
 
+## EXP-053 — "No messages in Kafdrop / RabbitMQ" — messages are flowing but the broker UIs are misleading (experiment-15, 2026-06-15)
+
+### Symptom
+
+After starting experiment-15, navigating to Kafdrop (http://localhost:9114) and RabbitMQ
+management (http://localhost:16279) appears to show no messages:
+
+- Kafdrop topic overview for `arrowhead.telemetry` showed a **"0"** value in the partition row,
+  suggesting no messages had been written.
+- RabbitMQ management showed queue `portal-cloud-ml-telemetry` with **0 ready messages**.
+
+### Root Cause
+
+There is no delivery bug. Messages are flowing correctly. The UIs are misleading:
+
+**Kafdrop** — The "0" in the partition row is the **partition index** (Partition 0), not the
+message count. The actual "Total available messages" row below it shows the real count
+(240,000+ after 6 hours). Additionally, Kafdrop's `/api/topic/{name}` REST endpoint returns
+a 500 error (FreeMarker template bug in v4.2.0), but the HTML topic page and the
+"Browse Messages" page work correctly and show full message data.
+
+**RabbitMQ** — Queue `portal-cloud-ml-telemetry` shows **0 ready** because `portal-cloud-ml`
+consumes messages immediately as they arrive. The queue is a live pipe, not an inbox. The
+actual delivery throughput is visible in:
+- Queue detail page → "Message rates" chart
+- Queue detail page → "Total delivered" stat (231,000+ after 6 hours)
+
+### How to verify message delivery in experiment-15
+
+| What to check | Where to look |
+|---|---|
+| Kafka: messages published | Kafdrop → topic `arrowhead.telemetry` → "Total available messages" row (not the partition index column) → or click "View Messages" |
+| AMQP: messages delivered | RabbitMQ management → Queues → `portal-cloud-ml-telemetry` → click queue name → "Message rates" section |
+| End-to-end: portal-cloud-ml received | `curl http://localhost:9807/stats` → `msgCount` field |
+| Robot fleet: sent count | `curl http://localhost:9816/stats` → `aggregate.msgSent` |
+| Live Monitor | Dashboard `http://localhost:3015` → stats column on each service card |
+
+After 6 hours, confirmed counts:
+- Kafka: 240,738 messages in `arrowhead.telemetry`
+- AMQP: 231,476 messages delivered via `portal-cloud-ml-telemetry` queue
+- portal-cloud-ml `msgCount`: 484,600 (AMQP + Kafka SSE, double-counted per design)
+- deniedCount: 0 (no authorization denials)
+
+### Note on startup (not a bug)
+
+During the first ~8 seconds of startup, robot-fleet sees "connection refused" on port 5671
+before retrying. This is because RabbitMQ's health check (`rabbitmq-diagnostics ping`) clears
+before the AMQP TLS listener on 5671 is fully initialised. With 15 retries (30 s budget),
+robot-fleet connects successfully on attempt 5. Messages begin flowing immediately after.
+
+### Lesson
+
+A queue showing "0 ready" in RabbitMQ does NOT mean no messages are flowing — it means
+messages are consumed as fast as they arrive. Always check "Total delivered" or message rates.
+
+A partition-index column in Kafdrop is NOT the message count. Click "View Messages" to confirm.
+
+When diagnosing message delivery, start with the consumer's stats endpoint (`/stats`) — it
+gives the authoritative received count without requiring broker UI knowledge.
+
+---
+
 ## Checklist — Before Adding a New Experiment
 
 Use this before marking an experiment implementation complete:
