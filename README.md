@@ -4,6 +4,8 @@ A Go implementation of the six [Arrowhead 5](https://aitia-iiot.github.io/ah5-do
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full structural overview.
 
+📄 **[AIMS 5.0 Poster — UC03 ADAPI](AIMS5.0_Poster_UC03%20ADAPI%20v10.pdf)**
+
 ---
 
 ## Core Systems
