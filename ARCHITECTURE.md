@@ -2,7 +2,7 @@
 
 See [core/DIAGRAMS.md](core/DIAGRAMS.md) for Mermaid architecture and sequence diagrams.
 
-This repository is divided into two clearly separated areas.
+This repository is divided into four areas.
 
 ---
 
@@ -113,6 +113,21 @@ cd core
 go build ./...
 go test ./...
 ```
+
+---
+
+## /core-evol — ADAPI Extensions
+
+Evolved core system variants that implement the ADAPI gRPC interfaces, extending the core's control-plane authorization to data-plane enforcement. See [`core-evol/README.md`](core-evol/README.md).
+
+| Component | Description |
+|---|---|
+| `cmd/authz-pdp` | gRPC authorization PDP server (`authorize.proto`) |
+| `cmd/dynamicorch-xacml` | DynamicOrchestration variant delegating to an external XACML PDP |
+| `proto/authorize/` | PEP-to-PDP gRPC interface for authorization decisions |
+| `proto/certlifecycle/` | Certificate lifecycle event stream from CA to PEPs |
+
+Used by experiments 12-14.
 
 ---
 

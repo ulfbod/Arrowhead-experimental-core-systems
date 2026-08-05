@@ -32,7 +32,3 @@ This file defines how to work with this repository.
 - It MUST NOT bypass core logic or import Go packages
 - It MUST NOT introduce non-spec-compliant API behavior
 - Building the dashboard is optional; `go build` and `go test` must pass without it
-
-## Instruction for Claude
-
-Always read and apply this file before performing any task.

@@ -1,15 +1,4 @@
 # Go
-backend/vendor/
-backend/bin/
-# Compiled binaries in backend root
-backend/cdta
-backend/cdtb
-backend/scenario
-backend/arrowhead
-backend/idt-robot
-backend/idt-gas
-backend/idt-lhd
-backend/idt-teleremote
 *.exe
 *.test
 *.out
@@ -32,11 +21,6 @@ results/improved01/tradeoff/runs/
 results/improved01/degradation/runs/
 # Keep: results/<scenario>/*/aggregated.csv, results/<scenario>/manifest.json
 # Keep: docs/figures/<scenario>/*.png and docs/figures/<scenario>/*.pdf
-
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/.env.local
 
 # Core dashboard
 core/dashboard/node_modules/

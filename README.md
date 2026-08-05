@@ -1,36 +1,51 @@
-# Arrowhead Core
+# Arrowhead 5.2 Core Systems + ADAPI Extensions
 
-A Go implementation of the six [Arrowhead 5](https://aitia-iiot.github.io/ah5-docs-java-spring/) core systems plus a Certificate Authority extension, with a built-in browser dashboard.  Experiments demonstrate the core systems in realistic scenarios.
+A Go reference implementation of the [Arrowhead Framework 5.2](https://aitia-iiot.github.io/ah5-docs-java-spring/) core systems, extended with **ADAPI** (Arrowhead Data-plane Authorization Policy Interfaces) — two typed gRPC interfaces that project control-plane authorization grants and PKI certificate state onto live data flows across AMQP, Kafka, and REST transports.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full structural overview.
+The repository serves as both a spec-compliant standalone implementation and a research platform for exploring policy-based IoT data-plane authorization.
 
-📄 **[AIMS 5.0 Poster — UC03 ADAPI](AIMS5.0_Poster_UC03%20ADAPI%20v10.pdf)** — ADAPI extends Arrowhead authorization to the data plane via two typed gRPC interfaces that project control-plane grants and PKI certificate state onto live AMQP, Kafka, and REST flows.
+**Conformance:** ~95-97% across all spec-defined systems (see [CONFORMANCE.md](CONFORMANCE.md)) | **Go 1.25+** | **License:** [MIT](LICENSE)
 
 ---
 
 ## Core Systems
 
-| System | Port | Binary |
-|---|---|---|
-| ServiceRegistry | 8080 | `cmd/serviceregistry` |
-| Authentication | 8081 | `cmd/authentication` |
-| ConsumerAuthorization | 8082 | `cmd/consumerauth` |
-| DynamicOrchestration | 8083 | `cmd/dynamicorch` |
-| SimpleStoreOrchestration | 8084 | `cmd/simplestoreorch` |
-| FlexibleStoreOrchestration | 8085 | `cmd/flexiblestoreorch` |
-| CertificateAuthority | 8086 | `cmd/ca` *(extension, not in AH5 spec)* |
-| DeviceQoSEvaluator | 8088 | `cmd/deviceqoseval` *(Phase 3 — G35)* |
-| TranslationManager | 8089 | `cmd/translationmgr` *(Phase 3 — G36)* |
+Nine systems, each running as its own binary:
 
-All systems default to in-memory storage. Set `DB_PATH` to a file path for SQLite-backed persistence across restarts (see [Configuration](#configuration)).
+| System | Port | Description |
+|---|---|---|
+| ServiceRegistry | 8080 | Service registration and discovery |
+| Authentication | 8081 | Identity tokens and credential verification |
+| ConsumerAuthorization | 8082 | Authorization grants, tokens, and policy lookup |
+| DynamicOrchestration | 8083 | Real-time service lookup with optional auth filtering |
+| SimpleStoreOrchestration | 8084 | Rule-based orchestration |
+| FlexibleStoreOrchestration | 8085 | Priority-based orchestration *(extension)* |
+| CertificateAuthority | 8086 | X.509 certificate signing and revocation *(extension)* |
+| DeviceQoSEvaluator | 8088 | TCP RTT/jitter/bandwidth probing |
+| TranslationManager | 8089 | JSON field-remapping bridges |
+
+All systems default to in-memory storage. Set `DB_PATH` for SQLite-backed persistence. See [CONFIGURATION.md](CONFIGURATION.md) for the full environment variable reference.
+
+## ADAPI Extensions (core-evol/)
+
+The [`core-evol/`](core-evol/) directory contains evolved core system variants that implement the ADAPI gRPC interfaces:
+
+- **`authorize.proto`** — PEP-to-PDP interface for authorization decisions
+- **`certlifecycle.proto`** — certificate lifecycle event stream from CA to all PEPs
+
+These interfaces close the gap between Arrowhead's control-plane authorization and real-time data-plane enforcement. See [core-evol/README.md](core-evol/README.md).
 
 ---
 
+## Prerequisites
+
+- **Go 1.25+** (required by the `modernc.org/sqlite` dependency)
+- **Docker** and **Docker Compose** (for running experiment stacks)
+- **Node.js 18+** (only for dashboard development)
+
 ## Quick Start
 
-### Run all systems
-
-Open six terminals (or use a process manager):
+### Run all core systems
 
 ```bash
 cd core
@@ -40,32 +55,21 @@ go run ./cmd/consumerauth         # :8082
 go run ./cmd/dynamicorch          # :8083
 go run ./cmd/simplestoreorch      # :8084
 go run ./cmd/flexiblestoreorch    # :8085
-go run ./cmd/ca                   # :8086  (CA extension)
-go run ./cmd/deviceqoseval        # :8088  (Device QoS Evaluator — Phase 3)
-go run ./cmd/translationmgr       # :8089  (Translation Manager — Phase 3)
+go run ./cmd/ca                   # :8086
 ```
 
-### Dashboard (development mode)
+### Dashboard
 
 ```bash
-cd core/dashboard
-npm install
-npm run dev   # http://localhost:5173
-```
+# Development (hot-reload via Vite)
+cd core/dashboard && npm install && npm run dev   # http://localhost:5173
 
-The dashboard proxies all API calls through Vite to the running backends — no CORS required. It shows live health status for all six systems and provides panels for ServiceRegistry, ConsumerAuthorization, and Orchestration.
-
-### Dashboard (production — served by ServiceRegistry binary)
-
-```bash
+# Production (served by ServiceRegistry)
 cd core/dashboard && npm run build
-cd core && go run ./cmd/serviceregistry
-# Dashboard available at http://localhost:8080/
+cd core && go run ./cmd/serviceregistry           # http://localhost:8080/
 ```
 
----
-
-## Build & Test
+## Build and Test
 
 ```bash
 cd core
@@ -73,7 +77,7 @@ go build ./...
 go test ./...
 ```
 
-All tests are self-contained — no database, no running servers, no environment variables needed. See [core/TESTING.md](core/TESTING.md) for the full test guide.
+All tests are self-contained — no database, no running servers, no environment variables needed. See [core/TESTING.md](core/TESTING.md) for details.
 
 ---
 
@@ -128,157 +132,68 @@ curl -s -X DELETE http://localhost:8082/consumerauthorization/authorization/revo
 
 ---
 
-## Configuration
-
-Each binary reads configuration from environment variables.
-
-### Listen ports and persistence
-
-| Variable | System | Default | Description |
-|---|---|---|---|
-| `PORT` | all | 8080–8086 (see table above) | HTTP listen port |
-| `DB_PATH` | all | *(unset)* | Storage backend: unset = in-memory, `:memory:` = SQLite in-memory, file path = SQLite file-backed persistence |
-
-The ServiceRegistry creates **two** SQLite files when `DB_PATH` is set: the given path (legacy registrations) and `<DB_PATH>.ah5` (AH5 device/system/service discovery records).
-
-### Mutual TLS (optional)
-
-All systems except the CA support an optional HTTPS listener alongside the plain HTTP one:
-
-| Variable | Default | Description |
-|---|---|---|
-| `TLS_PORT` | *(unset)* | When set, starts an HTTPS listener on this port |
-| `TLS_CERT_FILE` | *(required with TLS_PORT)* | PEM certificate file |
-| `TLS_KEY_FILE` | *(required with TLS_PORT)* | PEM private key file |
-| `TLS_CA_FILE` | *(optional)* | PEM CA certificate; when set, enforces mutual TLS (`RequireAndVerifyClientCert`) |
-
-### Management access policy (all systems)
-
-| Variable | Default | Description |
-|---|---|---|
-| `MGMT_AUTH_URL` | *(unset)* | When set, all `/mgmt/*` endpoints on every system require `Authorization: Bearer <token>` with `sysop: true`. Unset = open management (development mode). |
-
-### ServiceRegistry — registration identity enforcement (Phase 3 / G10)
-
-| Variable | Default | Description |
-|---|---|---|
-| `REGISTER_AUTH_URL` | *(unset)* | When set, system and service registration require `Authorization: Bearer <token>` whose verified `systemName` matches the `name`/`systemName` in the request body. Fail-closed: missing token → 401; network error → 401; name mismatch → 403. Unset = open registration (development mode). |
-
-### ConsumerAuthorization — BASE64_SELF_CONTAINED tokens (Phase 3 / G23)
-
-| Variable | Default | Description |
-|---|---|---|
-| `HMAC_SECRET` | `arrowhead-default-secret` | Secret used to sign `BASE64_SELF_CONTAINED` tokens (HMAC-SHA256). Set to a strong random value in production. |
-
-### Blacklist integration (ServiceRegistry, ConsumerAuthorization, DynamicOrchestration, CertificateAuthority)
-
-| Variable | Default | Description |
-|---|---|---|
-| `BLACKLIST_URL` | *(unset)* | When set, blacklisted systems are rejected at register/grant/orchestration/sign. Fail-closed: Blacklist unreachable is treated as blacklisted. |
-
-### DynamicOrchestration
-
-| Variable | Default | Description |
-|---|---|---|
-| `SERVICE_REGISTRY_URL` | `http://localhost:8080` | ServiceRegistry base URL |
-| `CONSUMER_AUTH_URL` | `http://localhost:8082` | ConsumerAuthorization base URL |
-| `AUTH_SYSTEM_URL` | `http://localhost:8081` | Authentication system base URL |
-| `ENABLE_AUTH` | `false` | Filter providers via ConsumerAuthorization |
-| `ENABLE_IDENTITY_CHECK` | `false` | Require a valid Bearer token; use verified identity for auth checks |
-| `PUSH_DELIVERY_TIMEOUT_SECONDS` | `5` | HTTP timeout (seconds) for each push notification delivery attempt via `mgmt/push/trigger` |
-| `QOS_EVALUATOR_URL` | *(unset)* | When set, DynamicOrchestration performs TCP RTT probes via the Device QoS Evaluator for candidates when `qualityRequirements[]` is present. Fail-open: evaluator unreachable → candidate included. |
-| `RELAY_TOKENS` | `false` | When `true`, DynamicOrchestration calls ConsumerAuthorization after each successful orchestration and embeds the returned token in `authorizationTokens` on each `OrchestrationResult`. Requires `CONSUMER_AUTH_URL`. |
-
-### MQTT (Phase 3 / G34)
-
-| Variable | Default | Description |
-|---|---|---|
-| `MQTT_BROKER_URL` | *(unset)* | When set (e.g. `tcp://localhost:1883`), the system subscribes to `ah5/<system>/request` and publishes replies to `ah5/<system>/reply/<correlationId>`. When empty, no MQTT listener is started. |
-
-`ENABLE_IDENTITY_CHECK` connects Authentication and DynamicOrchestration: consumers must log in first and present their token when orchestrating. The verified `systemName` from the token replaces the self-reported value in the request body, preventing impersonation. See `core/GAP_ANALYSIS.md` (D8) for full design rationale.
-
-### ServiceRegistry
-
-| Variable | Default | Description |
-|---|---|---|
-| `SR_AUTH_URL` | `http://localhost:8081` | Authentication system base URL used to verify Bearer tokens on `DELETE /system-discovery/revoke` |
-
-### Authentication
-
-| Variable | Default | Description |
-|---|---|---|
-| `TOKEN_DURATION_SECONDS` | `3600` | Token lifetime |
-
-### Blacklist
-
-| Variable | Default | Description |
-|---|---|---|
-| `BLACKLIST_AUTH_URL` | *(unset)* | When set, `GET /blacklist/lookup` and `GET /blacklist/check/{name}` require `Authorization: Bearer <token>`. Unset = open access (development mode). |
-
-### Deployment note — multi-host and DHCP environments
-
-The defaults for `SERVICE_REGISTRY_URL`, `CONSUMER_AUTH_URL`, and `AUTH_SYSTEM_URL` all point to `localhost`. These work for a single-machine development setup where all binaries run on the same host. In any other deployment — multiple VMs, containers on separate hosts, or a DHCP network — **all three must be set explicitly** to the address where each system is reachable.
-
-There are no hardcoded IP addresses in the source code. Every network address is read from an environment variable at startup.
-
----
-
 ## Experiments
 
-Self-contained Docker Compose stacks that demonstrate the core systems in realistic scenarios. Experiments 1–5 are historical reference; **experiment-6 is the active baseline**; experiments 7–14 build on it progressively.
+Self-contained Docker Compose stacks that demonstrate the core systems in realistic IoT scenarios. Experiments 1-5 are historical reference; **experiment-6 is the active baseline**; experiments 7-14 build on it progressively.
 
-| Experiment | Description |
-|---|---|
-| [experiment-1](experiments/experiment-1/) | Interactive browser demo: register services, grant authorization, orchestrate |
-| [experiment-2](experiments/experiment-2/) | Virtual local cloud with AMQP data plane: robot → RabbitMQ → edge-adapter → orchestrated consumer |
-| [experiment-3](experiments/experiment-3/) | Direct AMQP subscriptions with broker-level topic authorization sourced from ConsumerAuth |
-| [experiment-4](experiments/experiment-4/) | Geo-distributed consumers over AMQP: dual-layer authorization via `topic-auth-http` (live CA checks) + RabbitMQ user lifecycle management |
-| [experiment-5](experiments/experiment-5/) | Unified XACML/ABAC policy projection across AMQP and Kafka: one AuthzForce PDP governs both transports; revocation propagates to all PEPs within one sync cycle |
-| [experiment-6](experiments/experiment-6/) | Triple-transport policy projection (AMQP + Kafka + REST) with runtime-configurable `SYNC_INTERVAL`; active baseline for all later experiments |
-| [experiment-7](experiments/experiment-7/) | X.509/TLS extension: REST consumers identified by cert CN; mTLS across all transport paths |
-| [experiment-8](experiments/experiment-8/) | Arrowhead 5.2 profile-based PKI with enforced certificate hierarchy and compliance assessment |
-| [experiment-9](experiments/experiment-9/) | UC3 "Lawn Mowing as a Service": multi-site robot fleets publish over Kafka + AMQP; Portal & Cloud ML aggregates streams; Service Partners consume via mTLS REST proxy PEP |
-| [experiment-10](experiments/experiment-10/) | UC3 with classical PAP/PIP/PDP access-control architecture; eliminates sync delay by separating policy administration, information, and decision points |
-| [experiment-11](experiments/experiment-11/) | Hybrid PAP/PIP/PDP (Strategy A): two policy sources merged into a single XACML PolicySet at push time |
-| [experiment-12](experiments/experiment-12/) | DynamicOrchestration-XACML (Approach B): gRPC PDP interface replaces ConsumerAuthorization for orchestration decisions |
-| [experiment-13](experiments/experiment-13/) | PKI identity unification: cert CN as XACML subject on all paths; cert-level ABAC attributes; CertificateLifecycle gRPC stream auto-populates PIP |
-| [experiment-14](experiments/experiment-14/) | Connection-time certificate revocation: Kafka `ArrowheadPrincipalBuilder` plugin and RabbitMQ `topic-auth-xacml` pre-gate both reject revoked clients before the PDP is consulted |
+| # | Focus | Description |
+|---|---|---|
+| [1](experiments/experiment-1/) | Browser demo | Interactive register/grant/orchestrate workflow |
+| [2](experiments/experiment-2/) | AMQP data plane | Robot fleet publishes via RabbitMQ; edge-adapter bridges to orchestrated consumer |
+| [3](experiments/experiment-3/) | Broker-level authz | Direct AMQP subscriptions with topic authorization sourced from ConsumerAuth |
+| [4](experiments/experiment-4/) | Geo-distributed | Dual-layer authorization via `topic-auth-http` (live CA checks) + RabbitMQ user lifecycle |
+| [5](experiments/experiment-5/) | XACML/ABAC | Unified policy projection across AMQP and Kafka via one AuthzForce PDP |
+| **[6](experiments/experiment-6/)** | **Triple-transport** | **AMQP + Kafka + REST policy projection with configurable `SYNC_INTERVAL` (active baseline)** |
+| [7](experiments/experiment-7/) | X.509/TLS | REST consumers identified by cert CN; mTLS across all transport paths |
+| [8](experiments/experiment-8/) | AH5.2 PKI | Profile-based certificate hierarchy with compliance assessment |
+| [9](experiments/experiment-9/) | UC3 scenario | Multi-site robot fleets; Portal and Cloud ML aggregation; mTLS REST proxy PEP |
+| [10](experiments/experiment-10/) | PAP/PIP/PDP | Classical access-control architecture; eliminates sync delay |
+| [11](experiments/experiment-11/) | Hybrid policy | Two policy sources merged into a single XACML PolicySet at push time |
+| [12](experiments/experiment-12/) | gRPC PDP | DynamicOrchestration delegates to external XACML PDP via `authorize.proto` |
+| [13](experiments/experiment-13/) | PKI identity | Cert CN as XACML subject on all paths; CertificateLifecycle gRPC stream populates PIP |
+| [14](experiments/experiment-14/) | Connection-time revocation | Kafka and RabbitMQ reject revoked certs before the PDP is consulted |
 
-### Experiment 6 quick start (active baseline)
+### Run an experiment
 
 ```bash
 cd experiments/experiment-6
-docker compose up --build
+docker compose up --build        # Dashboard at http://localhost:3006
 ```
 
-Triple-transport authorization: a single ConsumerAuth grant propagates to AMQP (`topic-auth-xacml`), Kafka (`kafka-authz`), and REST (`rest-authz`) within one policy-sync cycle. Dashboard at **http://localhost:3006**. Full details in [experiments/experiment-6/README.md](experiments/experiment-6/README.md).
+---
 
-### Experiment 13 quick start
+## Project Structure
 
-```bash
-cd experiments/experiment-13
-docker compose up --build -d
+```
+core/           Arrowhead 5.2 core systems (strict, spec-compliant)
+core-evol/      ADAPI extensions — gRPC PDP and cert lifecycle interfaces
+support/        Shared modules: PEPs, policy-sync, AuthzForce client, AMQP wrapper
+experiments/    Self-contained Docker Compose experiment stacks
 ```
 
-Three robot-fleet sites publish telemetry. PKI identity is unified: every client's cert CN becomes the XACML `subject-id` on Kafka, AMQP, and REST paths. Cert-level attributes (`certLevel`, `certValid`) are injected as XACML subject attributes. Dashboard at **http://localhost:3013**. Full details in [experiments/experiment-13/README.md](experiments/experiment-13/README.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full structural overview, API surface, and directory tree.
 
-### Experiment 14 quick start
+---
 
-```bash
-cd experiments/experiment-14
-docker compose up --build -d
-```
+## Publications
 
-Extends experiment-13 with fail-closed connection-time revocation: a Java `KafkaPrincipalBuilder` plugin rejects Kafka connections from revoked clients at the TLS handshake; `topic-auth-xacml` rejects AMQP connections at the `handleUser`/`handleVhost` stage, before AuthzForce is ever called. Dashboard at **http://localhost:3014**. Full details in [experiments/experiment-14/README.md](experiments/experiment-14/README.md).
+**[AIMS 5.0 Poster — UC03 ADAPI](AIMS5.0_Poster_UC03%20ADAPI%20v10.pdf)** — ADAPI extends Arrowhead authorization to the data plane via two typed gRPC interfaces that project control-plane grants and PKI certificate state onto live AMQP, Kafka, and REST flows.
+
+**Contact:** Ulf Bodin and Olov Schelen, LTU — {ulf.bodin, olov.schelen}@ltu.se
 
 ---
 
 ## Reference
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — structural overview and inter-system communication
-- [core/DIAGRAMS.md](core/DIAGRAMS.md) — Mermaid architecture and sequence diagrams
-- [core/SPEC.md](core/SPEC.md) — complete API specification for all six systems
-- [core/TEST_PLAN.md](core/TEST_PLAN.md) — test scenarios and coverage per system
-- [core/TESTING.md](core/TESTING.md) — how to run tests, key techniques, known limitations
-- [core/GAP_ANALYSIS.md](core/GAP_ANALYSIS.md) — AH5 compliance notes and design decisions
-- [Arrowhead 5 Documentation](https://aitia-iiot.github.io/ah5-docs-java-spring/core_systems/)
+| Document | Description |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System diagram, API surface, directory tree |
+| [CONFIGURATION.md](CONFIGURATION.md) | Environment variable reference for all systems |
+| [CONFORMANCE.md](CONFORMANCE.md) | AH5 conformance assessment with per-system ratings |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to report issues and submit changes |
+| [core/SPEC.md](core/SPEC.md) | Complete API specification |
+| [core/GAP_ANALYSIS.md](core/GAP_ANALYSIS.md) | AH5 compliance notes and design decisions |
+| [core/DIAGRAMS.md](core/DIAGRAMS.md) | Mermaid architecture and sequence diagrams |
+| [core/TESTING.md](core/TESTING.md) | Test guide and techniques |
+| [support/README.md](support/README.md) | Support module overview and deployment reference |
+| [AH5 Documentation](https://aitia-iiot.github.io/ah5-docs-java-spring/core_systems/) | Official Arrowhead 5 specification |
